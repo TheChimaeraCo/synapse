@@ -1,21 +1,38 @@
 # Synapse
 
-**Your AI command center.**
+> **Beta v0.1** - Your AI command center.
 
 Synapse is a self-hosted platform for managing AI agents across multiple channels. Connect Telegram bots, Discord bots, and web interfaces to a unified backend with conversation memory, tool execution, and real-time monitoring.
 
 Built for people who run AI agents in production and need a single place to manage them.
 
+## What's New - v0.1 Beta
+
+The foundation release includes everything you need to run AI agents in production:
+
+- Multi-gateway architecture with invite-only registration
+- Multi-channel support (Web, Telegram, Discord, WhatsApp)
+- Multi-agent system with sub-agents, parallel execution, and cost tracking
+- 24+ builtin tools with self-modification capabilities
+- Semantic memory and knowledge management
+- 10-layer prompt injection defense
+- Premium Apple-glass UI as a PWA with push notifications
+- PM2 dashboard integration
+- License system with tiered feature gating
+
+See the full [Roadmap](./ROADMAP.md) for what's built, in progress, and planned.
+
 ## Features
 
 - **Multi-gateway architecture** - Run multiple AI gateways, each with their own model configuration, system prompts, and tool sets
 - **Multi-channel support** - Connect Telegram, Discord, and a built-in web chat to any gateway
-- **Conversation chains** - Agents maintain context across sessions with persistent conversation history
-- **Sub-agents** - Spawn task-specific agents from a parent agent session
-- **Tool execution** - Extensible tool system with sandboxed execution
+- **Multi-agent system** - Sub-agents with parallel execution, abort control, and cost tracking
+- **Conversation chains** - Agents maintain context across sessions with decisions and summaries
+- **Tool execution** - 24+ builtin tools with a configurable execution loop
 - **Semantic memory** - Vector-based knowledge storage for long-term agent recall
-- **A2A messaging** - Agent-to-agent communication protocol for multi-agent coordination
-- **File manager** - Upload, organize, and attach files to agent contexts
+- **A2A messaging** - Agent-to-agent communication across gateways
+- **Self-modification** - Agents can deploy code and create new tools at runtime
+- **File manager** - Upload, organize, and edit files from the browser
 - **PM2 integration** - Manage agent processes directly from the dashboard
 - **PWA** - Install as a native app on desktop and mobile with push notifications
 - **Admin console** - User management, invite system, gateway configuration, and usage monitoring
@@ -41,7 +58,7 @@ Built for people who run AI agents in production and need a single place to mana
 
 ```bash
 # Clone the repository
-git clone https://github.com/chimaera-co/synapse.git
+git clone https://github.com/TheChimaeraCo/synapse.git
 cd synapse
 
 # Install dependencies
@@ -59,7 +76,7 @@ The init script walks you through Convex setup, environment configuration, and f
 # Copy environment template
 cp .env.example .env.local
 
-# Edit .env.local with your values (see comments in the file)
+# Edit .env.local with your values (see docs/configuration.md)
 
 # Push the Convex schema
 npx convex deploy
@@ -100,6 +117,17 @@ Gateway (model config + tools + system prompt)
 
 Convex handles real-time data sync, so changes in the admin console reflect instantly across all connected channels.
 
+## Documentation
+
+- [Getting Started](./docs/getting-started.md) - Full setup guide
+- [Architecture](./docs/architecture.md) - How Synapse works under the hood
+- [Configuration](./docs/configuration.md) - All configuration options
+- [Tools](./docs/tools.md) - Builtin tools reference
+- [Channels](./docs/channels.md) - Channel setup guides
+- [Licensing](./docs/licensing.md) - License tiers and pricing
+- [Roadmap](./ROADMAP.md) - What's built, in progress, and planned
+- [Contributing](./CONTRIBUTING.md) - How to contribute
+
 ## License
 
 Synapse is source-available under the [Functional Source License (FSL)](https://fsl.software/).
@@ -107,8 +135,9 @@ Synapse is source-available under the [Functional Source License (FSL)](https://
 - **Personal use** (up to 5 users): Free
 - **Commercial use**: Requires a license from The Chimaera Company LLC
 
-See [LICENSE](./LICENSE) for full terms.
+See [LICENSE](./LICENSE) for full terms, or read [docs/licensing.md](./docs/licensing.md) for tier details.
 
 ## Links
 
 - **The Chimaera Company LLC** - [chimaeraco.dev](https://chimaeraco.dev)
+- **Licensing questions** - [licensing@chimaeraco.dev](mailto:licensing@chimaeraco.dev)
