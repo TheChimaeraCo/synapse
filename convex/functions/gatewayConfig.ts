@@ -1,0 +1,98 @@
+import { v } from "convex/values";
+import { query, mutation } from "../_generated/server";
+
+export const get = query({
+  args: { gatewayId: v.id("gateways"), key: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", args.key))
+      .first();
+    return row?.value ?? null;
+  },
+});
+
+export const set = mutation({
+  args: { gatewayId: v.id("gateways"), key: v.string(), value: v.string() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", args.key))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { value: args.value, updatedAt: Date.now() });
+    } else {
+      await ctx.db.insert("gatewayConfig", {
+        gatewayId: args.gatewayId,
+        key: args.key,
+        value: args.value,
+        updatedAt: Date.now(),
+      });
+    }
+  },
+});
+
+export const getMultiple = query({
+  args: { gatewayId: v.id("gateways"), keys: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const result: Record<string, string> = {};
+    for (const key of args.keys) {
+      const row = await ctx.db
+        .query("gatewayConfig")
+        .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", key))
+        .first();
+      if (row) result[key] = row.value;
+    }
+    return result;
+  },
+});
+
+export const getAll = query({
+  args: { gatewayId: v.id("gateways") },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gatewayId", (q) => q.eq("gatewayId", args.gatewayId))
+      .collect();
+    const result: Record<string, string> = {};
+    for (const row of rows) {
+      result[row.key] = row.value;
+    }
+    return result;
+  },
+});
+
+export const remove = mutation({
+  args: { gatewayId: v.id("gateways"), key: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", args.key))
+      .first();
+    if (row) await ctx.db.delete(row._id);
+  },
+});
+
+export const getWithInheritance = query({
+  args: { gatewayId: v.id("gateways"), key: v.string() },
+  handler: async (ctx, args) => {
+    // Check gateway first
+    const row = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", args.key))
+      .first();
+    if (row) return { value: row.value, inherited: false };
+
+    // Fall back to master gateway
+    const allGateways = await ctx.db.query("gateways").collect();
+    const master = allGateways.find((g) => g.isMaster === true);
+    if (!master || master._id === args.gatewayId) return null;
+
+    const masterRow = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q) => q.eq("gatewayId", master._id).eq("key", args.key))
+      .first();
+    if (masterRow) return { value: masterRow.value, inherited: true };
+    return null;
+  },
+});

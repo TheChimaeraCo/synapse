@@ -1,0 +1,34 @@
+services:
+  backend:
+    image: ghcr.io/get-convex/convex-backend:latest
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "3220:3210"
+      - "3221:3211"
+    volumes:
+      - data:/convex/data
+    environment:
+      - CONVEX_CLOUD_ORIGIN=http://127.0.0.1:3220
+      - CONVEX_SITE_ORIGIN=http://127.0.0.1:3221
+      - RUST_LOG=info
+      - DOCUMENT_RETENTION_DELAY=172800
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 10s
+
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "6792:6791"
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=http://127.0.0.1:3220
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  data:

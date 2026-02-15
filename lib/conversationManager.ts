@@ -1,0 +1,133 @@
+import { convexClient } from "@/lib/convex";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+
+const CONVERSATION_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours - safety net only, AI handles topic shifts via new_conversation tool
+
+/**
+ * Resolve the current conversation for a message.
+ * Creates a new conversation if needed, or continues the active one.
+ * Chains related conversations together.
+ */
+export async function resolveConversation(
+  sessionId: Id<"sessions">,
+  gatewayId: Id<"gateways">,
+  userId: Id<"authUsers"> | undefined,
+  newMessage: string
+): Promise<Id<"conversations">> {
+  const activeConvo = await convexClient.query(api.functions.conversations.getActive, { sessionId });
+
+  if (!activeConvo) {
+    // First message - create new conversation
+    return await convexClient.mutation(api.functions.conversations.create, {
+      sessionId,
+      gatewayId,
+      userId,
+      depth: 1,
+    });
+  }
+
+  // Check time gap
+  const gap = Date.now() - activeConvo.lastMessageAt;
+
+  // Check if user explicitly wants a new conversation
+  const wantsNew = detectNewConversationIntent(newMessage);
+
+  // Under timeout AND no explicit intent - same conversation
+  if (gap < CONVERSATION_TIMEOUT_MS && !wantsNew) {
+    await convexClient.mutation(api.functions.conversations.updateMessageCount, { id: activeConvo._id });
+    return activeConvo._id;
+  }
+
+  // Over timeout - new conversation
+  const isRelated = checkTopicRelation(
+    activeConvo.summary || activeConvo.title || "",
+    newMessage
+  );
+
+  // Close the old conversation
+  await convexClient.mutation(api.functions.conversations.close, {
+    id: activeConvo._id,
+  });
+
+  // Create new one, chain if related
+  const newConvoId = await convexClient.mutation(api.functions.conversations.create, {
+    sessionId,
+    gatewayId,
+    userId,
+    previousConvoId: isRelated ? activeConvo._id : undefined,
+    depth: isRelated ? activeConvo.depth + 1 : 1,
+  });
+
+  return newConvoId;
+}
+
+/**
+ * Detect if the user explicitly wants to start a new conversation.
+ */
+function detectNewConversationIntent(message: string): boolean {
+  const lower = message.toLowerCase().trim();
+  const patterns = [
+    /new (conversation|convo|topic|subject|chat)/,
+    /move on/,
+    /change (the )?(subject|topic)/,
+    /let'?s talk about something else/,
+    /start (a )?(new|fresh)/,
+    /different (topic|subject)/,
+    /anyway[,.]?\s/,  // "Anyway, ..." as topic shift (only if followed by more text)
+    /^(ok|okay|alright|so)\s*,?\s*(new topic|next|moving on)/i,
+  ];
+  return patterns.some((p) => p.test(lower));
+}
+
+/**
+ * Simple keyword overlap check for MVP.
+ * Returns true if there are at least 2 significant words in common.
+ */
+function checkTopicRelation(previousSummary: string, newMessage: string): boolean {
+  const prevWords = new Set(
+    previousSummary.toLowerCase().split(/\s+/).filter((w) => w.length > 3)
+  );
+  if (prevWords.size === 0) return false;
+
+  const newWords = newMessage.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+  const overlap = newWords.filter((w) => prevWords.has(w)).length;
+  return overlap >= 2;
+}
+
+/**
+ * Build conversation chain context for the system prompt.
+ * Returns formatted string with previous conversation summaries.
+ */
+export async function buildConversationChainContext(
+  conversationId: Id<"conversations">
+): Promise<string> {
+  const chain = await convexClient.query(api.functions.conversations.getChain, {
+    conversationId,
+    maxDepth: 5,
+  });
+
+  if (chain.length <= 1) return "";
+
+  // Skip the current conversation (first in chain), format the rest
+  const previousConvos = chain.slice(1);
+  if (previousConvos.length === 0) return "";
+
+  let context = "\n\n## Previous related conversations:\n";
+  for (const convo of previousConvos) {
+    if (!convo.summary && !convo.title) continue;
+    context += `\n### ${convo.title || "Untitled conversation"}\n`;
+    if (convo.summary) context += `${convo.summary}\n`;
+    if (convo.decisions && convo.decisions.length > 0) {
+      context += "Decisions made:\n";
+      for (const d of convo.decisions) {
+        context += `- ${d.what}${d.reasoning ? ` (${d.reasoning})` : ""}\n`;
+      }
+    }
+    if (convo.topics && convo.topics.length > 0) {
+      context += `Topics: ${convo.topics.join(", ")}\n`;
+    }
+  }
+
+  return context;
+}

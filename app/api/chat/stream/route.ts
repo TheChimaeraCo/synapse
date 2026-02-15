@@ -1,0 +1,437 @@
+import { NextRequest } from "next/server";
+import { getGatewayContext, GatewayError } from "@/lib/gateway-context";
+import { convexClient } from "@/lib/convex";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { buildContext } from "@/lib/contextBuilder";
+import { extractKnowledge } from "@/lib/knowledgeExtractor";
+import { executeTools, toProviderTools } from "@/lib/toolExecutor";
+import { selectModel, DEFAULT_ROUTING } from "@/lib/modelRouter";
+import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
+import { parseSlashCommand } from "@/lib/slashCommands";
+import { postResponseHook } from "@/lib/postResponseHook";
+import { getThinkingParams, type ThinkingLevel } from "@/lib/thinkingLevels";
+import { createHash } from "crypto";
+import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPrompt, isolateToolContext } from "@/lib/promptDefense";
+
+const MODEL_COSTS: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
+  "claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
+  "claude-opus-4-20250514": { inputPerMillion: 15, outputPerMillion: 75 },
+  "claude-haiku-3-20250514": { inputPerMillion: 0.25, outputPerMillion: 1.25 },
+};
+
+function calculateCost(model: string, input: number, output: number): number {
+  const costs = MODEL_COSTS[model] || { inputPerMillion: 3, outputPerMillion: 15 };
+  return (input / 1_000_000 * costs.inputPerMillion) + (output / 1_000_000 * costs.outputPerMillion);
+}
+
+function sseEvent(data: Record<string, any>): string {
+  return `data: ${JSON.stringify(data)}\n\n`;
+}
+
+export async function POST(req: NextRequest) {
+  let ctx;
+  try {
+    ctx = await getGatewayContext(req);
+  } catch (err) {
+    const status = err instanceof GatewayError ? err.statusCode : 401;
+    const message = err instanceof Error ? err.message : "Unauthorized";
+    return new Response(JSON.stringify({ error: message }), { status });
+  }
+
+  const { sessionId, content, gatewayId: bodyGatewayId } = await req.json();
+  const userId = ctx.userId;
+  const gatewayId = ctx.gatewayId;
+
+  if (!sessionId || !content?.trim()) {
+    return new Response(JSON.stringify({ error: "sessionId and content are required" }), { status: 400 });
+  }
+
+  // === Prompt Defense: Input validation ===
+  let defenseConfigRaw: Record<string, string> = {};
+  try {
+    defenseConfigRaw = await convexClient.query(api.functions.gatewayConfig.getMultiple, {
+      gatewayId: gatewayId as Id<"gateways">,
+      keys: ["security_defense_enabled", "security_max_input_length", "security_rate_limit_per_minute", "security_threat_threshold"],
+    });
+  } catch {
+    defenseConfigRaw = await convexClient.query(api.functions.config.getMultiple, {
+      keys: ["security_defense_enabled", "security_max_input_length", "security_rate_limit_per_minute", "security_threat_threshold"],
+    });
+  }
+  const defenseConfig = parseDefenseConfig(defenseConfigRaw);
+
+  const inputDefense = runInputDefense(userId, content.trim(), "user", defenseConfig);
+  if (!inputDefense.allowed) {
+    console.warn(`[DEFENSE] Blocked input from ${userId}: ${inputDefense.blocked}`, { flags: inputDefense.flags, score: inputDefense.threatScore });
+    return new Response(JSON.stringify({ error: "Message blocked by security policy", reason: inputDefense.blocked }), { status: 403 });
+  }
+  // Use sanitized content from here on
+  const sanitizedContent = inputDefense.sanitizedContent || content.trim();
+
+  // Check slash commands first
+  const cmdResult = parseSlashCommand(sanitizedContent);
+  if (cmdResult.handled) {
+    // Handle side effects
+    if (cmdResult.action === "set_thinking" && cmdResult.args?.level) {
+      await convexClient.mutation(api.functions.sessions.updateMeta, {
+        id: sessionId as Id<"sessions">,
+        meta: { thinkingLevel: cmdResult.args.level },
+      });
+    }
+
+    const stream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode(sseEvent({ type: "command", command: cmdResult.command, action: cmdResult.action, args: cmdResult.args })));
+        if (cmdResult.response) {
+          controller.enqueue(encoder.encode(sseEvent({ type: "token", content: cmdResult.response })));
+        }
+        controller.enqueue(encoder.encode(sseEvent({ type: "done" })));
+        controller.close();
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  // Get session doc
+  const sessionDoc = await convexClient.query(api.functions.sessions.get, {
+    id: sessionId as Id<"sessions">,
+  });
+  if (!sessionDoc) {
+    return new Response(JSON.stringify({ error: "Session not found" }), { status: 404 });
+  }
+
+  // Create user message (seq auto-assigned by Convex)
+  const messageId = await convexClient.mutation(api.functions.messages.create, {
+    gatewayId: gatewayId as Id<"gateways">,
+    sessionId: sessionId as Id<"sessions">,
+    agentId: sessionDoc.agentId,
+    role: "user",
+    content: sanitizedContent,
+  });
+
+  // Budget check
+  const budgetCheck = await convexClient.query(api.functions.usage.checkBudget, {
+    gatewayId: gatewayId as Id<"gateways">,
+  });
+
+  if (!budgetCheck.allowed) {
+    const blockedMsg = `I'm unable to respond right now. ${budgetCheck.reason || "Budget limit reached."} Please check your budget settings or try again later.`;
+    await convexClient.mutation(api.functions.messages.create, {
+      gatewayId: gatewayId as Id<"gateways">,
+      sessionId: sessionId as Id<"sessions">,
+      agentId: sessionDoc.agentId,
+      role: "assistant",
+      content: blockedMsg,
+    });
+
+    const stream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode(sseEvent({ type: "error", message: blockedMsg })));
+        controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId })));
+        controller.close();
+      },
+    });
+
+    return new Response(stream, {
+      headers: { "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no", "Cache-Control": "no-cache", Connection: "keep-alive" },
+    });
+  }
+
+  // Stream the AI response
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        controller.enqueue(encoder.encode(sseEvent({ type: "typing", status: true })));
+
+        // Build context
+        const { systemPrompt: rawSystemPrompt, messages: claudeMessages } = await buildContext(
+          sessionId, sessionDoc.agentId, sanitizedContent, 5000
+        );
+
+        // Layer 4: Embed canary token in system prompt
+        const systemPrompt = defenseConfig.enabled
+          ? embedCanaryInPrompt(rawSystemPrompt, sessionId as string)
+          : rawSystemPrompt;
+
+        const agent = await convexClient.query(api.functions.agents.get, { id: sessionDoc.agentId });
+        if (!agent) throw new Error("Agent not found");
+
+        // Get AI config (gateway-scoped with inheritance)
+        const getGwConfig = async (key: string) => {
+          try {
+            const result = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+              gatewayId: gatewayId as Id<"gateways">, key,
+            });
+            return result?.value || null;
+          } catch {
+            return await convexClient.query(api.functions.config.get, { key });
+          }
+        };
+        const [providerSlug, apiKey, configModel, authMethod] = await Promise.all([
+          getGwConfig("ai_provider"),
+          getGwConfig("ai_api_key"),
+          getGwConfig("ai_model"),
+          getGwConfig("ai_auth_method"),
+        ]);
+
+        const provider = providerSlug || "anthropic";
+        const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
+        if (!key) throw new Error("No API key configured");
+
+        const envMap: Record<string, string> = {
+          anthropic: "ANTHROPIC_API_KEY",
+          openai: "OPENAI_API_KEY",
+          google: "GEMINI_API_KEY",
+        };
+        if (envMap[provider]) process.env[envMap[provider]] = key;
+
+        const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
+        registerBuiltInApiProviders();
+
+        const routingRaw = await getGwConfig("model_routing");
+        const routingConfig: ModelRoutingConfig | null = routingRaw ? JSON.parse(routingRaw) : null;
+
+        const enabledTools = await convexClient.query(api.functions.tools.getEnabled, { gatewayId: gatewayId as Id<"gateways"> });
+        
+        // Always include builtin tools - use DB tools if they exist, otherwise fallback to builtins
+        const { BUILTIN_TOOLS } = await import("@/lib/builtinTools");
+        const builtinToolDefs = BUILTIN_TOOLS.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
+        const allToolDefs = enabledTools.length > 0 ? enabledTools : builtinToolDefs;
+        const providerTools = toProviderTools(allToolDefs);
+        const taskType: TaskType = "tool_use";
+
+        const budgetState = {
+          allowed: true,
+          suggestedModel: budgetCheck.suggestedModel || undefined,
+          remainingUsd: undefined as number | undefined,
+        };
+
+        const modelId = selectModel(taskType, routingConfig, budgetState, agent.model || configModel || undefined);
+        const model = getModel(provider as any, modelId as any);
+        if (!model) throw new Error(`Model "${modelId}" not found`);
+
+        // Get thinking level from session metadata
+        const thinkingLevel = ((sessionDoc as any).meta?.thinkingLevel || "off") as ThinkingLevel;
+        const thinkingParams = getThinkingParams(thinkingLevel, provider);
+
+        // Transform messages, converting file references to vision content for images
+        const FILE_REF_RE = /\[file:([^\]:]+):([^\]]+)\]/g;
+        const IMAGE_EXTS = /\.(jpg|jpeg|png|gif|webp|svg)$/i;
+        const transformMessage = (m: any) => {
+          if (m.role !== "user") {
+            return { role: "assistant" as const, content: [{ type: "text" as const, text: m.content }], timestamp: Date.now() };
+          }
+          const fileRefs: { id: string; filename: string }[] = [];
+          let match;
+          const re = new RegExp(FILE_REF_RE);
+          while ((match = re.exec(m.content)) !== null) {
+            fileRefs.push({ id: match[1], filename: match[2] });
+          }
+          const textContent = m.content.replace(FILE_REF_RE, "").trim();
+          const imageRefs = fileRefs.filter(f => IMAGE_EXTS.test(f.filename));
+          if (imageRefs.length > 0) {
+            const parts: any[] = [];
+            for (const img of imageRefs) {
+              const fileUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/files/${img.id}`;
+              parts.push({ type: "image", source: { type: "url", url: fileUrl } });
+            }
+            if (textContent) parts.push({ type: "text", text: textContent });
+            return { role: "user" as const, content: parts, timestamp: Date.now() };
+          }
+          return { role: "user" as const, content: textContent || m.content, timestamp: Date.now() };
+        };
+
+        const context: any = {
+          systemPrompt,
+          messages: claudeMessages.map(transformMessage),
+          ...(providerTools ? { tools: providerTools } : {}),
+        };
+
+        const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key, ...thinkingParams };
+        if (agent.temperature !== undefined) options.temperature = agent.temperature;
+
+        // Cache check
+        const lastUserMsg = claudeMessages.filter((m: any) => m.role === "user").pop();
+        // Disable response cache - tools are always available (builtins),
+        // and caching breaks conversation context (same message in different convos = different answer)
+        const cacheHash = null;
+
+        if (cacheHash) {
+          const cached = await convexClient.query(api.functions.responseCache.getCached, { hash: cacheHash });
+          if (cached) {
+            controller.enqueue(encoder.encode(sseEvent({ type: "token", content: cached.response })));
+            const msgId = await convexClient.mutation(api.functions.messages.create, {
+              gatewayId: gatewayId as Id<"gateways">, sessionId: sessionId as Id<"sessions">, agentId: sessionDoc.agentId,
+              role: "assistant", content: cached.response, tokens: cached.tokens, cost: cached.cost, model: cached.model, latencyMs: 0,
+              ...(conversationId ? { conversationId } : {}),
+            });
+            controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId })));
+            controller.close();
+            return;
+          }
+        }
+
+        const startMs = Date.now();
+        let fullContent = "";
+        let usage = { input: 0, output: 0 };
+        const MAX_TOOL_ROUNDS = 5;
+
+        for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+          const toolCalls: Array<{ type: "toolCall"; id: string; name: string; arguments: Record<string, any> }> = [];
+          let roundText = "";
+
+          const aiStream = streamSimple(model, context, options);
+          for await (const event of aiStream) {
+            if (event.type === "text_delta") {
+              roundText += event.delta;
+              controller.enqueue(encoder.encode(sseEvent({ type: "token", content: event.delta })));
+            } else if (event.type === "toolcall_end") {
+              toolCalls.push(event.toolCall);
+            } else if (event.type === "done") {
+              usage.input += event.message.usage.input;
+              usage.output += event.message.usage.output;
+              context.messages.push(event.message);
+            }
+          }
+
+          fullContent += roundText;
+
+          if (toolCalls.length === 0) break;
+
+          controller.enqueue(encoder.encode(sseEvent({ type: "tool_use", tools: toolCalls.map(t => t.name) })));
+
+          // Create worker agent records for each tool call
+          const workerIds: string[] = [];
+          for (const tc of toolCalls) {
+            try {
+              const wId = await convexClient.mutation(api.functions.workerAgents.create, {
+                parentSessionId: sessionId as Id<"sessions">,
+                gatewayId: gatewayId as Id<"gateways">,
+                label: tc.name,
+                model: modelId,
+                context: JSON.stringify(tc.arguments).slice(0, 200),
+              });
+              workerIds.push(wId);
+              controller.enqueue(encoder.encode(sseEvent({ type: "agent_start", agentId: wId, label: tc.name })));
+            } catch { workerIds.push(""); }
+          }
+
+          const toolContext = {
+            gatewayId: gatewayId as string,
+            agentId: sessionDoc.agentId as string,
+            sessionId: sessionId as string,
+          };
+          const toolResults = await executeTools(toolCalls, toolContext, enabledTools as any);
+
+          // Complete worker agents
+          for (let i = 0; i < toolResults.length; i++) {
+            const wId = workerIds[i];
+            if (!wId) continue;
+            try {
+              await convexClient.mutation(api.functions.workerAgents.complete, {
+                id: wId as Id<"workerAgents">,
+                status: toolResults[i].isError ? "failed" : "completed",
+                result: toolResults[i].content.slice(0, 500),
+                error: toolResults[i].isError ? toolResults[i].content.slice(0, 300) : undefined,
+              });
+              controller.enqueue(encoder.encode(sseEvent({ type: "agent_complete", agentId: wId })));
+            } catch {}
+          }
+
+          for (const result of toolResults) {
+            context.messages.push({
+              role: "toolResult" as const,
+              toolCallId: result.toolCallId,
+              toolName: result.toolName,
+              content: [{ type: "text" as const, text: result.content }],
+              isError: result.isError,
+              timestamp: Date.now(),
+            });
+          }
+
+          // Topic classification handled async by postResponseHook
+        }
+
+        const latencyMs = Date.now() - startMs;
+
+        // === Prompt Defense: Output validation ===
+        if (defenseConfig.enabled && fullContent) {
+          const outputDefense = runOutputDefense(fullContent, sessionId as string, defenseConfig);
+          if (!outputDefense.allowed) {
+            console.warn(`[DEFENSE] Blocked output for session ${sessionId}: ${outputDefense.blocked}`, { flags: outputDefense.flags });
+            fullContent = "I'm sorry, but I can't provide that response due to security constraints.";
+            controller.enqueue(encoder.encode(sseEvent({ type: "clear" })));
+            controller.enqueue(encoder.encode(sseEvent({ type: "token", content: fullContent })));
+          }
+        }
+
+        const cost = calculateCost(modelId, usage.input, usage.output);
+
+        const msgId = await convexClient.mutation(api.functions.messages.create, {
+          gatewayId: gatewayId as Id<"gateways">,
+          sessionId: sessionId as Id<"sessions">,
+          agentId: sessionDoc.agentId,
+          role: "assistant",
+          content: fullContent,
+          tokens: usage,
+          cost,
+          model: modelId,
+          latencyMs,
+        });
+
+        await convexClient.mutation(api.functions.usage.record, {
+          gatewayId: gatewayId as Id<"gateways">,
+          agentId: sessionDoc.agentId,
+          sessionId: sessionId as Id<"sessions">,
+          messageId: msgId,
+          model: modelId,
+          inputTokens: usage.input,
+          outputTokens: usage.output,
+          cost,
+        });
+
+        if (cacheHash && enabledTools.length === 0) {
+          await convexClient.mutation(api.functions.responseCache.setCache, {
+            hash: cacheHash, response: fullContent, model: modelId, tokens: usage, cost,
+          });
+        }
+
+        controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId })));
+
+        extractKnowledge(msgId, sessionDoc.agentId, gatewayId as Id<"gateways">, sessionId as Id<"sessions">).catch(console.error);
+
+        // Fire async topic classification (non-blocking)
+        postResponseHook(sessionId as string, gatewayId as string).catch((err) =>
+          console.error("[PostResponseHook] Error:", err)
+        );
+      } catch (err: any) {
+        console.error("SSE stream error:", err);
+        controller.enqueue(encoder.encode(sseEvent({ type: "error", message: err.message || "Stream error" })));
+      } finally {
+        try { controller.close(); } catch {}
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
