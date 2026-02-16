@@ -758,6 +758,26 @@ export default defineSchema({
   }).index("by_telegramId", ["telegramId"])
     .index("by_status", ["status"]),
 
+  // --- PARSE HISTORY ---
+  parseHistory: defineTable({
+    gatewayId: v.id("gateways"),
+    fileName: v.string(),
+    fileSize: v.number(),
+    textLength: v.number(),
+    schema: v.string(),
+    prompt: v.optional(v.string()),
+    result: v.optional(v.string()),
+    status: v.union(v.literal("success"), v.literal("error")),
+    error: v.optional(v.string()),
+    model: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    processingMs: v.number(),
+    itemCount: v.optional(v.number()),
+    sourceIp: v.optional(v.string()),
+  })
+    .index("by_gateway", ["gatewayId"])
+    .index("by_status", ["status"]),
+
   // --- PUSH SUBSCRIPTIONS ---
   pushSubscriptions: defineTable({
     endpoint: v.string(),

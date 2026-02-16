@@ -31,6 +31,7 @@ import {
   XCircle,
   Zap,
 ArrowRight,
+  ClipboardList,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import dynamic from "next/dynamic";
@@ -109,6 +110,7 @@ const navLinks = [
 const secondaryNavLinks = [
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/analytics", label: "Analytics", icon: Zap },
+  { href: "/parse-history", label: "Parse History", icon: ClipboardList },
   { href: "/docs", label: "API Docs", icon: FileText },
   { href: "/admin/audit", label: "Audit Log", icon: Shield },
 ];

@@ -171,13 +171,78 @@ Rules:
       return NextResponse.json({ success: false, error: "AI returned invalid JSON", rawResponse: aiResult.slice(0, 500) }, { status: 422 });
     }
 
+    const processingMs = Date.now() - startTime;
+
+    // Count items extracted
+    let itemCount: number | undefined;
+    if (parsed) {
+      const vals = Object.values(parsed);
+      const arr = vals.find((v) => Array.isArray(v));
+      if (arr) itemCount = (arr as any[]).length;
+    }
+
+    // Log to parse history
+    try {
+      let logGatewayId = gatewayId;
+      if (!logGatewayId) {
+        const gateways = await convexClient.query(api.functions.gateways.list, {});
+        if (gateways?.length) logGatewayId = gateways[0]._id;
+      }
+      if (logGatewayId) {
+        await convexClient.mutation(api.functions.parseHistory.create, {
+          gatewayId: logGatewayId as any,
+          fileName: fileName || "unknown",
+          fileSize: buffer.length,
+          textLength: pdfText.length,
+          schema: schemaStr,
+          prompt: promptStr || undefined,
+          result: JSON.stringify(parsed),
+          status: "success" as const,
+          model: modelId,
+          provider,
+          processingMs,
+          itemCount,
+          sourceIp: request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || undefined,
+        });
+      }
+    } catch (logErr) {
+      console.error("[parse-pdf] Failed to log parse history:", logErr);
+    }
+
     return NextResponse.json({
       success: true,
       data: parsed,
-      metadata: { pages: numPages, textLength: pdfText.length, model: modelId, provider, processingMs: Date.now() - startTime },
+      metadata: { pages: numPages, textLength: pdfText.length, model: modelId, provider, processingMs },
     });
   } catch (err: any) {
     console.error("[parse-pdf] Error:", err);
+
+    // Log error to parse history
+    try {
+      const formData2 = await request.clone().formData().catch(() => null);
+      const gatewayId2 = formData2?.get("gatewayId") as string | null;
+      let logGatewayId = gatewayId2;
+      if (!logGatewayId) {
+        const gateways = await convexClient.query(api.functions.gateways.list, {});
+        if (gateways?.length) logGatewayId = gateways[0]._id;
+      }
+      if (logGatewayId) {
+        await convexClient.mutation(api.functions.parseHistory.create, {
+          gatewayId: logGatewayId as any,
+          fileName: "unknown",
+          fileSize: 0,
+          textLength: 0,
+          schema: "",
+          status: "error" as const,
+          error: err.message || "Internal server error",
+          processingMs: Date.now() - startTime,
+          sourceIp: request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || undefined,
+        });
+      }
+    } catch (logErr) {
+      console.error("[parse-pdf] Failed to log error to parse history:", logErr);
+    }
+
     return NextResponse.json({ success: false, error: err.message || "Internal server error" }, { status: 500 });
   }
 }

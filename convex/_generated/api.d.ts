@@ -41,6 +41,7 @@ import type * as functions_migration from "../functions/migration.js";
 import type * as functions_modelRoutes from "../functions/modelRoutes.js";
 import type * as functions_notifications from "../functions/notifications.js";
 import type * as functions_onboarding from "../functions/onboarding.js";
+import type * as functions_parseHistory from "../functions/parseHistory.js";
 import type * as functions_presence from "../functions/presence.js";
 import type * as functions_projects from "../functions/projects.js";
 import type * as functions_pushSubscriptions from "../functions/pushSubscriptions.js";
@@ -106,6 +107,7 @@ declare const fullApi: ApiFromModules<{
   "functions/modelRoutes": typeof functions_modelRoutes;
   "functions/notifications": typeof functions_notifications;
   "functions/onboarding": typeof functions_onboarding;
+  "functions/parseHistory": typeof functions_parseHistory;
   "functions/presence": typeof functions_presence;
   "functions/projects": typeof functions_projects;
   "functions/pushSubscriptions": typeof functions_pushSubscriptions;
