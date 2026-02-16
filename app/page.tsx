@@ -14,6 +14,8 @@ import { HealthStrip } from "@/components/dashboard/HealthStrip";
 import { RecentConversations } from "@/components/dashboard/RecentConversations";
 import { PM2Panel } from "@/components/dashboard/PM2Panel";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
+import { QuickActions } from "@/components/dashboard/QuickActions";
+import { ActiveAgents } from "@/components/dashboard/ActiveAgents";
 import { HelpTooltip } from "@/components/HelpTooltip";
 
 interface DetailedStats {
@@ -79,6 +81,12 @@ export default function DashboardPage() {
               {activeGateway?.name ? `${activeGateway.name} - ` : ""}{dateStr}
             </p>
           </div>
+
+          {/* Quick Actions */}
+          <QuickActions />
+
+          {/* Active Agents (only renders if any running) */}
+          <ActiveAgents />
 
           {/* Getting Started (for new users) */}
           <GettingStarted
