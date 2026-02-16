@@ -117,7 +117,7 @@ export async function resolveConversation(
 /**
  * Detect if the user explicitly wants to start a new conversation.
  */
-function detectNewConversationIntent(message: string): boolean {
+export function detectNewConversationIntent(message: string): boolean {
   const lower = message.toLowerCase().trim();
   const patterns = [
     /new (conversation|convo|topic|subject|chat)/,
@@ -136,7 +136,7 @@ function detectNewConversationIntent(message: string): boolean {
  * Simple keyword overlap check for MVP.
  * Returns true if there are at least 2 significant words in common.
  */
-function checkTopicRelation(previousSummary: string, newMessage: string): boolean {
+export function checkTopicRelation(previousSummary: string, newMessage: string): boolean {
   const prevWords = new Set(
     previousSummary.toLowerCase().split(/\s+/).filter((w) => w.length > 3)
   );
