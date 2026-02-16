@@ -28,13 +28,23 @@ const HAIKU_MODELS: Record<string, string> = {
 
 export async function classifyTopic(
   recentMessages: MessageForClassification[],
-  currentConversation: ConversationContext | null
+  currentConversation: ConversationContext | null,
+  gatewayId?: string
 ): Promise<ClassificationResult> {
   try {
-    // Use same provider/key as main chat
+    // Use same provider/key as main chat - try gateway config first, fall back to system config
+    const getConfig = async (k: string) => {
+      if (gatewayId) {
+        try {
+          const r = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, { gatewayId: gatewayId as any, key: k });
+          if (r?.value) return r.value;
+        } catch {}
+      }
+      return await convexClient.query(api.functions.config.get, { key: k });
+    };
     const [providerSlug, apiKey] = await Promise.all([
-      convexClient.query(api.functions.config.get, { key: "ai_provider" }),
-      convexClient.query(api.functions.config.get, { key: "ai_api_key" }),
+      getConfig("ai_provider"),
+      getConfig("ai_api_key"),
     ]);
 
     const provider = providerSlug || "anthropic";

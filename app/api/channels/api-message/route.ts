@@ -5,6 +5,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { buildContext } from "@/lib/contextBuilder";
 import { executeTools, toProviderTools } from "@/lib/toolExecutor";
 import { selectModel } from "@/lib/modelRouter";
+import { resolveConversation } from "@/lib/conversationManager";
 import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { BUILTIN_TOOLS } from "@/lib/builtinTools";
 
@@ -61,11 +62,25 @@ async function validateAndSetup(req: NextRequest) {
     externalUserId: externalUserId || "api-user",
   });
 
+  // Resolve conversation (segmentation)
+  let conversationId: Id<"conversations"> | undefined;
+  try {
+    conversationId = await resolveConversation(
+      sessionId as Id<"sessions">,
+      gatewayId as Id<"gateways">,
+      undefined,
+      message
+    );
+    console.log(`[API Channel] Resolved conversation: ${conversationId}`);
+  } catch (err) {
+    console.error("[API Channel] Failed to resolve conversation:", err);
+  }
+
   await convexClient.mutation(api.functions.messages.create, {
-    gatewayId, sessionId, agentId, role: "user", content: message, metadata: metadata || undefined,
+    gatewayId, sessionId, agentId, role: "user", content: message, metadata: metadata || undefined, conversationId,
   });
 
-  return { apiKey, message, stream, gatewayId, agentId, sessionId };
+  return { apiKey, message, stream, gatewayId, agentId, sessionId, conversationId };
 }
 
 async function getAIConfig(gatewayId: Id<"gateways">, agentId: Id<"agents">) {
@@ -141,7 +156,7 @@ export async function POST(req: NextRequest) {
     if (!model) throw new Error(`Model "${modelId}" not found`);
 
     const { systemPrompt, messages: ctxMessages } = await buildContext(
-      ctx.sessionId as string, ctx.agentId as string, "", 5000
+      ctx.sessionId as string, ctx.agentId as string, "", 5000, ctx.conversationId
     );
 
     const providerTools = toProviderTools(config.allToolDefs);
@@ -207,7 +222,7 @@ export async function POST(req: NextRequest) {
             // Store response
             await convexClient.mutation(api.functions.messages.create, {
               gatewayId: ctx.gatewayId, sessionId: ctx.sessionId, agentId: ctx.agentId,
-              role: "assistant", content: fullContent, tokens: usage, model: modelId,
+              role: "assistant", content: fullContent, tokens: usage, model: modelId, conversationId: ctx.conversationId,
             });
 
             controller.enqueue(encoder.encode(sseEvent({ type: "done", sessionId: ctx.sessionId, model: modelId, tokens: usage })));
@@ -262,7 +277,7 @@ export async function POST(req: NextRequest) {
 
     await convexClient.mutation(api.functions.messages.create, {
       gatewayId: ctx.gatewayId, sessionId: ctx.sessionId, agentId: ctx.agentId,
-      role: "assistant", content: fullContent, tokens: usage, model: modelId, latencyMs,
+      role: "assistant", content: fullContent, tokens: usage, model: modelId, latencyMs, conversationId: ctx.conversationId,
     });
 
     return NextResponse.json({

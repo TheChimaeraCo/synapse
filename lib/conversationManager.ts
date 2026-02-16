@@ -38,16 +38,24 @@ export async function resolveConversation(
 
   // Determine if we should run AI topic classification
   let topicShifted = false;
-  if (!wantsNew && gap < CONVERSATION_TIMEOUT_MS && activeConvo.messageCount >= CLASSIFY_EVERY_N_MESSAGES && activeConvo.messageCount % CLASSIFY_EVERY_N_MESSAGES === 0) {
+  const nextCount = activeConvo.messageCount + 1;
+  const shouldClassify = nextCount >= CLASSIFY_EVERY_N_MESSAGES;
+  console.log(`[ConvoSegmentation] Message ${nextCount} in conversation, shouldClassify: ${shouldClassify}`);
+  if (!wantsNew && gap < CONVERSATION_TIMEOUT_MS && shouldClassify) {
     try {
-      // Get recent messages for classification
+      // Get recent messages for classification + include the new incoming message
       const recentMsgs = await convexClient.query(api.functions.messages.listByConversation, {
         conversationId: activeConvo._id,
         limit: 10,
       });
+      const msgsForClassification = [
+        ...recentMsgs.map((m: any) => ({ role: m.role, content: m.content })),
+        { role: "user" as const, content: newMessage },
+      ];
       const classification = await classifyTopic(
-        recentMsgs.map((m: any) => ({ role: m.role, content: m.content })),
-        { title: activeConvo.title, tags: activeConvo.tags, summary: activeConvo.summary }
+        msgsForClassification,
+        { title: activeConvo.title, tags: activeConvo.tags, summary: activeConvo.summary },
+        gatewayId as string
       );
       topicShifted = !classification.sameTopic;
       if (topicShifted) {
