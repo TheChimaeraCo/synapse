@@ -44,6 +44,7 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith("/api/push/vapid") ||
     pathname.startsWith("/api/setup") ||
     pathname.startsWith("/api/channels/api-message") ||
+    pathname.startsWith("/api/parse-pdf") ||
     // Config routes: setup-related endpoints are public (needed for setup wizard before gateway exists)
     // All other /api/config/* routes require session auth via normal flow
     pathname === "/api/config/setup-complete" ||
