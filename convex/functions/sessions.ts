@@ -140,6 +140,40 @@ export const archive = mutation({
   },
 });
 
+export const rename = mutation({
+  args: { id: v.id("sessions"), title: v.string() },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.id);
+    if (!session) throw new Error("Session not found");
+    await ctx.db.patch(args.id, { title: args.title });
+  },
+});
+
+export const deleteSession = mutation({
+  args: { id: v.id("sessions") },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.id);
+    if (!session) throw new Error("Session not found");
+    // Delete all messages in this session
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.id))
+      .collect();
+    for (const msg of messages) {
+      await ctx.db.delete(msg._id);
+    }
+    // Delete conversations
+    const convos = await ctx.db
+      .query("conversations")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.id))
+      .collect();
+    for (const c of convos) {
+      await ctx.db.delete(c._id);
+    }
+    await ctx.db.delete(args.id);
+  },
+});
+
 export const updateLastMessage = internalMutation({
   args: { id: v.id("sessions") },
   handler: async (ctx, args) => {

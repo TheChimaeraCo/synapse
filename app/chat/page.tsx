@@ -233,6 +233,8 @@ export default function ChatPage() {
                   channel={activeChannel}
                   onToggleHistory={() => setConvoSidebarOpen((v) => !v)}
                   historyOpen={convoSidebarOpen}
+                  sessionId={sessionId}
+                  onSessionDeleted={() => { setSessionId(null); }}
                 />
               </div>
             </div>

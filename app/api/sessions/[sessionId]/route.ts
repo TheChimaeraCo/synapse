@@ -24,3 +24,47 @@ export async function GET(
     return handleGatewayError(err);
   }
 }
+
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ sessionId: string }> }
+) {
+  try {
+    await getGatewayContext(req);
+    const { sessionId } = await params;
+    const convex = getConvexClient();
+    const body = await req.json();
+
+    if (body.title !== undefined) {
+      await convex.mutation(api.functions.sessions.rename, {
+        id: sessionId as Id<"sessions">,
+        title: body.title,
+      });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    console.error("Session update error:", err);
+    return handleGatewayError(err);
+  }
+}
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ sessionId: string }> }
+) {
+  try {
+    await getGatewayContext(req);
+    const { sessionId } = await params;
+    const convex = getConvexClient();
+
+    await convex.mutation(api.functions.sessions.deleteSession, {
+      id: sessionId as Id<"sessions">,
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    console.error("Session delete error:", err);
+    return handleGatewayError(err);
+  }
+}

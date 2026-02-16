@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useChat } from "@/hooks/useChat";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ArrowDown } from "lucide-react";
 
 interface ConversationBookmark {
   _id: string;
@@ -21,9 +22,12 @@ interface ConversationBookmark {
 
 export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scrollToSeq?: number | null }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(0);
   const prevStreamRef = useRef("");
   const initialScrollDone = useRef(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const userScrolledUp = useRef(false);
   const { data: session } = useSession();
   const gatewayId = (session?.user as any)?.gatewayId;
   const [conversations, setConversations] = useState<ConversationBookmark[]>([]);
@@ -86,16 +90,38 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     }
   }, [loaded]);
 
-  // Auto-scroll on new messages / streaming
+  // Track scroll position to show/hide scroll-to-bottom button
+  useEffect(() => {
+    const container = scrollContainerRef.current?.closest(".overflow-y-auto") as HTMLElement | null;
+    if (!container) return;
+    const handleScroll = () => {
+      const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      const isNearBottom = distFromBottom < 100;
+      setShowScrollBtn(!isNearBottom);
+      userScrolledUp.current = !isNearBottom;
+    };
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [loaded]);
+
+  // Auto-scroll on new messages / streaming (only if user hasn't scrolled up)
   useEffect(() => {
     const newCount = messages.length;
     const newStream = streamingContent || "";
     if (newCount > prevCountRef.current || newStream.length > prevStreamRef.current.length) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      if (!userScrolledUp.current) {
+        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
     }
     prevCountRef.current = newCount;
     prevStreamRef.current = newStream;
   }, [messages.length, streamingContent]);
+
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    userScrolledUp.current = false;
+    setShowScrollBtn(false);
+  }, []);
 
   if (!loaded) {
     return (
@@ -108,7 +134,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   }
 
   return (
-    <div className="flex flex-1 flex-col px-4 py-6 sm:px-6">
+    <div ref={scrollContainerRef} className="flex flex-1 flex-col px-4 py-6 sm:px-6 relative">
       {messages.length === 0 && !isStreaming && (
         <div className="flex flex-1 items-center justify-center">
           <p className="text-muted-foreground">
@@ -162,6 +188,17 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
       </div>
 
       <div ref={bottomRef} />
+
+      {/* Scroll to bottom button */}
+      {showScrollBtn && (
+        <button
+          onClick={scrollToBottom}
+          className="sticky bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.1] border border-white/[0.15] backdrop-blur-xl text-xs text-zinc-300 hover:bg-white/[0.15] hover:text-white transition-all shadow-lg"
+        >
+          <ArrowDown className="h-3.5 w-3.5" />
+          New messages
+        </button>
+      )}
     </div>
   );
 }

@@ -575,14 +575,23 @@ const fileWrite: BuiltinTool = {
   category: "filesystem",
   requiresApproval: false,
   parameters: Type.Object({
-    path: Type.String({ description: "File path (relative to workspace)" }),
+    path: Type.String({ description: "File path (relative to workspace or absolute)" }),
     content: Type.String({ description: "Content to write" }),
     append: Type.Optional(Type.Boolean({ description: "Append instead of overwrite (default: false)" })),
   }),
   handler: async (args, context) => {
     try {
-      const filePath = resolveSafePath(args.path, await getWorkspaceRoot(context.gatewayId));
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const workspaceRoot = await getWorkspaceRoot(context.gatewayId);
+      // Handle both absolute and relative paths
+      const filePath = path.isAbsolute(args.path)
+        ? resolveSafePath(args.path, workspaceRoot)
+        : resolveSafePath(args.path, workspaceRoot);
+      
+      // Ensure parent directory exists
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
       
       if (args.append) {
         fs.appendFileSync(filePath, args.content, "utf-8");
@@ -590,8 +599,16 @@ const fileWrite: BuiltinTool = {
         fs.writeFileSync(filePath, args.content, "utf-8");
       }
 
+      // Verify the write actually persisted
+      if (!fs.existsSync(filePath)) {
+        return `File write error: File was written but does not exist at ${filePath}. Check filesystem permissions.`;
+      }
       const stats = fs.statSync(filePath);
-      return `File ${args.append ? "appended" : "written"}: ${filePath} (${stats.size} bytes)`;
+      const verify = fs.readFileSync(filePath, "utf-8");
+      if (verify.length === 0 && args.content.length > 0) {
+        return `File write error: File exists at ${filePath} but content is empty. Write may not have persisted.`;
+      }
+      return `File ${args.append ? "appended" : "written"}: ${filePath} (${stats.size} bytes, verified)`;
     } catch (e: any) {
       return `File write error: ${e.message}`;
     }
