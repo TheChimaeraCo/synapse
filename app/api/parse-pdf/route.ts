@@ -84,6 +84,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const schemaStr = formData.get("schema") as string | null;
+    const promptStr = formData.get("prompt") as string | null;
     const gatewayId = formData.get("gatewayId") as string | null;
 
     if (!file) return NextResponse.json({ success: false, error: "No file provided" }, { status: 400 });
@@ -92,19 +93,31 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer());
     if (buffer.length === 0) return NextResponse.json({ success: false, error: "Empty file" }, { status: 400 });
 
-    // Extract text via child process (avoids Next.js bundling issues)
+    // Check if this is a text file (pre-extracted) or actual PDF
+    const fileName = file.name || "";
+    const fileType = file.type || "";
+    const isText = fileType.includes("text") || fileName.endsWith(".txt");
+
     let pdfText: string;
     let numPages: number;
-    try {
-      const result = extractPdfText(buffer);
-      pdfText = result.text;
-      numPages = result.numPages;
-    } catch (e: any) {
-      return NextResponse.json({ success: false, error: "PDF extraction failed: " + e.message }, { status: 422 });
+
+    if (isText) {
+      // Text already extracted - use directly
+      pdfText = buffer.toString("utf-8");
+      numPages = 1;
+    } else {
+      // Extract text from PDF via child process
+      try {
+        const result = extractPdfText(buffer);
+        pdfText = result.text;
+        numPages = result.numPages;
+      } catch (e: any) {
+        return NextResponse.json({ success: false, error: "PDF extraction failed: " + e.message }, { status: 422 });
+      }
     }
 
     if (!pdfText?.trim()) {
-      return NextResponse.json({ success: false, error: "No text extracted from PDF" }, { status: 422 });
+      return NextResponse.json({ success: false, error: "No text extracted from document" }, { status: 422 });
     }
 
     // AI config
@@ -124,6 +137,7 @@ export async function POST(request: NextRequest) {
     const model = getModel(provider as any, modelId as any);
     if (!model) return NextResponse.json({ success: false, error: `Model not found: ${modelId}` }, { status: 500 });
 
+    const extraPrompt = promptStr ? `\n\nAdditional instructions: ${promptStr}` : "";
     const context = {
       systemPrompt: `You are a document parser. Extract data from the following document text and return ONLY valid JSON matching the provided schema. No explanation, no markdown, no code blocks. Raw JSON only.
 
@@ -131,7 +145,7 @@ Rules:
 - If a field cannot be determined, use null
 - Include ALL line items found, do not skip any
 - Monetary values as numbers (6.80 not "$6.80")
-- Dates in ISO 8601 (YYYY-MM-DD) where possible`,
+- Dates in ISO 8601 (YYYY-MM-DD) where possible${extraPrompt}`,
       messages: [{
         role: "user" as const,
         content: `SCHEMA:\n${schemaStr}\n\nDOCUMENT TEXT:\n${pdfText.slice(0, 30000)}`,
