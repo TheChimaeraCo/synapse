@@ -79,7 +79,7 @@ export const updateSoulData = mutation({
 export const completeSoul = mutation({
   args: {
     gatewayId: v.id("gateways"),
-    userId: v.id("authUsers"),
+    userId: v.optional(v.id("authUsers")),
     soul: v.object({
       name: v.string(),
       emoji: v.optional(v.string()),
@@ -99,11 +99,14 @@ export const completeSoul = mutation({
     }),
   },
   handler: async (ctx, args) => {
-    // Get onboarding state for birth conversation
-    const state = await ctx.db
-      .query("onboardingState")
-      .withIndex("by_user_gateway", (q) => q.eq("userId", args.userId).eq("gatewayId", args.gatewayId))
-      .first();
+    // Get onboarding state for birth conversation (optional - API channels may not have userId)
+    let state = null;
+    if (args.userId) {
+      state = await ctx.db
+        .query("onboardingState")
+        .withIndex("by_user_gateway", (q) => q.eq("userId", args.userId!).eq("gatewayId", args.gatewayId))
+        .first();
+    }
 
     // Get the agent for this gateway
     const agents = await ctx.db

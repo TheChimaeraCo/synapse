@@ -194,6 +194,7 @@ export async function buildContext(
   // --- Layer 1: Identity/Soul ---
   let onboardingPrompt = "";
   let useTemplateBase = false;
+  let soulSection = "";
   try {
     const soul = await convexClient.query(api.functions.onboarding.getSoul, {
       gatewayId: agent.gatewayId,
@@ -220,11 +221,39 @@ Learn about them:
 As you learn things, naturally reflect them back. After a few exchanges when you feel you know enough, tell them you're ready and summarize who you've decided to become. Then just BE that from then on.
 
 You don't have a name yet. You don't have a personality yet. You're discovering both right now through this conversation. Be real.`;
+    } else {
+      // Build soul section from database
+      const soulParts: string[] = [];
+      if (soul.name) soulParts.push(`Your name is ${soul.name}.`);
+      if (soul.personality) soulParts.push(`Personality: ${soul.personality}`);
+      if (soul.purpose) soulParts.push(`Purpose: ${soul.purpose}`);
+      if (soul.tone) soulParts.push(`Communication style: ${soul.tone}`);
+      if (soulParts.length > 0) {
+        soulSection = `\n\n## Your Identity\n${soulParts.join("\n")}`;
+      }
+    }
+  } catch {}
+
+  // Load response style config if available
+  let styleSection = "";
+  try {
+    const styleJson = await convexClient.query(api.functions.config.get, { key: "response_style" });
+    if (styleJson) {
+      const style = JSON.parse(styleJson);
+      const styleParts: string[] = [];
+      if (style.verbosity < 0.3) styleParts.push("Keep responses concise and to the point.");
+      else if (style.verbosity > 0.7) styleParts.push("Provide detailed, thorough responses.");
+      if (style.formality < 0.3) styleParts.push("Use a casual, relaxed tone.");
+      else if (style.formality > 0.7) styleParts.push("Maintain a professional, formal tone.");
+      if (style.tonePreset === "custom" && style.customTone) styleParts.push(`Tone: ${style.customTone}`);
+      if (styleParts.length > 0) {
+        styleSection = `\n\n## Response Style\n${styleParts.join("\n")}`;
+      }
     }
   } catch {}
 
   const basePrompt = useTemplateBase ? buildDefaultSystemPrompt() : agent.systemPrompt;
-  let identitySection = basePrompt + onboardingPrompt;
+  let identitySection = basePrompt + soulSection + styleSection + onboardingPrompt;
   console.log(`[Context] Layer 1 (Identity): ${estimateTokens(identitySection)} tokens`);
 
   // --- Layer 2: Knowledge (semantic search when available) ---

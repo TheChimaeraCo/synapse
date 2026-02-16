@@ -37,6 +37,10 @@ export class GatewayError extends Error {
  * Falls back to session.gatewayId for backward compatibility during transition.
  */
 export async function getGatewayContext(req: Request): Promise<GatewayContext> {
+  // NOTE: X-API-Channel-Auth bypass was removed for security.
+  // The api-message route handles its own auth via Bearer token + channel API key.
+  // No other route should bypass session auth.
+
   const session = await auth();
   if (!session?.user) throw new GatewayError(401, "Not authenticated");
 
@@ -95,8 +99,9 @@ export function handleGatewayError(err: unknown): Response {
     return Response.json({ error: err.message }, { status: err.statusCode });
   }
   console.error("Unexpected error:", err);
+  // Don't leak internal error details to clients
   return Response.json(
-    { error: err instanceof Error ? err.message : "Internal error" },
+    { error: "Internal server error" },
     { status: 500 }
   );
 }

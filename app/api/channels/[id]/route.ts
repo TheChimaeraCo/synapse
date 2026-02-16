@@ -17,6 +17,30 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    await getGatewayContext(req);
+    const convex = getConvexClient();
+    const { id } = await params;
+    const body = await req.json();
+
+    // Handle enabled/disabled toggle
+    if ("enabled" in body) {
+      await convex.mutation(api.functions.channels.toggle, { id: id as Id<"channels">, enabled: body.enabled });
+    }
+
+    // Handle other fields
+    const { enabled, ...rest } = body;
+    if (Object.keys(rest).length > 0) {
+      await convex.mutation(api.functions.channels.updateChannel, { id: id as Id<"channels">, ...rest });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return handleGatewayError(err);
+  }
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     await getGatewayContext(req);

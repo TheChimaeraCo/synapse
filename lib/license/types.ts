@@ -36,7 +36,7 @@ export const TIER_LIMITS: Record<LicenseTier, TierLimits> = {
   personal: {
     maxUsers: 5,
     maxGateways: 1,
-    features: ["chat", "tools", "knowledge", "sessions", "voice_basic"],
+    features: ["chat", "tools", "knowledge", "sessions", "voice_basic", "automation"],
     label: "Personal",
     price: "Free",
   },

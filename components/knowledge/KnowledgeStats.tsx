@@ -43,7 +43,7 @@ export function KnowledgeStats({ entries }: Props) {
 
   return (
     <div className="bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.3)] px-4 py-3">
-      <div className="flex items-center gap-6 overflow-x-auto">
+      <div className="flex items-center gap-4 sm:gap-6 overflow-x-auto scrollbar-hide">
         {stats.map((s) => (
           <div key={s.label} className="flex items-center gap-2.5 shrink-0">
             <s.icon className="h-4 w-4 text-zinc-500" />

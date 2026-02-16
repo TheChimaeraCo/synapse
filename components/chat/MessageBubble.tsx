@@ -37,6 +37,7 @@ function CodeBlock({ language, children }: { language?: string; children: string
           borderRadius: 0,
           fontSize: "0.8rem",
           background: "#1e1e2e",
+          overflowX: "auto" as any,
         }}
       >
         {children}
@@ -237,7 +238,7 @@ export function MessageBubble({ message }: { message: MessageDisplay }) {
         {isUser ? (
           <p className="whitespace-pre-wrap">{stripFileRefs(message.content)}</p>
         ) : (
-          <div className="prose prose-invert prose-sm max-w-none
+          <div className="prose prose-invert prose-sm max-w-none break-words overflow-hidden
             [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
             prose-table:border-collapse prose-table:w-full
             prose-th:border prose-th:border-white/[0.08] prose-th:bg-white/[0.06] prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold

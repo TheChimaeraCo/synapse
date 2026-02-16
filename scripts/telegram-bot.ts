@@ -48,7 +48,13 @@ async function main() {
   try {
     await startTelegramBot(GATEWAY_ID);
     console.log("[telegram-bot] Bot is running. Press Ctrl+C to stop.");
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.message?.includes("not configured") || err?.message?.includes("token")) {
+      console.error("[telegram-bot] Telegram bot token not configured. Exiting gracefully (will not restart).");
+      console.error("[telegram-bot] Set TELEGRAM_BOT_TOKEN in .env.local or via Settings to enable.");
+      // Exit with 0 so PM2 stops restarting (configure with --stop-exit-codes 0)
+      process.exit(0);
+    }
     console.error("[telegram-bot] Fatal error:", err);
     process.exit(1);
   }

@@ -95,7 +95,7 @@ export function GatewaySwitcher() {
 
         {/* Dropdown */}
         {open && (
-          <div className="absolute top-full left-0 right-0 mt-2 bg-white/[0.07] backdrop-blur-3xl border border-white/[0.12] rounded-xl shadow-[0_16px_64px_rgba(0,0,0,0.4)] z-50 overflow-hidden">
+          <div className="absolute top-full left-0 right-0 mt-2 bg-[#1a1a2e]/95 backdrop-blur-3xl border border-white/[0.15] rounded-xl shadow-[0_16px_64px_rgba(0,0,0,0.6)] z-[100] overflow-hidden">
             <div className="max-h-64 overflow-y-auto py-1">
               {gateways.map((gw) => (
                 <button

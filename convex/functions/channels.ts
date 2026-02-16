@@ -151,23 +151,27 @@ export const createCustom = mutation({
     gatewayId: v.id("gateways"),
     name: v.string(),
     agentId: v.id("agents"),
+    platform: v.optional(v.union(v.literal("api"), v.literal("custom"))),
     description: v.optional(v.string()),
     icon: v.optional(v.string()),
     isPublic: v.optional(v.boolean()),
+    apiKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
+    const platform = args.platform || "custom";
     return await ctx.db.insert("channels", {
       gatewayId: args.gatewayId,
-      platform: "custom",
+      platform,
       name: args.name,
       agentId: args.agentId,
       isActive: true,
-      config: {},
+      config: args.apiKey ? { apiKey: args.apiKey } : {},
+      apiKey: args.apiKey,
       description: args.description,
-      icon: args.icon || "💬",
+      icon: args.icon || (platform === "api" ? "⚡" : "💬"),
       isPublic: args.isPublic ?? false,
-      category: "custom",
+      category: platform === "api" ? "platform" : "custom",
       createdAt: now,
       updatedAt: now,
     });
@@ -183,6 +187,7 @@ export const updateChannel = mutation({
     isPublic: v.optional(v.boolean()),
     sortOrder: v.optional(v.number()),
     category: v.optional(v.string()),
+    apiKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { id, ...fields } = args;
@@ -194,12 +199,19 @@ export const updateChannel = mutation({
   },
 });
 
+export const toggle = mutation({
+  args: { id: v.id("channels"), enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, { enabled: args.enabled, updatedAt: Date.now() });
+  },
+});
+
 export const deleteCustom = mutation({
   args: { id: v.id("channels") },
   handler: async (ctx, args) => {
     const channel = await ctx.db.get(args.id);
-    if (!channel || channel.platform !== "custom") {
-      throw new Error("Can only delete custom channels");
+    if (!channel || (channel.platform !== "custom" && channel.platform !== "api")) {
+      throw new Error("Can only delete custom/API channels");
     }
     await ctx.db.delete(args.id);
   },

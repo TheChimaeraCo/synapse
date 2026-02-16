@@ -3,6 +3,7 @@
 import { use, useState, useCallback, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { gatewayFetch } from "@/lib/gatewayFetch";
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { ChatInput } from "@/components/chat/ChatInput";
@@ -42,7 +43,7 @@ export default function ChatSessionPage({
   const handleNewChat = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const res = await fetch("/api/conversations", {
+      const res = await gatewayFetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId }),

@@ -17,7 +17,7 @@ export function AboutTab() {
     if (!confirm("Run multi-gateway migration? This copies systemConfig to gatewayConfig and creates gateway memberships. It's safe to run multiple times (idempotent).")) return;
     setMigrating(true);
     try {
-      const res = await fetch("/api/admin/migrate", { method: "POST" });
+      const res = await gatewayFetch("/api/admin/migrate", { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error || "Migration failed");

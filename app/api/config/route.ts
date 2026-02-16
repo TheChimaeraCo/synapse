@@ -46,27 +46,36 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  // Config set - used by setup wizard (may not have auth yet for initial setup)
   try {
     const convex = getConvexClient();
     const { key, value } = await req.json();
 
-    // Try gateway-scoped set first
+    if (!key || value === undefined) {
+      return NextResponse.json({ error: "key and value required" }, { status: 400 });
+    }
+
+    // Try gateway-scoped set first (requires auth)
     try {
       const { gatewayId } = await getGatewayContext(req);
       await convex.mutation(api.functions.gatewayConfig.set, {
         gatewayId: gatewayId as Id<"gateways">,
         key,
-        value,
+        value: String(value),
       });
       return NextResponse.json({ success: true });
-    } catch {
-      // Fall back to systemConfig (setup wizard, no auth yet)
-      await convex.mutation(api.functions.config.set, { key, value });
+    } catch (gwErr: any) {
+      // Only fall back to systemConfig during initial setup (no users exist yet)
+      // Check if setup is complete - if so, require auth
+      const setupComplete = await convex.query(api.functions.config.isSetupComplete);
+      if (setupComplete) {
+        return handleGatewayError(gwErr);
+      }
+      // Setup not complete - allow unauthenticated config for initial wizard
+      await convex.mutation(api.functions.config.set, { key, value: String(value) });
       return NextResponse.json({ success: true });
     }
   } catch (err: any) {
     console.error("Config set error:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

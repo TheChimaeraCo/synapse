@@ -112,7 +112,7 @@ export default defineSchema({
   // --- CHANNELS ---
   channels: defineTable({
     gatewayId: v.id("gateways"),
-    platform: v.union(v.literal("telegram"), v.literal("hub"), v.literal("discord"), v.literal("whatsapp"), v.literal("custom")),
+    platform: v.union(v.literal("telegram"), v.literal("hub"), v.literal("discord"), v.literal("whatsapp"), v.literal("api"), v.literal("custom")),
     name: v.string(),
     agentId: v.id("agents"),
     isActive: v.boolean(),
@@ -128,6 +128,7 @@ export default defineSchema({
     icon: v.optional(v.string()),
     sortOrder: v.optional(v.number()),
     category: v.optional(v.string()),
+    apiKey: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -590,7 +591,7 @@ export default defineSchema({
 
   // --- USER PROFILES ---
   userProfiles: defineTable({
-    userId: v.id("authUsers"),
+    userId: v.optional(v.id("authUsers")),
     gatewayId: v.id("gateways"),
     displayName: v.string(),
     timezone: v.optional(v.string()),

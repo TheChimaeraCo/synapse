@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { gatewayFetch } from "@/lib/gatewayFetch";
 
 interface Message {
   role: "user" | "assistant";
@@ -40,7 +41,7 @@ export default function OnboardingPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/onboarding");
+        const res = await gatewayFetch("/api/onboarding");
         const data = await res.json();
         if (data.complete) {
           router.replace("/chat");
@@ -58,7 +59,7 @@ export default function OnboardingPage() {
           return;
         }
         // Start fresh
-        await fetch("/api/onboarding", {
+        await gatewayFetch("/api/onboarding", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "start" }),
@@ -87,7 +88,7 @@ export default function OnboardingPage() {
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
-      const res = await fetch("/api/onboarding/stream", {
+      const res = await gatewayFetch("/api/onboarding/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: text }),
@@ -187,7 +188,7 @@ export default function OnboardingPage() {
         communicationStyle: soulData.tone ? (soulData.tone.toLowerCase().includes("casual") ? "casual" : "direct") : undefined,
       };
 
-      const res = await fetch("/api/onboarding", {
+      const res = await gatewayFetch("/api/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "complete", soul, userProfile }),

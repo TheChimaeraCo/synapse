@@ -108,7 +108,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-auto px-4 py-6 sm:px-6">
+    <div className="flex flex-1 flex-col px-4 py-6 sm:px-6">
       {messages.length === 0 && !isStreaming && (
         <div className="flex flex-1 items-center justify-center">
           <p className="text-muted-foreground">

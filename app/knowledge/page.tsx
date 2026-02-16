@@ -96,7 +96,7 @@ export default function KnowledgePage() {
     <AppShell title="Knowledge Base">
       <div className="p-4 lg:p-6 space-y-5 overflow-auto h-full">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
             <h1 className="text-xl font-semibold text-zinc-100">Knowledge Base</h1>
             <p className="text-xs text-zinc-500 mt-0.5">Facts and preferences learned from conversations</p>
@@ -137,6 +137,21 @@ export default function KnowledgePage() {
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+          </div>
+        ) : entries.length === 0 ? (
+          <div className="flex flex-col items-center justify-center min-h-[300px] text-zinc-400">
+            <div className="w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-4">
+              <Search className="h-7 w-7 text-zinc-600" />
+            </div>
+            <p className="text-lg font-medium text-zinc-300 mb-1">No knowledge yet</p>
+            <p className="text-sm text-zinc-500 mb-4">Add facts and preferences manually or let your AI learn from conversations.</p>
+            <button
+              onClick={() => setModalEntry(null)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-gradient-to-r from-blue-500 to-purple-500 text-white hover:brightness-110 transition-all"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add First Entry
+            </button>
           </div>
         ) : (
           <>

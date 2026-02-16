@@ -69,7 +69,7 @@ export default function DashboardPage() {
 
           {/* Welcome Header */}
           <div className="mb-2">
-            <h1 className="text-2xl lg:text-3xl font-bold text-zinc-100">
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-zinc-100 break-words">
               {getGreeting()}, {ownerName.split(" ")[0]}
             </h1>
             <p className="text-sm text-zinc-500 mt-1">

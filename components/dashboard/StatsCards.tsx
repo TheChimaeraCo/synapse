@@ -69,7 +69,7 @@ export function StatsCards({ stats }: { stats: StatsData }) {
               <p className="text-xs uppercase tracking-wider text-zinc-500 font-medium mb-2">
                 {card.label}
               </p>
-              <p className="text-4xl font-bold text-white mb-1">
+              <p className="text-2xl sm:text-4xl font-bold text-white mb-1">
                 {card.getValue(stats)}
               </p>
               <p className="text-xs text-zinc-400">{card.getSub(stats)}</p>

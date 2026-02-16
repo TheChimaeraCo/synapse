@@ -23,6 +23,7 @@ import { BrowserTab } from "@/components/settings/BrowserTab";
 import { SecurityTab } from "@/components/settings/SecurityTab";
 import { AccountTab } from "@/components/settings/AccountTab";
 import { AboutTab } from "@/components/settings/AboutTab";
+import { AgentSoulTab } from "@/components/settings/AgentSoulTab";
 import { LicenseTab } from "@/components/settings/LicenseTab";
 import { NotificationsTab } from "@/components/settings/NotificationsTab";
 import { MembersTab } from "@/components/settings/MembersTab";
@@ -31,11 +32,12 @@ import { PM2Tab } from "@/components/settings/PM2Tab";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Settings, Cpu, MessageSquare, BarChart3, User, Info, Wrench, Shield, Puzzle,
-  Layers, Mic, Zap, Server, Terminal, FileText, Variable, Package, Globe, Clock, Monitor, Bell, Users
+  Layers, Mic, Zap, Server, Terminal, FileText, Variable, Package, Globe, Clock, Monitor, Bell, Users, Sparkles
 } from "lucide-react";
 
 const tabs = [
   { id: "general", label: "General", icon: Settings },
+  { id: "soul", label: "Agent Soul", icon: Sparkles },
   { id: "provider", label: "AI Provider", icon: Cpu },
   { id: "models", label: "Models", icon: Layers },
   { id: "channels", label: "Channels", icon: MessageSquare },
@@ -109,6 +111,7 @@ export default function SettingsPage() {
         {/* Tab content */}
         <div className="flex-1 min-w-0 overflow-auto">
           {activeTab === "general" && <GeneralTab />}
+          {activeTab === "soul" && <AgentSoulTab />}
           {activeTab === "provider" && <ProviderTab />}
           {activeTab === "models" && <ModelsTab />}
           {activeTab === "channels" && <ChannelsTab />}

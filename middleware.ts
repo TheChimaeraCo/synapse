@@ -3,23 +3,60 @@ import { NextRequest, NextResponse } from "next/server";
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // Static/asset routes - always skip
+  if (
+    pathname === "/manifest.json" ||
+    pathname === "/sw.js" ||
+    pathname.startsWith("/icon-")
+  ) {
+    return NextResponse.next();
+  }
+
+  // Check if setup is complete FIRST (before auth, before public routes)
+  // This ensures login/register redirect to /setup when onboarding isn't done
+  if (!pathname.startsWith("/setup") && !pathname.startsWith("/api/config") && !pathname.startsWith("/api/auth") && !pathname.startsWith("/api/setup")) {
+    const setupComplete = req.cookies.get("synapse-setup-complete")?.value;
+    if (!setupComplete && !pathname.startsWith("/api/")) {
+      try {
+        const setupRes = await fetch(new URL("/api/config/setup-complete", req.url), {
+          headers: { cookie: req.headers.get("cookie") || "" },
+        });
+        const setupData = await setupRes.json();
+        if (!setupData.complete) {
+          return NextResponse.redirect(new URL("/setup", req.url));
+        }
+        // Set cookie so we don't check every request
+        const res = NextResponse.next();
+        res.cookies.set("synapse-setup-complete", "true", { path: "/", maxAge: 86400 });
+        // Fall through to auth check below
+      } catch {
+        // If setup check fails, let it through
+      }
+    }
+  }
+
   // Public routes - skip auth
   if (
     pathname.startsWith("/api/webhook") ||
-    pathname.startsWith("/api/config") ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/invites") ||
     pathname.startsWith("/api/health") ||
     pathname.startsWith("/api/push/vapid") ||
     pathname.startsWith("/api/setup") ||
+    pathname.startsWith("/api/channels/api-message") ||
+    // Config routes: setup-related endpoints are public (needed for setup wizard before gateway exists)
+    // All other /api/config/* routes require session auth via normal flow
+    pathname === "/api/config/setup-complete" ||
+    pathname === "/api/config/test-anthropic" ||
+    pathname === "/api/config/test-provider" ||
+    pathname === "/api/config/test-telegram" ||
+    pathname === "/api/config/exchange-token" ||
+    pathname === "/api/config/register-webhook" ||
     pathname.startsWith("/login") ||
     pathname.startsWith("/register") ||
     pathname.startsWith("/setup") ||
     pathname.startsWith("/onboarding") ||
-    pathname.startsWith("/invite") ||
-    pathname === "/manifest.json" ||
-    pathname === "/sw.js" ||
-    pathname.startsWith("/icon-")
+    pathname.startsWith("/invite")
   ) {
     return NextResponse.next();
   }

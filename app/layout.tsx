@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
 import { Providers } from "./providers";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-geist-sans" });
@@ -27,7 +28,9 @@ export default function RootLayout({
       </head>
       <body className={`${inter.variable} font-sans antialiased overscroll-none overflow-hidden bg-gradient-to-br from-[#0a0a12] via-[#0d0d1a] to-[#0a0f18]`}>
         <Providers>
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
           <Toaster theme="dark" richColors position="bottom-right" />
         </Providers>
       </body>

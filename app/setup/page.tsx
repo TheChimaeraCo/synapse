@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useFetch } from "@/lib/hooks";
 import { useRouter } from "next/navigation";
+import { gatewayFetch } from "@/lib/gatewayFetch";
 import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,50 +13,130 @@ import { PROVIDERS, type AnthropicAuthMethod } from "@/lib/providers";
 
 type Step = 1 | 2 | 3 | 4;
 
+const CACHE_KEY = "synapse-setup-state";
+
+interface SetupCache {
+  step: Step;
+  name: string;
+  email: string;
+  gatewayName: string;
+  gatewaySlug: string;
+  gatewayDesc: string;
+  gatewayIcon: string;
+  gatewayWorkspace: string;
+  slugEdited: boolean;
+  selectedProvider: string;
+  providerPhase: "select" | "auth";
+  anthropicAuthMethod: AnthropicAuthMethod;
+  authValues: Record<string, string>;
+  botToken: string;
+  createdGatewayId: string | null;
+  timestamp: number;
+}
+
+function loadCache(): Partial<SetupCache> | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as SetupCache;
+    // Expire cache after 1 hour
+    if (Date.now() - data.timestamp > 3600000) {
+      localStorage.removeItem(CACHE_KEY);
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function saveCache(state: Partial<SetupCache>) {
+  try {
+    const existing = loadCache() || {};
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ ...existing, ...state, timestamp: Date.now() }));
+  } catch {}
+}
+
+function clearCache() {
+  try { localStorage.removeItem(CACHE_KEY); } catch {}
+}
+
 export default function SetupPage() {
   const router = useRouter();
   const { data: setupData } = useFetch<{ complete: boolean }>("/api/config/setup-complete");
 
-  const [step, setStep] = useState<Step>(1);
+  // Load cached state
+  const [initialized, setInitialized] = useState(false);
+  const cached = typeof window !== "undefined" ? loadCache() : null;
+
+  const [step, setStep] = useState<Step>((cached?.step as Step) || 1);
   const [loading, setLoading] = useState(false);
 
   // Step 1 - Account
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [name, setName] = useState(cached?.name || "");
+  const [email, setEmail] = useState(cached?.email || "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
   // Step 2 - Gateway
-  const [gatewayName, setGatewayName] = useState("");
-  const [gatewaySlug, setGatewaySlug] = useState("");
-  const [gatewayDesc, setGatewayDesc] = useState("");
-  const [gatewayIcon, setGatewayIcon] = useState("");
-  const [gatewayWorkspace, setGatewayWorkspace] = useState("");
-  const [slugEdited, setSlugEdited] = useState(false);
+  const [gatewayName, setGatewayName] = useState(cached?.gatewayName || "");
+  const [gatewaySlug, setGatewaySlug] = useState(cached?.gatewaySlug || "");
+  const [gatewayDesc, setGatewayDesc] = useState(cached?.gatewayDesc || "");
+  const [gatewayIcon, setGatewayIcon] = useState(cached?.gatewayIcon || "");
+  const [gatewayWorkspace, setGatewayWorkspace] = useState(cached?.gatewayWorkspace || "");
+  const [slugEdited, setSlugEdited] = useState(cached?.slugEdited || false);
 
   // Step 3 - Provider
-  const [selectedProvider, setSelectedProvider] = useState<string>("anthropic");
-  const [providerPhase, setProviderPhase] = useState<"select" | "auth">("select");
-  const [anthropicAuthMethod, setAnthropicAuthMethod] = useState<AnthropicAuthMethod>("api_key");
-  const [authValues, setAuthValues] = useState<Record<string, string>>({});
+  const [selectedProvider, setSelectedProvider] = useState<string>(cached?.selectedProvider || "anthropic");
+  const [providerPhase, setProviderPhase] = useState<"select" | "auth">(cached?.providerPhase || "select");
+  const [anthropicAuthMethod, setAnthropicAuthMethod] = useState<AnthropicAuthMethod>(cached?.anthropicAuthMethod || "api_key");
+  const [authValues, setAuthValues] = useState<Record<string, string>>(cached?.authValues || {});
   const [showFields, setShowFields] = useState<Record<string, boolean>>({});
   const [apiKeyValid, setApiKeyValid] = useState<boolean | null>(null);
   const [testUnverified, setTestUnverified] = useState(false);
 
   // Step 4 - Telegram
-  const [botToken, setBotToken] = useState("");
+  const [botToken, setBotToken] = useState(cached?.botToken || "");
   const [showBotToken, setShowBotToken] = useState(false);
   const [botUsername, setBotUsername] = useState<string | null>(null);
   const [telegramValid, setTelegramValid] = useState<boolean | null>(null);
 
   // Track created gateway for config saves
-  const [createdGatewayId, setCreatedGatewayId] = useState<string | null>(null);
+  const [createdGatewayId, setCreatedGatewayId] = useState<string | null>(cached?.createdGatewayId || null);
+
+  // Mark initialized after first render (prevents hydration mismatch)
+  useEffect(() => { setInitialized(true); }, []);
+
+  // Persist state to localStorage on every change
+  useEffect(() => {
+    if (!initialized) return;
+    saveCache({
+      step, name, email, gatewayName, gatewaySlug, gatewayDesc, gatewayIcon,
+      gatewayWorkspace, slugEdited, selectedProvider, providerPhase,
+      anthropicAuthMethod, authValues, botToken, createdGatewayId,
+    });
+  }, [initialized, step, name, email, gatewayName, gatewaySlug, gatewayDesc, gatewayIcon,
+      gatewayWorkspace, slugEdited, selectedProvider, providerPhase,
+      anthropicAuthMethod, authValues, botToken, createdGatewayId]);
 
   useEffect(() => {
     if (setupData?.complete === true) {
+      clearCache();
       router.replace("/chat");
     }
   }, [setupData, router]);
+
+  // Prevent accidental navigation/refresh during setup
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (step > 1) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [step]);
 
   // Auto-generate slug from gateway name
   const handleGatewayNameChange = (val: string) => {
@@ -92,7 +173,7 @@ export default function SetupPage() {
     }
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/register", {
+      const res = await gatewayFetch("/api/auth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password, name, isSetup: true }),
@@ -131,7 +212,7 @@ export default function SetupPage() {
     }
     setLoading(true);
     try {
-      const res = await fetch("/api/setup/create-gateway", {
+      const res = await gatewayFetch("/api/setup/create-gateway", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -148,7 +229,6 @@ export default function SetupPage() {
         return;
       }
       setCreatedGatewayId(data.gatewayId);
-      // Set the gateway cookie so subsequent config saves work
       localStorage.setItem("synapse-active-gateway", data.gatewayId);
       document.cookie = `synapse-active-gateway=${data.gatewayId}; path=/; max-age=31536000; samesite=lax`;
       setStep(3);
@@ -161,7 +241,7 @@ export default function SetupPage() {
 
   const saveGatewayConfig = async (key: string, value: string) => {
     if (!createdGatewayId) return;
-    await fetch("/api/config", {
+    await gatewayFetch("/api/config", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -178,7 +258,7 @@ export default function SetupPage() {
     setApiKeyValid(null);
     setTestUnverified(false);
     try {
-      const res = await fetch("/api/config/test-provider", {
+      const res = await gatewayFetch("/api/config/test-provider", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -214,7 +294,7 @@ export default function SetupPage() {
     try {
       let effectiveKey = key;
       if (selectedProvider === "anthropic" && anthropicAuthMethod === "setup_token") {
-        const exchangeRes = await fetch("/api/config/exchange-token", {
+        const exchangeRes = await gatewayFetch("/api/config/exchange-token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ provider: "anthropic", token: key }),
@@ -256,7 +336,7 @@ export default function SetupPage() {
     setTelegramValid(null);
     setBotUsername(null);
     try {
-      const res = await fetch("/api/config/test-telegram", {
+      const res = await gatewayFetch("/api/config/test-telegram", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ botToken }),
@@ -279,34 +359,46 @@ export default function SetupPage() {
   const handleComplete = async () => {
     setLoading(true);
     try {
-      // Save telegram config if provided
       if (botToken && telegramValid) {
         await saveGatewayConfig("telegram_bot_token", botToken);
-        const secret = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
-        await saveGatewayConfig("telegram_webhook_secret", secret);
-        try {
-          await fetch("/api/config/register-webhook", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ botToken, secret }),
-          });
-        } catch {}
       }
 
-      // Save owner name to gateway config
       if (name) {
         await saveGatewayConfig("owner_name", name);
       }
 
-      // Mark setup complete (global systemConfig)
-      await fetch("/api/config/global", {
+      // Create default agent and channels
+      if (createdGatewayId) {
+        try {
+          const initRes = await gatewayFetch("/api/setup/initialize", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Gateway-Id": createdGatewayId,
+            },
+            body: JSON.stringify({
+              gatewayId: createdGatewayId,
+              hasTelegram: !!(botToken && telegramValid),
+            }),
+          });
+          if (!initRes.ok) {
+            console.warn("Setup initialize failed:", await initRes.text());
+          }
+        } catch (e) {
+          console.warn("Setup initialize error:", e);
+        }
+      }
+
+      await gatewayFetch("/api/config/global", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: "setup_complete", value: "true" }),
       });
 
+      // Set cookie so middleware knows setup is done
+      document.cookie = "synapse-setup-complete=true; path=/; max-age=86400; samesite=lax";
+
+      clearCache();
       router.push("/chat");
     } catch {
       toast.error("Failed to complete setup");
@@ -318,9 +410,9 @@ export default function SetupPage() {
   const stepTitles = ["Create Account", "Create Gateway", "AI Provider", "Connect Telegram"];
 
   return (
-    <div className="min-h-screen bg-transparent flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-transparent flex flex-col items-center justify-start pt-12 sm:justify-center sm:pt-0 px-4 pb-8 overflow-y-auto">
       {/* Header */}
-      <div className="mb-8 text-center">
+      <div className="mb-6 text-center shrink-0">
         <div className="flex items-center justify-center gap-2 mb-2">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
             <span className="text-white font-bold text-lg">S</span>
@@ -331,7 +423,7 @@ export default function SetupPage() {
       </div>
 
       {/* Progress bar */}
-      <div className="w-full max-w-md mb-6 flex gap-2">
+      <div className="w-full max-w-md mb-6 flex gap-2 shrink-0">
         {[1, 2, 3, 4].map((s) => (
           <div
             key={s}
@@ -425,7 +517,7 @@ export default function SetupPage() {
           <h2 className="text-lg font-semibold text-zinc-200 mb-1">AI Provider</h2>
           <p className="text-sm text-zinc-400 mb-4">Select your AI provider to power the agent.</p>
           <div className="space-y-3">
-            <div className="max-h-[400px] overflow-y-auto space-y-1 pr-1">
+            <div className="max-h-[50vh] overflow-y-auto space-y-1 pr-1 overscroll-contain">
               {PROVIDERS.map((p) => (
                 <label key={p.slug}
                   className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${

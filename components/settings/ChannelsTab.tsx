@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useFetch } from "@/lib/hooks";
-import { MessageSquare, Send, Plus, Settings2, ChevronDown, ChevronRight, ToggleLeft, ToggleRight } from "lucide-react";
+import { MessageSquare, Send, Plus, Settings2, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Zap, Copy, RefreshCw, Eye, EyeOff } from "lucide-react";
 
 interface Channel {
   _id: string;
@@ -42,6 +42,11 @@ export function ChannelsTab() {
 
   const telegramChannel = channels?.find((c) => c.platform === "telegram");
   const hubChannel = channels?.find((c) => c.platform === "hub");
+  const apiChannels = channels?.filter((c) => c.platform === "api") || [];
+
+  const [creatingApi, setCreatingApi] = useState(false);
+  const [apiChannelName, setApiChannelName] = useState("API");
+  const [showApiKey, setShowApiKey] = useState<string | null>(null);
 
   const handleTestTelegram = async () => {
     if (!botToken) return;
@@ -310,6 +315,184 @@ export function ChannelsTab() {
                 )}
                 <Button size="sm" onClick={handleSaveTelegram} disabled={saving || !botToken || !tokenValid}>
                   {saving ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* API Channels */}
+      {apiChannels.map((ch) => (
+        <Card key={ch._id} className="bg-white/[0.04] border-white/[0.06]">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-900/50 flex items-center justify-center">
+                  <Zap className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <p className="text-white font-medium">{ch.name}</p>
+                  <p className="text-zinc-500 text-sm">REST API endpoint</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleToggleChannel(ch._id, isEnabled(ch))}
+                  className="text-zinc-400 hover:text-white"
+                >
+                  {isEnabled(ch) ? <ToggleRight className="w-6 h-6 text-green-400" /> : <ToggleLeft className="w-6 h-6 text-zinc-500" />}
+                </button>
+                <Badge className="bg-amber-900/50 text-amber-300">API</Badge>
+                <button
+                  onClick={() => setExpandedChannel(expandedChannel === ch._id ? null : ch._id)}
+                  className="text-zinc-400 hover:text-white p-1"
+                >
+                  {expandedChannel === ch._id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            {expandedChannel === ch._id && (
+              <div className="mt-4 pt-4 border-t border-white/[0.06] space-y-4">
+                <div>
+                  <span className="text-sm text-zinc-400">Endpoint</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <code className="text-sm text-white bg-white/[0.06] px-3 py-1.5 rounded-lg flex-1 overflow-x-auto">
+                      POST /api/channels/api-message
+                    </code>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/api/channels/api-message`); toast.success("Endpoint copied"); }}
+                      className="text-zinc-400 hover:text-white p-1.5"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-sm text-zinc-400">Channel ID</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <code className="text-sm text-white bg-white/[0.06] px-3 py-1.5 rounded-lg flex-1">{ch._id}</code>
+                    <button onClick={() => { navigator.clipboard.writeText(ch._id); toast.success("ID copied"); }} className="text-zinc-400 hover:text-white p-1.5">
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-sm text-zinc-400">API Key</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <code className="text-sm text-white bg-white/[0.06] px-3 py-1.5 rounded-lg flex-1">
+                      {showApiKey === ch._id ? (ch.config?.apiKey || "Not set") : "••••••••••••••••"}
+                    </code>
+                    <button onClick={() => setShowApiKey(showApiKey === ch._id ? null : ch._id)} className="text-zinc-400 hover:text-white p-1.5">
+                      {showApiKey === ch._id ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                    {showApiKey === ch._id && (
+                      <button onClick={() => { navigator.clipboard.writeText(ch.config?.apiKey || ""); toast.success("Key copied"); }} className="text-zinc-400 hover:text-white p-1.5">
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-white/[0.08] text-zinc-300"
+                    onClick={async () => {
+                      const newKey = Array.from(crypto.getRandomValues(new Uint8Array(24)))
+                        .map(b => b.toString(16).padStart(2, "0")).join("");
+                      await gatewayFetch(`/api/channels/${ch._id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ apiKey: `sk-syn-${newKey}` }),
+                      });
+                      toast.success("API key regenerated");
+                      refetchChannels();
+                    }}
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1.5" />
+                    Regenerate Key
+                  </Button>
+                </div>
+                <div className="bg-white/[0.03] rounded-lg p-3 text-sm text-zinc-400">
+                  <p className="font-medium text-zinc-300 mb-2">Usage Examples</p>
+                  <pre className="text-xs overflow-x-auto whitespace-pre">{`# Standard request
+curl -X POST ${typeof window !== 'undefined' ? window.location.origin : 'https://your-synapse.com'}/api/channels/api-message \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"channelId": "${ch._id}", "message": "Hello!"}'
+
+# Streaming (SSE)
+curl -N -X POST ${typeof window !== 'undefined' ? window.location.origin : 'https://your-synapse.com'}/api/channels/api-message \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"channelId": "${ch._id}", "message": "Hello!", "stream": true}'`}</pre>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ))}
+
+      {/* Add API Channel */}
+      <Card
+        className="bg-white/[0.04] border-white/[0.06] border-dashed cursor-pointer hover:bg-white/[0.06] transition-colors"
+        onClick={() => !creatingApi && setCreatingApi(true)}
+      >
+        <CardContent className="py-4">
+          {!creatingApi ? (
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-900/30 flex items-center justify-center">
+                <Plus className="w-5 h-5 text-amber-400/60" />
+              </div>
+              <div>
+                <p className="text-zinc-300 font-medium">Add API Channel</p>
+                <p className="text-zinc-500 text-sm">REST endpoint for external integrations</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-900/50 flex items-center justify-center">
+                  <Zap className="w-5 h-5 text-amber-400" />
+                </div>
+                <Input
+                  value={apiChannelName}
+                  onChange={(e) => setApiChannelName(e.target.value)}
+                  placeholder="Channel name"
+                  className="bg-white/[0.06] border-white/[0.08] text-white max-w-xs"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      const apiKey = `sk-syn-${Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2, "0")).join("")}`;
+                      await gatewayFetch("/api/channels", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          platform: "api",
+                          name: apiChannelName || "API",
+                          apiKey,
+                        }),
+                      });
+                      toast.success("API channel created");
+                      setCreatingApi(false);
+                      setApiChannelName("API");
+                      refetchChannels();
+                    } catch {
+                      toast.error("Failed to create channel");
+                    }
+                  }}
+                  disabled={!apiChannelName}
+                >
+                  Create
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setCreatingApi(false)} className="border-white/[0.08] text-zinc-300">
+                  Cancel
                 </Button>
               </div>
             </div>

@@ -28,6 +28,6 @@ export async function DELETE(
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     if (err instanceof GatewayError) return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

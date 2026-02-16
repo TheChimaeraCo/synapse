@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Hash, Plus, Send as SendIcon, Globe, MessageCircle, Radio, X } from "lucide-react";
+import { Hash, Plus, Send as SendIcon, Globe, MessageCircle, Radio, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ChannelDisplay } from "@/lib/types";
 
@@ -10,6 +10,7 @@ const PLATFORM_ICONS: Record<string, React.ReactNode> = {
   hub: <Globe className="h-4 w-4 text-emerald-400" />,
   discord: <MessageCircle className="h-4 w-4 text-indigo-400" />,
   whatsapp: <MessageCircle className="h-4 w-4 text-green-400" />,
+  api: <Zap className="h-4 w-4 text-amber-400" />,
   custom: <Hash className="h-4 w-4 text-zinc-400" />,
 };
 
@@ -31,7 +32,10 @@ export function ChannelSidebar({
   onClose,
 }: ChannelSidebarProps) {
   const platformChannels = channels.filter(
-    (c) => c.platform !== "custom"
+    (c) => c.platform !== "custom" && c.platform !== "api"
+  );
+  const apiChannels = channels.filter(
+    (c) => c.platform === "api"
   );
   const customChannels = channels.filter(
     (c) => c.platform === "custom"
@@ -65,6 +69,25 @@ export function ChannelSidebar({
               </span>
             </div>
             {platformChannels.map((ch) => (
+              <ChannelItem
+                key={ch._id}
+                channel={ch}
+                active={ch._id === activeChannelId}
+                onClick={() => onSelectChannel(ch._id)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* API section */}
+        {apiChannels.length > 0 && (
+          <div className="mb-3">
+            <div className="px-4 py-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                API
+              </span>
+            </div>
+            {apiChannels.map((ch) => (
               <ChannelItem
                 key={ch._id}
                 channel={ch}

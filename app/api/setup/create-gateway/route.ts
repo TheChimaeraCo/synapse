@@ -41,16 +41,65 @@ export async function POST(req: NextRequest) {
       console.warn("setGlobalAdmin mutation not available, skipping");
     }
 
-    // Create the master gateway
-    const gatewayId = await convexClient.mutation(api.functions.gateways.create, {
-      name,
-      slug,
-      ownerId: userId as Id<"authUsers">,
-      isMaster: true,
-      workspacePath: workspacePath || undefined,
-      description: description || undefined,
-      icon: icon || undefined,
-    });
+    // Create the master gateway (or return existing if slug taken)
+    let gatewayId: string;
+    try {
+      gatewayId = await convexClient.mutation(api.functions.gateways.create, {
+        name,
+        slug,
+        ownerId: userId as Id<"authUsers">,
+        isMaster: true,
+        workspacePath: workspacePath || undefined,
+        description: description || undefined,
+        icon: icon || undefined,
+      });
+    } catch (err: any) {
+      if (err.message?.includes("slug already exists")) {
+        // Gateway already created (page refresh during setup) - find and update it
+        const gateways = await convexClient.query(api.functions.gateways.list);
+        const existing = gateways.find((g: any) => g.slug === slug);
+        if (existing) {
+          gatewayId = existing._id;
+          // Update with latest values in case user changed them
+          await convexClient.mutation(api.functions.gateways.update, {
+            id: existing._id as Id<"gateways">,
+            name,
+            description: description || undefined,
+            icon: icon || undefined,
+            workspacePath: workspacePath || undefined,
+          });
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
+
+    // Create owner membership so /api/gateways can find it
+    try {
+      await convexClient.mutation(api.functions.gatewayMembers.add, {
+        gatewayId: gatewayId as Id<"gateways">,
+        userId: userId as Id<"authUsers">,
+        role: "owner",
+        addedBy: userId as Id<"authUsers">,
+      });
+    } catch (e: any) {
+      if (!e.message?.includes("already a member")) {
+        console.warn("Failed to create owner membership:", e);
+      }
+    }
+
+    // Create workspace directory
+    const wsPath = workspacePath?.trim();
+    if (wsPath) {
+      try {
+        const { mkdir } = await import("fs/promises");
+        await mkdir(wsPath, { recursive: true });
+      } catch (e: any) {
+        console.warn("Failed to create workspace dir:", e.message);
+      }
+    }
 
     // Update user's gatewayId for backward compat
     await convexClient.mutation(api.functions.users.updateGatewayId, {

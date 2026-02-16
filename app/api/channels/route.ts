@@ -33,9 +33,11 @@ export async function POST(req: NextRequest) {
       gatewayId: gatewayId as Id<"gateways">,
       name: body.name || "New Channel",
       agentId: agent._id,
+      platform: body.platform === "api" ? "api" : "custom",
       description: body.description,
       icon: body.icon,
       isPublic: body.isPublic,
+      apiKey: body.apiKey,
     });
 
     return NextResponse.json({ _id: id });

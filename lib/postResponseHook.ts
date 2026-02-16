@@ -2,6 +2,7 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { classifyTopic } from "@/lib/topicClassifier";
+import { summarizeConversation } from "@/lib/conversationSummarizer";
 
 /**
  * Post-response hook: runs async after each AI response.
@@ -70,6 +71,11 @@ export async function postResponseHook(
         tags: closeTags,
         endSeq: latestSeq - 1, // The new message belongs to the new convo
       });
+
+      // Fire-and-forget AI summarization to enrich the closed conversation
+      summarizeConversation(activeConvo._id).catch((err) =>
+        console.error("[PostResponseHook] Summarization failed:", err)
+      );
 
       // Create new conversation with relation to the old one
       const userMsgSeq = recentMessages.find((m: any) => m.role === "user" && m.seq)?.seq ?? latestSeq;

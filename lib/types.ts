@@ -150,7 +150,7 @@ export interface ClaudeResponse {
 
 // --- Channel Types ---
 
-export type ChannelPlatform = "telegram" | "hub" | "discord" | "whatsapp" | "custom";
+export type ChannelPlatform = "telegram" | "hub" | "discord" | "whatsapp" | "api" | "custom";
 
 export interface ChannelDisplay {
   _id: string;

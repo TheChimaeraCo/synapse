@@ -29,7 +29,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return NextResponse.json({ invites });
   } catch (err: any) {
     if (err instanceof GatewayError) return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
@@ -51,6 +51,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ inviteId }, { status: 201 });
   } catch (err: any) {
     if (err instanceof GatewayError) return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

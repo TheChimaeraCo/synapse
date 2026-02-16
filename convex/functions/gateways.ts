@@ -169,6 +169,9 @@ export const update = mutation({
     name: v.optional(v.string()),
     slug: v.optional(v.string()),
     status: v.optional(v.union(v.literal("active"), v.literal("paused"))),
+    description: v.optional(v.string()),
+    icon: v.optional(v.string()),
+    workspacePath: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { id, ...updates } = args;

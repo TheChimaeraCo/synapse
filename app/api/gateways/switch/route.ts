@@ -47,6 +47,6 @@ export async function POST(req: Request) {
     if (err instanceof GatewayError) {
       return NextResponse.json({ error: err.message }, { status: err.statusCode });
     }
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

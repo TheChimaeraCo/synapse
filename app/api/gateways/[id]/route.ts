@@ -35,7 +35,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (err instanceof GatewayError) {
       return NextResponse.json({ error: err.message }, { status: err.statusCode });
     }
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
@@ -56,7 +56,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (err instanceof GatewayError) {
       return NextResponse.json({ error: err.message }, { status: err.statusCode });
     }
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
@@ -75,6 +75,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     if (err instanceof GatewayError) {
       return NextResponse.json({ error: err.message }, { status: err.statusCode });
     }
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

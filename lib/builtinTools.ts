@@ -51,7 +51,7 @@ function isPrivateIP(hostname: string): boolean {
 
 const webSearch: BuiltinTool = {
   name: "web_search",
-  description: "Search the web for current information. Returns titles, URLs, and snippets.",
+  description: "Search the web for current information using Brave Search. Use when the user asks about recent events, needs factual data you're unsure about, wants to look something up, or needs URLs/links. Returns titles, URLs, and snippets.",
   category: "search",
   requiresApproval: false,
   parameters: Type.Object({
@@ -137,7 +137,7 @@ const calculator: BuiltinTool = {
 
 const knowledgeQuery: BuiltinTool = {
   name: "knowledge_query",
-  description: "Search your knowledge base for stored facts about the user and previous conversations.",
+  description: "Search your knowledge base for stored facts about the user and previous conversations. Use when you need to recall something specific: user preferences, past decisions, stored context. Prefer memory_search for semantic/fuzzy lookups.",
   category: "search",
   requiresApproval: false,
   parameters: Type.Object({
@@ -163,7 +163,7 @@ const knowledgeQuery: BuiltinTool = {
 
 const memoryStore: BuiltinTool = {
   name: "memory_store",
-  description: "Store a fact or preference you've learned about the user into your knowledge base. Use this during conversations to remember important things.",
+  description: "Store a fact or preference about the user into your knowledge base for long-term recall. Use when you learn something worth remembering: their name, preferences, important dates, project details, or decisions. Categories: 'preference' (likes/dislikes/style), 'fact' (concrete info like location, job), 'context' (situational info), 'identity' (your own identity traits). Don't over-store - only save things that will be useful in future conversations.",
   category: "memory",
   requiresApproval: false,
   parameters: Type.Object({
@@ -394,7 +394,7 @@ const memorySearch: BuiltinTool = {
 
 const codeExecute: BuiltinTool = {
   name: "code_execute",
-  description: "Execute JavaScript/TypeScript code in a sandboxed environment. Has access to fetch() for HTTP requests. Returns stdout/result.",
+  description: "Execute JavaScript code in a sandboxed environment. Has access to fetch() for HTTP requests, JSON, Math, Date, and common globals. Use for calculations, data transformations, API calls, or any logic that's easier to express as code. Returns console output and final result.",
   category: "code",
   requiresApproval: false,
   parameters: Type.Object({
@@ -659,7 +659,7 @@ const DANGEROUS_PATTERNS = [
 
 const shellExec: BuiltinTool = {
   name: "shell_exec",
-  description: "Execute a shell command. Use for system operations, package installation, git, etc. Commands run in the Synapse workspace.",
+  description: "Execute a shell command on the server. Use for git operations, package management, file manipulation, running scripts, checking system status, or any CLI task. Commands run in the workspace directory. Dangerous commands (rm -rf /, shutdown, etc.) are blocked. Output is truncated at 20KB.",
   category: "system",
   requiresApproval: false,
   parameters: Type.Object({
@@ -723,7 +723,7 @@ const convexDeploy: BuiltinTool = {
       let deployOutput = "";
       if (args.deploy !== false) {
         try {
-          deployOutput = execSync("npx convex dev --once", {
+          deployOutput = execSync("CONVEX_SELF_HOSTED_URL=" + (process.env.CONVEX_SELF_HOSTED_URL || "http://127.0.0.1:3220") + " CONVEX_SELF_HOSTED_ADMIN_KEY=" + (process.env.CONVEX_SELF_HOSTED_ADMIN_KEY || "") + " npx convex dev --once --typecheck=disable", {
             cwd: SYNAPSE_ROOT,
             timeout: 60000,
             encoding: "utf-8",
@@ -839,19 +839,36 @@ const spawnAgent: BuiltinTool = {
       const agent = await convexClient.query(api.functions.agents.get, { id: context.agentId as any });
       if (!agent) return "Error: parent agent not found";
 
-      // Get AI config
-      const [providerSlug, apiKey, configModel, authMethod] = await Promise.all([
-        convexClient.query(api.functions.config.get, { key: "ai_provider" }),
-        convexClient.query(api.functions.config.get, { key: "ai_api_key" }),
-        convexClient.query(api.functions.config.get, { key: "ai_model" }),
-        convexClient.query(api.functions.config.get, { key: "ai_auth_method" }),
+      // Get AI config (use gateway config with inheritance, fall back to systemConfig)
+      const getConfig = async (key: string) => {
+        try {
+          const result = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+            gatewayId: agent.gatewayId,
+            key,
+          });
+          return result?.value || null;
+        } catch {
+          return await convexClient.query(api.functions.config.get, { key });
+        }
+      };
+
+      const [providerSlug, apiKey, configModel] = await Promise.all([
+        getConfig("ai_provider"),
+        getConfig("ai_api_key"),
+        getConfig("ai_model"),
       ]);
 
       const provider = providerSlug || "anthropic";
-      const key = apiKey || "";
-      const modelId = args.model || configModel || agent.model || "claude-sonnet-4-20250514";
+      const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
+      // Default models per provider
+      const providerDefaults: Record<string, string> = {
+        anthropic: "claude-sonnet-4-20250514",
+        openai: "gpt-4o-mini",
+        google: "gemini-2.0-flash",
+      };
+      const modelId = args.model || configModel || providerDefaults[provider] || "claude-sonnet-4-20250514";
 
-      if (!key) return "Error: no API key configured";
+      if (!key) return "Error: no API key configured. Set ai_api_key in gateway config.";
 
       // Create a worker agent record
       const workerId = await convexClient.mutation(api.functions.workerAgents.create, {
@@ -1117,10 +1134,11 @@ const listAgents: BuiltinTool = {
 const newConversation: BuiltinTool = {
   name: "new_conversation",
   description:
-    "Call this when the user has shifted to a clearly different topic from the current conversation. " +
-    "This closes the current conversation (saving its summary/topics/decisions) and starts a fresh one. " +
-    "Do NOT call this for follow-up questions or minor tangents within the same topic. " +
-    "Only call when the subject has genuinely changed (e.g. from pricing discussion to asking about the Super Bowl).",
+    "Explicitly start a new conversation when the user has clearly shifted to a completely different topic. " +
+    "This closes the current conversation (saving its summary, topics, and decisions for future context) and starts fresh. " +
+    "IMPORTANT: Do NOT call for follow-up questions, minor tangents, or related subtopics within the same theme. " +
+    "Only call when the subject has genuinely and completely changed (e.g. from a coding discussion to asking about dinner plans). " +
+    "Note: Topic shifts are also auto-detected, so this is mainly for explicit user requests like 'let's change topics'.",
   category: "conversation",
   requiresApproval: false,
   parameters: Type.Object({
@@ -1513,6 +1531,7 @@ const createProject: BuiltinTool = {
             projectId: projectId as any,
             title: task.title,
             description: task.description || "",
+            status: "todo" as const,
             priority: task.priority || 3,
             gatewayId: context.gatewayId,
           });

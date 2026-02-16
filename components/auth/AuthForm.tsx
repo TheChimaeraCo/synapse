@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { signIn } from "next-auth/react";
+import { gatewayFetch } from "@/lib/gatewayFetch";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -72,7 +73,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
 
     try {
       if (mode === "register") {
-        const res = await fetch("/api/auth/register", {
+        const res = await gatewayFetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -98,7 +99,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       }
 
       // Raw form POST for auth
-      const csrfRes = await fetch("/api/auth/csrf");
+      const csrfRes = await gatewayFetch("/api/auth/csrf");
       const { csrfToken } = await csrfRes.json();
 
       const form = document.createElement("form");

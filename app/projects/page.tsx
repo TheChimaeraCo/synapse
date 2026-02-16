@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { gatewayFetch } from "@/lib/gatewayFetch";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -98,20 +99,23 @@ export default function ProjectsPage() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newProject, setNewProject] = useState({ name: "", description: "", priority: 3 });
   const [newTask, setNewTask] = useState({ title: "", description: "", priority: 3, projectId: "", dueDate: "" });
+  const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
-    const [pRes, tRes] = await Promise.all([fetch("/api/projects"), fetch("/api/tasks")]);
+    setLoading(true);
+    const [pRes, tRes] = await Promise.all([gatewayFetch("/api/projects"), gatewayFetch("/api/tasks")]);
     if (pRes.ok) setProjects(await pRes.json());
     if (tRes.ok) setTasks(await tRes.json());
     // Fetch conversations and agents linked to projects
     try {
-      const cRes = await fetch("/api/conversations?withProject=true");
+      const cRes = await gatewayFetch("/api/conversations?withProject=true");
       if (cRes.ok) setConversations(await cRes.json());
     } catch {}
     try {
-      const aRes = await fetch("/api/agents/workers?recent=true");
+      const aRes = await gatewayFetch("/api/agents/workers?recent=true");
       if (aRes.ok) setAgents(await aRes.json());
     } catch {}
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -121,7 +125,9 @@ export default function ProjectsPage() {
   const completedProjects = projects.filter((p) => p.status === "completed" || p.status === "archived");
 
   const createProjectFn = async () => {
-    const res = await fetch("/api/projects", {
+    if (!newProject.name.trim()) return;
+    if (newProject.name.length > 100) return;
+    const res = await gatewayFetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(newProject),
@@ -134,10 +140,12 @@ export default function ProjectsPage() {
   };
 
   const createTask = async () => {
+    if (!newTask.title.trim() || !newTask.projectId) return;
+    if (newTask.title.length > 200) return;
     const body: any = { ...newTask, priority: Number(newTask.priority) };
     if (body.dueDate) body.dueDate = new Date(body.dueDate).getTime();
     else delete body.dueDate;
-    const res = await fetch("/api/tasks", {
+    const res = await gatewayFetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -379,7 +387,7 @@ export default function ProjectsPage() {
               <DialogContent className="bg-white/5 backdrop-blur-2xl border-white/10">
                 <DialogHeader><DialogTitle>New Project</DialogTitle></DialogHeader>
                 <div className="flex flex-col gap-3">
-                  <Input placeholder="Project name" value={newProject.name} onChange={(e) => setNewProject({ ...newProject, name: e.target.value })} className="bg-white/5 border-white/10" />
+                  <Input placeholder="Project name" value={newProject.name} onChange={(e) => setNewProject({ ...newProject, name: e.target.value })} maxLength={100} className="bg-white/5 border-white/10" />
                   <Textarea placeholder="Description" value={newProject.description} onChange={(e) => setNewProject({ ...newProject, description: e.target.value })} className="bg-white/5 border-white/10" />
                   <Select value={String(newProject.priority)} onValueChange={(v) => setNewProject({ ...newProject, priority: Number(v) })}>
                     <SelectTrigger className="bg-white/5 border-white/10"><SelectValue placeholder="Priority" /></SelectTrigger>
@@ -411,7 +419,7 @@ export default function ProjectsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Input placeholder="Task title" value={newTask.title} onChange={(e) => setNewTask({ ...newTask, title: e.target.value })} className="bg-white/5 border-white/10" />
+                  <Input placeholder="Task title" value={newTask.title} onChange={(e) => setNewTask({ ...newTask, title: e.target.value })} maxLength={200} className="bg-white/5 border-white/10" />
                   <Textarea placeholder="Description" value={newTask.description} onChange={(e) => setNewTask({ ...newTask, description: e.target.value })} className="bg-white/5 border-white/10" />
                   <Select value={String(newTask.priority)} onValueChange={(v) => setNewTask({ ...newTask, priority: Number(v) as any })}>
                     <SelectTrigger className="bg-white/5 border-white/10"><SelectValue placeholder="Priority" /></SelectTrigger>
@@ -429,8 +437,15 @@ export default function ProjectsPage() {
           </div>
         </div>
 
+        {/* Loading State */}
+        {loading && (
+          <div className="flex flex-col items-center justify-center min-h-[300px]">
+            <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+          </div>
+        )}
+
         {/* Cards View */}
-        {viewMode === "cards" && (
+        {!loading && viewMode === "cards" && (
           <div className="space-y-6">
             {/* Active Projects */}
             {activeProjects.length > 0 && (
@@ -463,7 +478,7 @@ export default function ProjectsPage() {
         )}
 
         {/* Kanban View */}
-        {viewMode === "kanban" && (
+        {!loading && viewMode === "kanban" && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-1 min-h-0">
             {COLUMNS.map((col) => {
               const colTasks = filteredTasks.filter((t) => t.status === col.key);

@@ -99,6 +99,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, gatewayId });
   } catch (err: any) {
     console.error("Registration error:", err);
-    return NextResponse.json({ error: err.message || "Registration failed" }, { status: 500 });
+    return NextResponse.json({ error: "Registration failed" }, { status: 500 });
   }
 }

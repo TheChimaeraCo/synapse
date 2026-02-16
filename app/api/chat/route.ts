@@ -136,8 +136,15 @@ async function processAIResponse(
     const routingConfig: ModelRoutingConfig | null = routingRaw ? JSON.parse(routingRaw) : null;
 
     const enabledTools = await convexClient.query(api.functions.tools.getEnabled, { gatewayId });
-    const providerTools = enabledTools.length > 0 ? toProviderTools(enabledTools) : undefined;
-    const taskType: TaskType = enabledTools.length > 0 ? "tool_use" : "chat";
+    const { BUILTIN_TOOLS } = await import("@/lib/builtinTools");
+    const builtinToolDefs = BUILTIN_TOOLS.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
+    const allToolDefs = [
+      ...builtinToolDefs.filter(t => !dbToolNames.has(t.name)),
+      ...enabledTools,
+    ];
+    const providerTools = toProviderTools(allToolDefs);
+    const taskType: TaskType = "tool_use";
 
     const budgetState = {
       allowed: true,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { getWorkspacePath } from "@/lib/workspace";
@@ -87,7 +87,9 @@ export async function POST(req: NextRequest) {
         await fs.mkdir(path.dirname(dest), { recursive: true });
         const stat = await fs.stat(resolved);
         if (stat.isDirectory()) {
-          execSync(`cp -r ${JSON.stringify(resolved)} ${JSON.stringify(dest)}`);
+          // Use cp with explicit args to avoid shell injection
+          
+          execFileSync("cp", ["-r", resolved, dest]);
         } else {
           await fs.copyFile(resolved, dest);
         }
@@ -102,8 +104,9 @@ export async function POST(req: NextRequest) {
       case "zip": {
         const zipPath = resolved + ".zip";
         const basename = path.basename(resolved);
-        const dirname = path.dirname(resolved);
-        execSync(`cd ${JSON.stringify(dirname)} && zip -r ${JSON.stringify(zipPath)} ${JSON.stringify(basename)}`);
+        const dirName = path.dirname(resolved);
+        
+        execFileSync("zip", ["-r", zipPath, basename], { cwd: dirName });
         return NextResponse.json({
           success: true,
           zipPath: path.relative(ws, zipPath),
@@ -111,8 +114,9 @@ export async function POST(req: NextRequest) {
       }
 
       case "unzip": {
-        const dirname = path.dirname(resolved);
-        execSync(`cd ${JSON.stringify(dirname)} && unzip -o ${JSON.stringify(resolved)}`);
+        const dirName = path.dirname(resolved);
+        
+        execFileSync("unzip", ["-o", resolved], { cwd: dirName });
         return NextResponse.json({ success: true });
       }
 

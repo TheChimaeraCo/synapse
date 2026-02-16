@@ -143,8 +143,8 @@ export default function ChatPage() {
   }, [newChannelName]);
 
   const activeChannel = channels.find((c) => c._id === activeChannelId) || null;
-  const isPlatformChannel = activeChannel?.platform !== "hub" && activeChannel?.platform !== "custom";
-  const webChannels = channels.filter((c) => c.platform === "hub" || c.platform === "custom");
+  const isPlatformChannel = activeChannel?.platform !== "hub" && activeChannel?.platform !== "custom" && activeChannel?.platform !== "api";
+  const webChannels = channels.filter((c) => c.platform === "hub" || c.platform === "custom" || c.platform === "api");
 
   // Text selection handler for "Ask in..." on platform channels
   const handleMouseUp = useCallback(() => {
@@ -247,15 +247,19 @@ export default function ChatPage() {
           />
 
           {sessionId ? (
-            <div onMouseUp={handleMouseUp}>
-              <ChatWindow sessionId={sessionId} scrollToSeq={scrollToSeq} />
+            <div className="flex flex-1 flex-col min-h-0 overflow-hidden" onMouseUp={handleMouseUp}>
+              <div className="flex-1 overflow-y-auto min-h-0">
+                <ChatWindow sessionId={sessionId} scrollToSeq={scrollToSeq} />
+              </div>
               {gatewayId && !isPlatformChannel && <LiveAgentsPanel sessionId={sessionId} gatewayId={gatewayId} />}
               {isPlatformChannel ? (
                 <div className="shrink-0 border-t border-white/[0.06] px-4 py-3 text-center text-xs text-zinc-500">
                   Read-only - highlight text and select "Ask in..." to discuss in another channel
                 </div>
               ) : (
-                <ChatInput sessionId={sessionId} />
+                <div className="shrink-0">
+                  <ChatInput sessionId={sessionId} />
+                </div>
               )}
               {askInPopup && (
                 <AskInPopup
@@ -295,8 +299,9 @@ export default function ChatPage() {
                 type="text"
                 placeholder="channel-name"
                 value={newChannelName}
-                onChange={(e) => setNewChannelName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))}
+                onChange={(e) => setNewChannelName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 50))}
                 onKeyDown={(e) => e.key === "Enter" && handleCreateChannel()}
+                maxLength={50}
                 className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-primary/50 mb-3"
                 autoFocus
               />

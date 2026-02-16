@@ -209,7 +209,12 @@ export async function POST(req: NextRequest) {
         // Always include builtin tools - use DB tools if they exist, otherwise fallback to builtins
         const { BUILTIN_TOOLS } = await import("@/lib/builtinTools");
         const builtinToolDefs = BUILTIN_TOOLS.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
-        const allToolDefs = enabledTools.length > 0 ? enabledTools : builtinToolDefs;
+        // Always include builtins, merge with any DB-defined tools
+        const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
+        const allToolDefs = [
+          ...builtinToolDefs.filter(t => !dbToolNames.has(t.name)),
+          ...enabledTools,
+        ];
         const providerTools = toProviderTools(allToolDefs);
         const taskType: TaskType = "tool_use";
 
@@ -276,7 +281,7 @@ export async function POST(req: NextRequest) {
             const msgId = await convexClient.mutation(api.functions.messages.create, {
               gatewayId: gatewayId as Id<"gateways">, sessionId: sessionId as Id<"sessions">, agentId: sessionDoc.agentId,
               role: "assistant", content: cached.response, tokens: cached.tokens, cost: cached.cost, model: cached.model, latencyMs: 0,
-              ...(conversationId ? { conversationId } : {}),
+              
             });
             controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId })));
             controller.close();

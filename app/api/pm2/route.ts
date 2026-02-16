@@ -57,11 +57,25 @@ export async function POST(req: NextRequest) {
         if (slug && processName && !processName.startsWith(`${slug}-`)) {
           processName = `${slug}-${processName}`;
         }
+        // Validate inputs to prevent command injection
+        const safePattern = /^[a-zA-Z0-9._\-\/]+$/;
+        if (script && !safePattern.test(script)) {
+          return NextResponse.json({ error: "Invalid script path" }, { status: 400 });
+        }
+        if (processName && !safePattern.test(processName)) {
+          return NextResponse.json({ error: "Invalid process name" }, { status: 400 });
+        }
+        if (cwd && !safePattern.test(cwd)) {
+          return NextResponse.json({ error: "Invalid cwd path" }, { status: 400 });
+        }
+        if (interpreter && !safePattern.test(interpreter)) {
+          return NextResponse.json({ error: "Invalid interpreter" }, { status: 400 });
+        }
         cmd = `pm2 start ${JSON.stringify(script || name)}`;
         if (processName && script) cmd += ` --name ${JSON.stringify(processName)}`;
         if (cwd) cmd += ` --cwd ${JSON.stringify(cwd)}`;
         if (interpreter) cmd += ` --interpreter ${JSON.stringify(interpreter)}`;
-        if (scriptArgs) cmd += ` -- ${scriptArgs}`;
+        // scriptArgs intentionally excluded - too dangerous for injection
         break;
       }
       default:

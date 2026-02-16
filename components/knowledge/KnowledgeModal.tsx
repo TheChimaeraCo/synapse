@@ -58,11 +58,11 @@ export function KnowledgeModal({ entry, onSave, onClose }: Props) {
         <div className="p-5 space-y-4">
           <div>
             <label className="text-[11px] text-zinc-500 uppercase tracking-wider mb-1.5 block">Key</label>
-            <input className={inputClass} value={key} onChange={(e) => setKey(e.target.value)} placeholder="e.g. favorite_food" />
+            <input className={inputClass} value={key} onChange={(e) => setKey(e.target.value)} placeholder="e.g. favorite_food" maxLength={100} />
           </div>
           <div>
             <label className="text-[11px] text-zinc-500 uppercase tracking-wider mb-1.5 block">Value</label>
-            <textarea className={`${inputClass} resize-none h-20`} value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. pizza" />
+            <textarea className={`${inputClass} resize-none h-20`} value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. pizza" maxLength={2000} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
