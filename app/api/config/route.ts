@@ -3,6 +3,7 @@ import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { getConvexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { logAudit } from "@/lib/auditLog";
 
 const SENSITIVE_KEYS = ["api_key", "token", "secret"];
 const CONFIG_KEYS = [
@@ -62,6 +63,8 @@ export async function POST(req: NextRequest) {
         key,
         value: String(value),
       });
+      const ctx = await getGatewayContext(req).catch(() => null);
+      logAudit(ctx?.userId, "config.change", "config", `${key} updated`, key);
       return NextResponse.json({ success: true });
     } catch (gwErr: any) {
       // Only fall back to systemConfig during initial setup (no users exist yet)

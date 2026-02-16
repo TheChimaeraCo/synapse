@@ -313,6 +313,7 @@ export async function POST(req: NextRequest) {
         const startMs = Date.now();
         let fullContent = "";
         let usage = { input: 0, output: 0 };
+        let streamedTokenEstimate = 0;
         const MAX_TOOL_ROUNDS = 5;
 
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -323,7 +324,13 @@ export async function POST(req: NextRequest) {
           for await (const event of aiStream) {
             if (event.type === "text_delta") {
               roundText += event.delta;
+              // Rough token estimate: ~4 chars per token
+              streamedTokenEstimate += Math.ceil(event.delta.length / 4);
               controller.enqueue(encoder.encode(sseEvent({ type: "token", content: event.delta })));
+              // Send token count update every ~20 tokens
+              if (streamedTokenEstimate % 20 < 5) {
+                controller.enqueue(encoder.encode(sseEvent({ type: "token_count", estimated: streamedTokenEstimate })));
+              }
             } else if (event.type === "toolcall_end") {
               toolCalls.push(event.toolCall);
             } else if (event.type === "done") {
@@ -337,6 +344,10 @@ export async function POST(req: NextRequest) {
 
           if (toolCalls.length === 0) break;
 
+          // Stream individual tool call notifications
+          for (const tc of toolCalls) {
+            controller.enqueue(encoder.encode(sseEvent({ type: "tool_start", tool: tc.name, args: Object.keys(tc.arguments) })));
+          }
           controller.enqueue(encoder.encode(sseEvent({ type: "tool_use", tools: toolCalls.map(t => t.name) })));
 
           // Create worker agent records for each tool call
@@ -435,7 +446,7 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId })));
+        controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId, tokens: usage, cost })));
 
         extractKnowledge(msgId, sessionDoc.agentId, gatewayId as Id<"gateways">, sessionId as Id<"sessions">).catch(console.error);
 

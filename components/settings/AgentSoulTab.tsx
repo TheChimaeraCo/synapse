@@ -9,7 +9,8 @@ import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFetch } from "@/lib/hooks";
 import { Slider } from "@/components/ui/slider";
-import { Eye, Save, RefreshCw, Sparkles } from "lucide-react";
+import { Eye, Save, RefreshCw, Sparkles, BookTemplate, Check } from "lucide-react";
+import { PROMPT_TEMPLATES, type PromptTemplate } from "@/lib/promptTemplates";
 
 interface SoulData {
   name?: string;
@@ -276,6 +277,44 @@ export function AgentSoulTab() {
 
           <div className="text-xs text-zinc-500 bg-white/[0.03] rounded-lg px-3 py-2">
             Current style: <span className="text-zinc-300">{toneDescription()}</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Prompt Templates */}
+      <Card className="bg-white/[0.04] border-white/[0.06]">
+        <CardHeader>
+          <CardTitle className="text-sm text-zinc-300 flex items-center gap-2">
+            <BookTemplate className="w-4 h-4" />
+            Templates
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-zinc-500 mb-3">
+            Pick a template as a starting point. It will populate the system prompt, personality, and tone - you can then customize everything.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {PROMPT_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.id}
+                onClick={() => {
+                  setSystemPrompt(tpl.systemPrompt);
+                  setSoul(s => ({
+                    ...s,
+                    personality: tpl.personality || s.personality,
+                    purpose: tpl.purpose || s.purpose,
+                  }));
+                  if (tpl.tone) {
+                    setResponseStyle(s => ({ ...s, tonePreset: tpl.tone! }));
+                  }
+                  toast.success(`Loaded "${tpl.name}" template - remember to save!`);
+                }}
+                className="text-left p-3 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.06] hover:border-blue-500/20 transition-all group"
+              >
+                <div className="text-sm font-medium text-zinc-200 group-hover:text-blue-300 transition-colors">{tpl.name}</div>
+                <div className="text-xs text-zinc-500 mt-1 line-clamp-2">{tpl.description}</div>
+              </button>
+            ))}
           </div>
         </CardContent>
       </Card>

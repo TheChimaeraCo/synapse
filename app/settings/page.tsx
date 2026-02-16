@@ -31,10 +31,12 @@ import { SchedulerTab } from "@/components/settings/SchedulerTab";
 import { PM2Tab } from "@/components/settings/PM2Tab";
 import { ChangelogTab } from "@/components/settings/ChangelogTab";
 import { WebhooksTab } from "@/components/settings/WebhooksTab";
+import { UsageQuotasTab } from "@/components/settings/UsageQuotasTab";
+import { SystemAlertsTab } from "@/components/settings/SystemAlertsTab";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Settings, Cpu, MessageSquare, BarChart3, User, Info, Wrench, Shield, Puzzle,
-  Layers, Mic, Zap, Server, Terminal, FileText, Variable, Package, Globe, Clock, Monitor, Bell, Users, Sparkles, Tag, Webhook
+  Layers, Mic, Zap, Server, Terminal, FileText, Variable, Package, Globe, Clock, Monitor, Bell, Users, Sparkles, Tag, Webhook, AlertTriangle, PieChart
 } from "lucide-react";
 
 const tabs = [
@@ -65,6 +67,8 @@ const tabs = [
   { id: "security", label: "Security", icon: Shield },
   { id: "account", label: "Account", icon: User },
   { id: "webhooks", label: "Webhooks", icon: Globe },
+  { id: "quotas", label: "Usage Quotas", icon: PieChart },
+  { id: "alerts", label: "System Alerts", icon: AlertTriangle },
   { id: "changelog", label: "Changelog", icon: Tag },
   { id: "about", label: "About", icon: Info },
 ] as const;
@@ -141,6 +145,8 @@ export default function SettingsPage() {
           {activeTab === "security" && <SecurityTab />}
           {activeTab === "account" && <AccountTab />}
           {activeTab === "webhooks" && <WebhooksTab />}
+          {activeTab === "quotas" && <UsageQuotasTab />}
+          {activeTab === "alerts" && <SystemAlertsTab />}
           {activeTab === "changelog" && <ChangelogTab />}
           {activeTab === "about" && <AboutTab />}
         </div>

@@ -10,7 +10,7 @@ import { KnowledgeModal } from "@/components/knowledge/KnowledgeModal";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useFetch } from "@/lib/hooks";
 import { toast } from "sonner";
-import { Plus, Search, X } from "lucide-react";
+import { Plus, Search, X, Trash2, Brain } from "lucide-react";
 
 interface KnowledgeEntry {
   _id: string;
@@ -35,6 +35,11 @@ export default function KnowledgePage() {
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [modalEntry, setModalEntry] = useState<KnowledgeEntry | null | undefined>(undefined);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [memorySearch, setMemorySearch] = useState("");
+  const [memoryResults, setMemoryResults] = useState<KnowledgeEntry[]>([]);
+  const [memorySearching, setMemorySearching] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkMode, setBulkMode] = useState(false);
 
   const fetchEntries = useCallback(async () => {
     if (!agent?._id) return;
@@ -76,6 +81,55 @@ export default function KnowledgePage() {
     } catch {
       toast.error("Failed to save");
     }
+  };
+
+  const handleMemorySearch = async () => {
+    if (!memorySearch.trim() || !agent?._id) return;
+    setMemorySearching(true);
+    try {
+      const res = await gatewayFetch(`/api/knowledge/search?agentId=${agent._id}&q=${encodeURIComponent(memorySearch)}`);
+      const data = await res.json();
+      setMemoryResults(data.results || []);
+    } catch {
+      // Fallback: client-side keyword search
+      const q = memorySearch.toLowerCase();
+      const scored = entries
+        .map(e => {
+          const text = `${e.key} ${e.value} ${e.category || ""}`.toLowerCase();
+          const words = q.split(/\s+/);
+          let score = 0;
+          for (const w of words) {
+            if (text.includes(w)) score++;
+          }
+          return { ...e, score };
+        })
+        .filter(e => e.score > 0)
+        .sort((a, b) => b.score - a.score);
+      setMemoryResults(scored);
+    } finally {
+      setMemorySearching(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (bulkSelected.size === 0) return;
+    const confirmed = window.confirm(`Delete ${bulkSelected.size} entries? This cannot be undone.`);
+    if (!confirmed) return;
+    let deleted = 0;
+    for (const id of bulkSelected) {
+      try {
+        await gatewayFetch("/api/knowledge", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        deleted++;
+      } catch {}
+    }
+    setBulkSelected(new Set());
+    setBulkMode(false);
+    toast.success(`Deleted ${deleted} entries`);
+    fetchEntries();
   };
 
   const handleDelete = async (id: string) => {
@@ -173,6 +227,79 @@ export default function KnowledgePage() {
 
             {/* Stats */}
             <KnowledgeStats entries={entries} />
+
+            {/* Memory Browser */}
+            <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-blue-400" />
+                  <h3 className="text-sm font-medium text-zinc-200">Memory Browser</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setBulkMode(!bulkMode); setBulkSelected(new Set()); }}
+                    className={`text-xs px-2.5 py-1 rounded-lg transition-all ${bulkMode ? "bg-red-500/20 text-red-300 border border-red-500/30" : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"}`}
+                  >
+                    {bulkMode ? "Cancel" : "Bulk Delete"}
+                  </button>
+                  {bulkMode && bulkSelected.size > 0 && (
+                    <button
+                      onClick={handleBulkDelete}
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Delete {bulkSelected.size}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 mb-3">
+                <input
+                  value={memorySearch}
+                  onChange={(e) => setMemorySearch(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleMemorySearch()}
+                  placeholder="Search memories by keyword or concept..."
+                  className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-blue-500/30"
+                />
+                <button
+                  onClick={handleMemorySearch}
+                  disabled={memorySearching}
+                  className="px-3 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-medium hover:brightness-110 transition-all disabled:opacity-50"
+                >
+                  {memorySearching ? "..." : "Search"}
+                </button>
+              </div>
+              {memoryResults.length > 0 && (
+                <div className="space-y-1.5 max-h-64 overflow-auto">
+                  {memoryResults.map((r) => (
+                    <div key={r._id} className="flex items-start gap-2 p-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition-all">
+                      {bulkMode && (
+                        <input
+                          type="checkbox"
+                          checked={bulkSelected.has(r._id)}
+                          onChange={() => {
+                            const next = new Set(bulkSelected);
+                            if (next.has(r._id)) next.delete(r._id); else next.add(r._id);
+                            setBulkSelected(next);
+                          }}
+                          className="mt-1 shrink-0"
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-400">{r.category || "general"}</span>
+                          <span className="text-xs font-medium text-zinc-300 truncate">{r.key}</span>
+                        </div>
+                        <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{r.value}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {memorySearch && memoryResults.length === 0 && !memorySearching && (
+                <p className="text-xs text-zinc-600 text-center py-4">No results found</p>
+              )}
+            </div>
 
             {/* List */}
             <KnowledgeList

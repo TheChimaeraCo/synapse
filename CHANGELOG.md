@@ -1,67 +1,135 @@
 # Changelog
 
-## v0.9.0 - Wave 9 (2026-02-16)
-### Documentation & Developer Experience
-- Added JSDoc comments to core library files (contextBuilder, builtinTools, gateway-context, workspace)
-- Created API documentation page at `/docs` with all endpoints categorized
-- Added changelog viewer in settings
-- Improved setup page with tooltip help text for complex fields
-- Added API Docs link to sidebar navigation
+All notable changes to Synapse are documented in this file.
 
-## v0.8.0 - Wave 8 (2026-02-15)
-### Multi-Gateway & Members
-- Multi-gateway support with gateway switcher
-- Gateway member roles (owner, admin, member, viewer)
-- Invite system with shareable links
-- Per-gateway config inheritance from system defaults
-- Gateway-scoped workspace paths
+## [0.2.0] - 2026-02-16
 
-## v0.7.0 - Wave 7 (2026-02-14)
-### Projects & Conversations
-- Project management with linked conversations
-- Conversation threading and chain summaries
-- Topic classification and context search
-- Project context injection into AI prompts
+### Wave 18 - Agent Capabilities & Intelligence
+- System prompt templates (General, Code Helper, Creative Writer, Research Analyst, Customer Support)
+- Memory browser in Knowledge page with bulk delete
+- Tool result caching with TTL (web_search: 1hr, code_execute: 5min)
+- Streaming improvements: tool_start, token_count SSE events
 
-## v0.6.0 - Wave 6 (2026-02-13)
-### Voice & Automation
-- Text-to-speech and speech-to-text support
-- Scheduler for recurring tasks
-- Heartbeat system for proactive agent behavior
-- PM2 process management UI
+### Wave 19 - Admin & Monitoring
+- Admin audit log page with search and action filtering
+- Wired audit logging into config and agent settings changes
+- Usage quotas display with color-coded progress bars
+- System alerts with burst detection (3+ AI failures in 5min)
+- systemAlerts and toolCache Convex tables
 
-## v0.5.0 - Wave 5 (2026-02-12)
-### Knowledge & Embeddings
-- Knowledge base with semantic search
-- OpenAI embedding support for relevance scoring
-- Knowledge extraction from conversations
-- Category-based knowledge organization
+### Wave 17 - README & Public Repo Polish
+- Rewrote README.md with hero section, badges, feature list, quick start
+- Updated CONTRIBUTING.md with dev setup, style guide, how-to guides
+- Created SECURITY.md with vulnerability reporting and security features
+- Bumped package.json to v0.2.0
 
-## v0.4.0 - Wave 4 (2026-02-11)
-### Tools & Skills
-- Built-in tool system (file ops, shell, web search, etc.)
-- Skill engine for custom tool bundles
-- Tool approval workflow
-- Sandbox execution environment
+## [0.1.5] - 2026-02-16
 
-## v0.3.0 - Wave 3 (2026-02-10)
-### Channels & Telegram
-- Telegram bot integration
-- Channel abstraction layer
-- API message endpoint for external integrations
-- Push notifications
+### Wave 16 - Build Verification & Integration Testing
+- Full build audit: zero errors, zero warnings
+- Route audit: 17 pages, 100+ API routes verified
+- Convex schema audit: 49 tables, all consistent
+- Component import chain audit: no broken imports from cleanup
 
-## v0.2.0 - Wave 2 (2026-02-09)
-### Chat & Sessions
-- Streaming chat with SSE
-- Session management
-- Message history with token-aware trimming
-- Model routing and provider abstraction
+## [0.1.4] - 2026-02-16
 
-## v0.1.0 - Wave 1 (2026-02-08)
-### Foundation
-- Next.js app with dark glassmorphism UI
-- Convex backend for data persistence
-- NextAuth authentication
-- Initial setup wizard
-- Basic agent configuration
+### Wave 13 - Accessibility & Internationalization Prep
+- Added aria-labels to all icon-only buttons
+- Added role/aria-modal/aria-labelledby to all modals
+- Semantic HTML: sidebar as `<aside>`, messages as `<article>`
+- Created i18n string extraction (`lib/strings.ts`, 100+ strings)
+- Meta tags, robots.txt, sitemap.xml
+
+### Wave 14 - Testing & Reliability
+- Smoke test script (`scripts/smoke-test.sh`) - 7/8 tests passing
+- Graceful shutdown handlers for Telegram bot
+- Connection retry with exponential backoff (`withRetry()`)
+- Backup script with 7-day retention (`scripts/backup.sh`)
+
+### Wave 15 - User Experience Enhancements
+- Dark/light theme toggle with system detection
+- Command palette (Ctrl+K) with fuzzy matching
+- Drag-and-drop file upload with progress indicator
+- Message reactions (5 emoji presets with toggle behavior)
+- messageReactions Convex table
+
+## [0.1.3] - 2026-02-16
+
+### Wave 10 - Advanced Agent Features
+- Conversation branching (fork from any message)
+- Message bookmarks/pins with slide-out panel
+- Agent persona quick-switch in chat input
+- Export conversation as Markdown or JSON
+
+### Wave 11 - Integration & Automation
+- Webhook outbound system with HMAC-SHA256 signing
+- Analytics dashboard with SVG charts (messages, tokens, sessions, latency)
+- Scheduled messages with datetime picker
+- webhooks, scheduledMessages Convex tables
+
+### Wave 12 - Code Quality & Consistency Audit
+- Removed ~1006 lines of dead code (5 components, 6 lib files)
+- Migrated 7 routes to consistent `handleGatewayError()` pattern
+- Fixed error message leaking in heartbeat routes
+
+## [0.1.2] - 2026-02-16
+
+### Wave 7 - Chat UX
+- file_write tool post-write verification
+- Session search overlay (Ctrl+K shortcut)
+- Session rename (double-click) and delete with confirmation
+- Scroll-to-bottom button with smart auto-scroll
+
+### Wave 8 - Performance & Reliability
+- React.memo on MessageBubble, extracted static markdown config
+- Request deduplication on chat routes (2s sliding window)
+- Error recovery with retry button on failed messages
+- Enhanced health check (Convex, PM2, memory, uptime)
+- Keyboard shortcuts system with overlay (Ctrl+/, Ctrl+N, Ctrl+,)
+
+### Wave 9 - Documentation & Developer Experience
+- JSDoc on core library files
+- API documentation page at /docs (16 categories, ~60 endpoints)
+- Changelog viewer in settings
+- Setup page tooltips
+
+## [0.1.1] - 2026-02-16
+
+### Wave 4 - Hardening & Quality
+- Loading states for Projects page
+- Empty state for Knowledge page with CTA
+- Input validation: maxLength on project/task/knowledge/channel forms
+- Rate limiting on API channel (60 req/min per channel)
+
+### Wave 5 - Agent Intelligence & Context
+- Soul integration in context builder (identity injection)
+- Response style config (verbosity, formality, tone)
+- Agent Soul settings tab with presets and prompt preview
+- Wired conversation summarization into post-response hook
+
+### Wave 6 - Security Audit
+- **CRITICAL:** Removed X-API-Channel-Auth header bypass (skipped all auth)
+- Tightened middleware public route allowlist
+- Secured config POST during post-setup
+- Fixed internal error message leaking (generic 500s)
+- Fixed command injection in file actions (execSync -> execFileSync)
+- Hardened PM2 route inputs with regex validation
+
+## [0.1.0] - 2026-02-16
+
+### Wave 1 - Initial Fixes
+- Fixed synapse-telegram crash loop (4800+ restarts)
+- Audited and fixed all bare fetch() calls to use gatewayFetch
+- Fixed API channel badge/grouping in sidebar
+
+### Wave 2 - Polish & UX
+- Verified Knowledge tab implementation
+- Dashboard data verification (all real data, no hardcoded values)
+- Mobile responsiveness fixes (dashboard, chat, knowledge, projects)
+
+### Wave 3 - Feature Completeness
+- File manager end-to-end audit (all paths scoped via getWorkspacePath)
+- Conversation history/search audit
+- PM2 dashboard panel audit
+- Notification system audit
+- Added ErrorBoundary component wrapping entire app

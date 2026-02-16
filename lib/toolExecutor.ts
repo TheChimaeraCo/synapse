@@ -4,6 +4,45 @@ import { TOOL_REGISTRY, type ToolContext } from "./builtinTools";
 import type { ToolCall, Tool } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import * as vm from "vm";
+import { createHash } from "crypto";
+
+// Tool cache TTLs in milliseconds
+const TOOL_CACHE_TTLS: Record<string, number> = {
+  web_search: 60 * 60 * 1000,      // 1 hour
+  code_execute: 5 * 60 * 1000,      // 5 minutes
+};
+
+function getToolCacheKey(toolName: string, args: Record<string, any>): string | null {
+  if (!TOOL_CACHE_TTLS[toolName]) return null;
+  const inputHash = createHash("sha256").update(JSON.stringify(args)).digest("hex").slice(0, 16);
+  return `${toolName}:${inputHash}`;
+}
+
+async function getCachedResult(cacheKey: string): Promise<string | null> {
+  try {
+    const { convexClient } = await import("@/lib/convex");
+    const { api } = await import("@/convex/_generated/api");
+    const cached = await convexClient.query(api.functions.toolCache.get, { cacheKey });
+    return cached?.result || null;
+  } catch {
+    return null;
+  }
+}
+
+async function setCachedResult(toolName: string, cacheKey: string, result: string): Promise<void> {
+  try {
+    const { convexClient } = await import("@/lib/convex");
+    const { api } = await import("@/convex/_generated/api");
+    const inputHash = cacheKey.split(":")[1] || cacheKey;
+    await convexClient.mutation(api.functions.toolCache.set, {
+      cacheKey,
+      toolName,
+      inputHash,
+      result,
+      ttlMs: TOOL_CACHE_TTLS[toolName] || 3600000,
+    });
+  } catch {}
+}
 
 export interface ToolResult {
   toolCallId: string;
@@ -91,12 +130,24 @@ export async function executeTools(
   }
 
   for (const call of toolCalls) {
+    // Check tool cache first
+    const cacheKey = getToolCacheKey(call.name, call.arguments);
+    if (cacheKey) {
+      const cached = await getCachedResult(cacheKey);
+      if (cached) {
+        results.push({ toolCallId: call.id, toolName: call.name, content: `(cached) ${cached}`, isError: false });
+        continue;
+      }
+    }
+
     // 1. Check builtin registry first
     const handler = TOOL_REGISTRY.get(call.name);
     if (handler) {
       try {
         const output = await handler.handler(call.arguments, context);
         results.push({ toolCallId: call.id, toolName: call.name, content: output, isError: false });
+        // Cache if applicable
+        if (cacheKey) setCachedResult(call.name, cacheKey, output);
       } catch (err: any) {
         results.push({ toolCallId: call.id, toolName: call.name, content: `Tool error: ${err.message}`, isError: true });
       }

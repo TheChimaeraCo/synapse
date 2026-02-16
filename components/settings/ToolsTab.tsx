@@ -58,11 +58,25 @@ export function ToolsTab() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-white">Tools</h2>
-        <p className="text-sm text-zinc-400 mt-1">
-          Enable or disable tools the AI agent can use during conversations.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Tools</h2>
+          <p className="text-sm text-zinc-400 mt-1">
+            Enable or disable tools the AI agent can use during conversations.
+          </p>
+        </div>
+        <button
+          onClick={async () => {
+            try {
+              const res = await gatewayFetch("/api/tools/cache", { method: "DELETE" });
+              const data = await res.json();
+              alert(`Cleared ${data.deleted || 0} cached tool results`);
+            } catch { alert("Failed to clear cache"); }
+          }}
+          className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/[0.06] border border-white/[0.08] text-zinc-300 hover:bg-white/[0.1] transition-all"
+        >
+          Clear Tool Cache
+        </button>
       </div>
 
       <div className="space-y-3">

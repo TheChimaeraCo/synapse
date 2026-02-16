@@ -3,6 +3,7 @@ import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { logAudit } from "@/lib/auditLog";
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
       id: id as Id<"agents">,
       name, model, systemPrompt, temperature, maxTokens,
     });
+    const ctx = await getGatewayContext(req).catch(() => null);
+    logAudit(ctx?.userId, "agent.update", "agent", `Updated agent: ${name}`, id);
     return NextResponse.json({ success: true });
   } catch (err) {
     return handleGatewayError(err);

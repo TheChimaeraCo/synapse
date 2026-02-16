@@ -297,6 +297,18 @@ export default defineSchema({
   })
     .index("by_session", ["sessionId", "status"]),
 
+  // --- TOOL CACHE ---
+  toolCache: defineTable({
+    cacheKey: v.string(),
+    toolName: v.string(),
+    inputHash: v.string(),
+    result: v.string(),
+    ttlMs: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_cacheKey", ["cacheKey"])
+    .index("by_toolName", ["toolName"]),
+
   // --- RESPONSE CACHE ---
   responseCache: defineTable({
     hash: v.string(),
@@ -321,6 +333,21 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_action", ["action"])
     .index("by_timestamp", ["timestamp"]),
+
+  // --- SYSTEM ALERTS ---
+  systemAlerts: defineTable({
+    gatewayId: v.optional(v.id("gateways")),
+    level: v.union(v.literal("info"), v.literal("warning"), v.literal("error"), v.literal("critical")),
+    message: v.string(),
+    source: v.string(),
+    acknowledged: v.boolean(),
+    acknowledgedBy: v.optional(v.id("authUsers")),
+    acknowledgedAt: v.optional(v.number()),
+    timestamp: v.number(),
+  })
+    .index("by_timestamp", ["timestamp"])
+    .index("by_acknowledged", ["acknowledged", "timestamp"])
+    .index("by_level", ["level", "timestamp"]),
 
   // --- SKILLS ---
   skills: defineTable({

@@ -25,6 +25,7 @@ import {
   Plus,
   Send as SendIcon,
   Settings,
+  Shield,
   Square,
   X,
   XCircle,
@@ -104,6 +105,7 @@ const navLinks = [
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/analytics", label: "Analytics", icon: Zap },
   { href: "/docs", label: "API Docs", icon: FileText },
+  { href: "/admin/audit", label: "Audit Log", icon: Shield },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
