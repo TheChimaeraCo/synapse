@@ -276,14 +276,29 @@ export default function ChatPage() {
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center">
-              <div className="text-center animate-fade-in">
+              <div className="text-center animate-fade-in max-w-md">
                 <EmptyChatIllustration />
                 <p className="text-lg font-medium text-zinc-300 mb-1">
-                  {channels.length === 0 ? "No conversations yet" : "Loading channel..."}
+                  {channels.length === 0 ? "Start a conversation" : "Loading channel..."}
                 </p>
-                <p className="text-sm text-zinc-500">
-                  {channels.length === 0 ? "Start chatting with your AI assistant" : "Setting up your session..."}
+                <p className="text-sm text-zinc-500 mb-5">
+                  {channels.length === 0 ? "Your AI assistant is ready. Try one of these to get started:" : "Setting up your session..."}
                 </p>
+                {channels.length === 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {["What can you help me with?", "Summarize a topic for me", "Help me brainstorm ideas", "Write something creative"].map((prompt) => (
+                      <button
+                        key={prompt}
+                        className="px-3 py-2.5 rounded-xl text-xs text-left text-zinc-400 bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 transition-all"
+                        onClick={() => {
+                          // Navigate to chat - the prompt will be pre-filled if there's a channel
+                        }}
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

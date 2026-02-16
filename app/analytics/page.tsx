@@ -125,8 +125,11 @@ export default function AnalyticsPage() {
       <AppShell title="Analytics">
         <div className="flex flex-col items-center justify-center py-16 animate-fade-in">
           <EmptyAnalyticsIllustration />
-          <p className="text-lg font-medium text-zinc-300 mb-1">No analytics data</p>
-          <p className="text-sm text-zinc-500">Start conversations to see usage analytics here.</p>
+          <p className="text-lg font-medium text-zinc-300 mb-1">No analytics yet</p>
+          <p className="text-sm text-zinc-500 max-w-xs mx-auto">Analytics will appear once you start chatting. Send your first message to get started.</p>
+          <a href="/chat" className="inline-block mt-4 px-4 py-2 rounded-xl text-xs font-medium bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:brightness-110 transition-all">
+            Go to Chat
+          </a>
         </div>
       </AppShell>
     );
