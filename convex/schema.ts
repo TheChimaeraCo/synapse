@@ -488,6 +488,20 @@ export default defineSchema({
     .index("by_session", ["sessionId"])
     .index("by_message", ["messageId"]),
 
+  // --- MODEL ROUTES (custom routing rules) ---
+  modelRoutes: defineTable({
+    gatewayId: v.id("gateways"),
+    name: v.string(),
+    description: v.string(),
+    condition: v.any(),
+    targetModel: v.string(),
+    priority: v.number(),
+    enabled: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_gatewayId", ["gatewayId"]),
+
   // --- SYSTEM CONFIG ---
   systemConfig: defineTable({
     key: v.string(),

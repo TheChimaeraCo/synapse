@@ -22,6 +22,8 @@ export async function GET(req: NextRequest) {
     const tokensByDay: Record<string, { input: number; output: number }> = {};
     const latencies: number[] = [];
     const toolUsage: Record<string, number> = {};
+    const costByModel: Record<string, { input: number; output: number; cost: number; count: number }> = {};
+    let totalCost = 0;
 
     for (const msg of messages) {
       const ts = msg._creationTime || 0;
@@ -33,6 +35,15 @@ export async function GET(req: NextRequest) {
         if (!tokensByDay[day]) tokensByDay[day] = { input: 0, output: 0 };
         tokensByDay[day].input += msg.tokens.input;
         tokensByDay[day].output += msg.tokens.output;
+      }
+
+      if (msg.cost) totalCost += msg.cost;
+      if (msg.model && msg.tokens) {
+        if (!costByModel[msg.model]) costByModel[msg.model] = { input: 0, output: 0, cost: 0, count: 0 };
+        costByModel[msg.model].input += msg.tokens.input;
+        costByModel[msg.model].output += msg.tokens.output;
+        costByModel[msg.model].cost += msg.cost || 0;
+        costByModel[msg.model].count++;
       }
 
       if (msg.latencyMs && msg.role === "assistant") {
@@ -87,6 +98,13 @@ export async function GET(req: NextRequest) {
       totalMessages: messages.length,
       totalSessions: sessions.length,
       avgLatency: latencies.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0,
+      totalCost,
+      costByModel: Object.entries(costByModel).map(([model, data]) => ({
+        model,
+        ...data,
+      })).sort((a, b) => b.cost - a.cost),
+      estimatedDailyCost: totalCost / 30,
+      estimatedMonthlyCost: totalCost,
     });
   } catch (err) { return handleGatewayError(err); }
 }

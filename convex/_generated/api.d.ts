@@ -38,6 +38,7 @@ import type * as functions_messagePins from "../functions/messagePins.js";
 import type * as functions_messageReactions from "../functions/messageReactions.js";
 import type * as functions_messages from "../functions/messages.js";
 import type * as functions_migration from "../functions/migration.js";
+import type * as functions_modelRoutes from "../functions/modelRoutes.js";
 import type * as functions_notifications from "../functions/notifications.js";
 import type * as functions_onboarding from "../functions/onboarding.js";
 import type * as functions_presence from "../functions/presence.js";
@@ -102,6 +103,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messageReactions": typeof functions_messageReactions;
   "functions/messages": typeof functions_messages;
   "functions/migration": typeof functions_migration;
+  "functions/modelRoutes": typeof functions_modelRoutes;
   "functions/notifications": typeof functions_notifications;
   "functions/onboarding": typeof functions_onboarding;
   "functions/presence": typeof functions_presence;

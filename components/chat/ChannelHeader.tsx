@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send as SendIcon, Globe, MessageCircle, Hash, Settings, Eye, History, Search, X, Pencil, Trash2, Pin, Download } from "lucide-react";
+import { Send as SendIcon, Globe, MessageCircle, Hash, Settings, Eye, History, Search, X, Pencil, Trash2, Pin, Download, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { formatRelativeTime } from "@/lib/utils";
@@ -153,6 +153,34 @@ function ExportMenu({ sessionId, onClose }: { sessionId: string; onClose: () => 
   );
 }
 
+function SessionCostBadge({ sessionId }: { sessionId: string }) {
+  const [cost, setCost] = useState<{ totalTokens: number; cost: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await gatewayFetch(`/api/sessions/${sessionId}/cost`);
+        if (res.ok && !cancelled) setCost(await res.json());
+      } catch {}
+    };
+    load();
+    const interval = setInterval(load, 30000); // refresh every 30s
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [sessionId]);
+
+  if (!cost || cost.totalTokens === 0) return null;
+
+  const formatTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
+  return (
+    <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300/80 border border-amber-500/15 font-mono" title={`${cost.totalTokens.toLocaleString()} tokens - $${cost.cost.toFixed(4)}`}>
+      <Coins className="h-3 w-3" />
+      {formatTokens(cost.totalTokens)} / ~${cost.cost.toFixed(cost.cost < 0.01 ? 4 : 2)}
+    </span>
+  );
+}
+
 export function ChannelHeader({ channel, isReadOnly, onToggleHistory, historyOpen, sessionId, onSessionRenamed, onSessionDeleted }: ChannelHeaderProps) {
   const [showSearch, setShowSearch] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -245,6 +273,7 @@ export function ChannelHeader({ channel, isReadOnly, onToggleHistory, historyOpe
                 Read Only
               </span>
             )}
+            {sessionId && <SessionCostBadge sessionId={sessionId} />}
           </div>
           {channel.description && (
             <p className="text-xs text-zinc-500 truncate mt-0.5">{channel.description}</p>

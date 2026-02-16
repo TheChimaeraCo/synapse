@@ -32,6 +32,7 @@ import { PM2Tab } from "@/components/settings/PM2Tab";
 import { ChangelogTab } from "@/components/settings/ChangelogTab";
 import { WebhooksTab } from "@/components/settings/WebhooksTab";
 import { UsageQuotasTab } from "@/components/settings/UsageQuotasTab";
+import { ModelRoutingTab } from "@/components/settings/ModelRoutingTab";
 import { SystemAlertsTab } from "@/components/settings/SystemAlertsTab";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -44,6 +45,7 @@ const tabs = [
   { id: "soul", label: "Agent Soul", icon: Sparkles },
   { id: "provider", label: "AI Provider", icon: Cpu },
   { id: "models", label: "Models", icon: Layers },
+  { id: "routing", label: "Model Routing", icon: Layers },
   { id: "channels", label: "Channels", icon: MessageSquare },
   { id: "messages", label: "Messages", icon: MessageSquare },
   { id: "usage", label: "Usage & Budget", icon: BarChart3 },
@@ -122,6 +124,7 @@ export default function SettingsPage() {
           {activeTab === "soul" && <AgentSoulTab />}
           {activeTab === "provider" && <ProviderTab />}
           {activeTab === "models" && <ModelsTab />}
+          {activeTab === "routing" && <ModelRoutingTab />}
           {activeTab === "channels" && <ChannelsTab />}
           {activeTab === "messages" && <MessagesTab />}
           {activeTab === "usage" && <UsageBudgetTab />}

@@ -2,7 +2,7 @@
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { AppShell } from "@/components/layout/AppShell";
 import { useState, useEffect } from "react";
-import { Loader2, BarChart3, MessageSquare, Clock, Zap, Activity } from "lucide-react";
+import { Loader2, BarChart3, MessageSquare, Clock, Zap, Activity, DollarSign } from "lucide-react";
 import { AnalyticsSkeleton } from "@/components/ui/Skeletons";
 import { EmptyAnalyticsIllustration } from "@/components/ui/EmptyStates";
 
@@ -16,6 +16,10 @@ interface AnalyticsData {
   totalMessages: number;
   totalSessions: number;
   avgLatency: number;
+  totalCost: number;
+  costByModel: { model: string; input: number; output: number; cost: number; count: number }[];
+  estimatedDailyCost: number;
+  estimatedMonthlyCost: number;
 }
 
 function BarChart({ data, labels, color = "blue", height = 160 }: { data: number[]; labels: string[]; color?: string; height?: number }) {
@@ -136,7 +140,7 @@ export default function AnalyticsPage() {
           <StatCard label="Total Messages" value={data.totalMessages.toLocaleString()} icon={MessageSquare} />
           <StatCard label="Total Sessions" value={data.totalSessions.toLocaleString()} icon={Activity} />
           <StatCard label="Avg Latency" value={data.avgLatency ? `${(data.avgLatency / 1000).toFixed(1)}s` : "N/A"} icon={Clock} />
-          <StatCard label="Tools Used" value={data.toolUsage.length} icon={Zap} />
+          <StatCard label="Est. Monthly Cost" value={`$${data.estimatedMonthlyCost?.toFixed(2) || '0.00'}`} icon={DollarSign} />
         </div>
 
         {/* Messages per day */}
@@ -160,6 +164,42 @@ export default function AnalyticsPage() {
             <BarChart data={data.sessionsPerDay} labels={data.days} color="green" height={140} />
           </div>
         </div>
+
+        {/* Cost by model */}
+        {data.costByModel && data.costByModel.length > 0 && (
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-4">
+            <h3 className="text-sm font-medium text-zinc-200 mb-3 flex items-center gap-2">
+              <DollarSign className="h-4 w-4 text-amber-400" /> Cost Breakdown by Model
+            </h3>
+            <div className="space-y-3">
+              {data.costByModel.map((m) => {
+                const maxCost = Math.max(...data.costByModel.map(x => x.cost), 0.001);
+                return (
+                  <div key={m.model} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-300 font-mono">{m.model}</span>
+                      <span className="text-zinc-400">${m.cost.toFixed(4)} ({m.count} calls)</span>
+                    </div>
+                    <div className="h-2 bg-white/[0.04] rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-amber-500/60 to-amber-400/80"
+                        style={{ width: `${(m.cost / maxCost) * 100}%` }}
+                      />
+                    </div>
+                    <div className="flex gap-4 text-[10px] text-zinc-500">
+                      <span>Input: {(m.input / 1000).toFixed(1)}k tokens</span>
+                      <span>Output: {(m.output / 1000).toFixed(1)}k tokens</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 pt-3 border-t border-white/[0.06] flex justify-between text-xs">
+              <span className="text-zinc-400">Total (30d)</span>
+              <span className="text-amber-300 font-semibold">${data.totalCost?.toFixed(4) || '0.00'}</span>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Tool usage */}

@@ -21,8 +21,15 @@ export async function startTelegramBot(gatewayId?: string): Promise<void> {
   }
 
   try {
+    // Check if token is configured before attempting to start
+    let token: string;
+    try {
+      token = await getTelegramToken(gatewayId);
+    } catch {
+      console.log("[telegram] No bot token configured, skipping startup");
+      return;
+    }
     console.log("[telegram] Starting bot...");
-    const token = await getTelegramToken(gatewayId);
 
     const config: BotConfig = {
       token,
