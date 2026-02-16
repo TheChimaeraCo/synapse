@@ -1,40 +1,63 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import dynamic from "next/dynamic";
 import { AppShell } from "@/components/layout/AppShell";
-import { GeneralTab } from "@/components/settings/GeneralTab";
-import { ProviderTab } from "@/components/settings/ProviderTab";
-import { ModelsTab } from "@/components/settings/ModelsTab";
-import { ChannelsTab } from "@/components/settings/ChannelsTab";
-import { MessagesTab } from "@/components/settings/MessagesTab";
-import { UsageBudgetTab } from "@/components/settings/UsageBudgetTab";
-import { ToolsTab } from "@/components/settings/ToolsTab";
-import { SkillsTab } from "@/components/settings/SkillsTab";
-import { SessionsTab } from "@/components/settings/SessionsTab";
-import { VoiceTab } from "@/components/settings/VoiceTab";
-import { AutomationTab } from "@/components/settings/AutomationTab";
-import { GatewayTab } from "@/components/settings/GatewayTab";
-import { GatewaysTab } from "@/components/settings/GatewaysTab";
-import { SandboxTab } from "@/components/settings/SandboxTab";
-import { LoggingTab } from "@/components/settings/LoggingTab";
-import { EnvVarsTab } from "@/components/settings/EnvVarsTab";
-import { PluginsTab } from "@/components/settings/PluginsTab";
-import { BrowserTab } from "@/components/settings/BrowserTab";
-import { SecurityTab } from "@/components/settings/SecurityTab";
-import { AccountTab } from "@/components/settings/AccountTab";
-import { AboutTab } from "@/components/settings/AboutTab";
-import { AgentSoulTab } from "@/components/settings/AgentSoulTab";
-import { LicenseTab } from "@/components/settings/LicenseTab";
-import { NotificationsTab } from "@/components/settings/NotificationsTab";
-import { MembersTab } from "@/components/settings/MembersTab";
-import { SchedulerTab } from "@/components/settings/SchedulerTab";
-import { PM2Tab } from "@/components/settings/PM2Tab";
-import { ChangelogTab } from "@/components/settings/ChangelogTab";
-import { WebhooksTab } from "@/components/settings/WebhooksTab";
-import { UsageQuotasTab } from "@/components/settings/UsageQuotasTab";
-import { ModelRoutingTab } from "@/components/settings/ModelRoutingTab";
-import { SystemAlertsTab } from "@/components/settings/SystemAlertsTab";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+// --- Tab skeleton for lazy loading ---
+function TabSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      <div className="h-8 w-48 bg-white/[0.06] rounded-lg" />
+      <div className="h-4 w-72 bg-white/[0.04] rounded" />
+      <div className="space-y-3 mt-6">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-12 bg-white/[0.04] rounded-xl" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- Lazy-loaded tab components ---
+const lazyTab = (importFn: () => Promise<any>, name: string) =>
+  dynamic(() => importFn().then((m: any) => ({ default: m[name] })), {
+    loading: () => <TabSkeleton />,
+  });
+
+const GeneralTab = lazyTab(() => import("@/components/settings/GeneralTab"), "GeneralTab");
+const ProviderTab = lazyTab(() => import("@/components/settings/ProviderTab"), "ProviderTab");
+const ModelsTab = lazyTab(() => import("@/components/settings/ModelsTab"), "ModelsTab");
+const ChannelsTab = lazyTab(() => import("@/components/settings/ChannelsTab"), "ChannelsTab");
+const MessagesTab = lazyTab(() => import("@/components/settings/MessagesTab"), "MessagesTab");
+const UsageBudgetTab = lazyTab(() => import("@/components/settings/UsageBudgetTab"), "UsageBudgetTab");
+const ToolsTab = lazyTab(() => import("@/components/settings/ToolsTab"), "ToolsTab");
+const SkillsTab = lazyTab(() => import("@/components/settings/SkillsTab"), "SkillsTab");
+const SessionsTab = lazyTab(() => import("@/components/settings/SessionsTab"), "SessionsTab");
+const VoiceTab = lazyTab(() => import("@/components/settings/VoiceTab"), "VoiceTab");
+const AutomationTab = lazyTab(() => import("@/components/settings/AutomationTab"), "AutomationTab");
+const GatewayTab = lazyTab(() => import("@/components/settings/GatewayTab"), "GatewayTab");
+const GatewaysTab = lazyTab(() => import("@/components/settings/GatewaysTab"), "GatewaysTab");
+const SandboxTab = lazyTab(() => import("@/components/settings/SandboxTab"), "SandboxTab");
+const LoggingTab = lazyTab(() => import("@/components/settings/LoggingTab"), "LoggingTab");
+const EnvVarsTab = lazyTab(() => import("@/components/settings/EnvVarsTab"), "EnvVarsTab");
+const PluginsTab = lazyTab(() => import("@/components/settings/PluginsTab"), "PluginsTab");
+const BrowserTab = lazyTab(() => import("@/components/settings/BrowserTab"), "BrowserTab");
+const SecurityTab = lazyTab(() => import("@/components/settings/SecurityTab"), "SecurityTab");
+const AccountTab = lazyTab(() => import("@/components/settings/AccountTab"), "AccountTab");
+const AboutTab = lazyTab(() => import("@/components/settings/AboutTab"), "AboutTab");
+const AgentSoulTab = lazyTab(() => import("@/components/settings/AgentSoulTab"), "AgentSoulTab");
+const LicenseTab = lazyTab(() => import("@/components/settings/LicenseTab"), "LicenseTab");
+const NotificationsTab = lazyTab(() => import("@/components/settings/NotificationsTab"), "NotificationsTab");
+const MembersTab = lazyTab(() => import("@/components/settings/MembersTab"), "MembersTab");
+const SchedulerTab = lazyTab(() => import("@/components/settings/SchedulerTab"), "SchedulerTab");
+const PM2Tab = lazyTab(() => import("@/components/settings/PM2Tab"), "PM2Tab");
+const ChangelogTab = lazyTab(() => import("@/components/settings/ChangelogTab"), "ChangelogTab");
+const WebhooksTab = lazyTab(() => import("@/components/settings/WebhooksTab"), "WebhooksTab");
+const UsageQuotasTab = lazyTab(() => import("@/components/settings/UsageQuotasTab"), "UsageQuotasTab");
+const ModelRoutingTab = lazyTab(() => import("@/components/settings/ModelRoutingTab"), "ModelRoutingTab");
+const SystemAlertsTab = lazyTab(() => import("@/components/settings/SystemAlertsTab"), "SystemAlertsTab");
 import {
   Settings, Cpu, MessageSquare, BarChart3, User, Info, Wrench, Shield, Puzzle,
   Layers, Mic, Zap, Server, Terminal, FileText, Variable, Package, Globe, Clock,

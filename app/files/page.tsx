@@ -9,7 +9,11 @@ import {
   Package, X, RefreshCw, File, MoreVertical, AlertCircle,
 } from "lucide-react";
 
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import dynamic from "next/dynamic";
+const SyntaxHighlighter = dynamic(
+  () => import("react-syntax-highlighter").then(m => m.Prism),
+  { ssr: false, loading: () => <pre className="p-4 text-sm text-zinc-300 bg-white/[0.04] rounded-xl overflow-auto animate-pulse">Loading...</pre> }
+);
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 

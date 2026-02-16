@@ -33,7 +33,8 @@ import {
 ArrowRight,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { ConversationModal } from "@/components/chat/ConversationModal";
+import dynamic from "next/dynamic";
+const ConversationModal = dynamic(() => import("@/components/chat/ConversationModal").then(m => ({ default: m.ConversationModal })), { ssr: false });
 import { ConnectionStatus } from "@/components/ui/ConnectionStatus";
 import { GatewaySwitcher } from "@/components/layout/GatewaySwitcher";
 import { useTheme } from "@/contexts/ThemeContext";
