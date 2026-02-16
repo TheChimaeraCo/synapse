@@ -7,6 +7,7 @@ import { CategoryBreakdown } from "@/components/knowledge/CategoryBreakdown";
 import { KnowledgeStats } from "@/components/knowledge/KnowledgeStats";
 import { KnowledgeList } from "@/components/knowledge/KnowledgeList";
 import { KnowledgeModal } from "@/components/knowledge/KnowledgeModal";
+import { FileUploadZone } from "@/components/knowledge/FileUploadZone";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useFetch } from "@/lib/hooks";
 import { toast } from "sonner";
@@ -135,6 +136,22 @@ export default function KnowledgePage() {
     fetchEntries();
   };
 
+  const handleBulkImport = async (items: { key: string; value: string; category: string; source: string; confidence: number }[]) => {
+    let added = 0;
+    for (const item of items) {
+      try {
+        await gatewayFetch("/api/knowledge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentId: agent?._id, ...item }),
+        });
+        added++;
+      } catch {}
+    }
+    toast.success(`Imported ${added} entries`);
+    fetchEntries();
+  };
+
   const handleDelete = async (id: string) => {
     try {
       await gatewayFetch("/api/knowledge", {
@@ -193,6 +210,9 @@ export default function KnowledgePage() {
             </button>
           </div>
         </div>
+
+        {/* File Upload Zone */}
+        <FileUploadZone onImport={handleBulkImport} />
 
         {loading ? (
           <KnowledgeSkeleton />
