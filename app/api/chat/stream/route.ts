@@ -11,6 +11,7 @@ import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { parseSlashCommand } from "@/lib/slashCommands";
 import { postResponseHook } from "@/lib/postResponseHook";
 import { getThinkingParams, type ThinkingLevel } from "@/lib/thinkingLevels";
+import { resolveConversation } from "@/lib/conversationManager";
 import { createHash } from "crypto";
 import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPrompt, isolateToolContext } from "@/lib/promptDefense";
 
@@ -131,6 +132,20 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: "Session not found" }), { status: 404 });
   }
 
+  // Resolve conversation (creates or continues based on topic/timeout)
+  let conversationId: Id<"conversations"> | undefined;
+  try {
+    conversationId = await resolveConversation(
+      sessionId as Id<"sessions">,
+      gatewayId as Id<"gateways">,
+      userId ? (userId as Id<"authUsers">) : undefined,
+      sanitizedContent
+    );
+    console.log(`[ConvoSegmentation] Resolved conversation: ${conversationId}`);
+  } catch (err) {
+    console.error("[ConvoSegmentation] Failed to resolve conversation, continuing without:", err);
+  }
+
   // Create user message (seq auto-assigned by Convex)
   const messageId = await convexClient.mutation(api.functions.messages.create, {
     gatewayId: gatewayId as Id<"gateways">,
@@ -138,6 +153,7 @@ export async function POST(req: NextRequest) {
     agentId: sessionDoc.agentId,
     role: "user",
     content: sanitizedContent,
+    conversationId,
   });
 
   // Budget check
@@ -179,7 +195,7 @@ export async function POST(req: NextRequest) {
 
         // Build context
         const { systemPrompt: rawSystemPrompt, messages: claudeMessages } = await buildContext(
-          sessionId, sessionDoc.agentId, sanitizedContent, 5000
+          sessionId, sessionDoc.agentId, sanitizedContent, 5000, conversationId
         );
 
         // Layer 4: Embed canary token in system prompt
@@ -427,6 +443,7 @@ export async function POST(req: NextRequest) {
           cost,
           model: modelId,
           latencyMs,
+          conversationId,
         });
 
         await convexClient.mutation(api.functions.usage.record, {

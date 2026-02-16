@@ -199,11 +199,28 @@ export async function buildContext(
     ),
   ]);
 
-  // Always load last N messages by recency (flat stream, no conversation scoping)
-  const recentMessages = await convexClient.query(api.functions.messages.getRecent, {
-    sessionId,
-    limit: escParams.messageLimit,
-  });
+  // Load messages scoped to conversation if available, fall back to flat stream
+  let recentMessages: any[];
+  if (_conversationId) {
+    try {
+      recentMessages = await convexClient.query(api.functions.messages.listByConversation, {
+        conversationId: _conversationId,
+        limit: escParams.messageLimit,
+      });
+      console.log(`[Context] Scoped to conversation ${_conversationId}: ${recentMessages.length} messages`);
+    } catch (err) {
+      console.error("[Context] Conversation-scoped load failed, falling back to flat:", err);
+      recentMessages = await convexClient.query(api.functions.messages.getRecent, {
+        sessionId,
+        limit: escParams.messageLimit,
+      });
+    }
+  } else {
+    recentMessages = await convexClient.query(api.functions.messages.getRecent, {
+      sessionId,
+      limit: escParams.messageLimit,
+    });
+  }
 
   if (!agent) throw new Error("Agent not found");
 
@@ -298,11 +315,12 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
   let messageTokens = messages.reduce((sum: number, m: any) => sum + estimateTokens(m.content), 0);
   console.log(`[Context] Layer 3 (Messages): ${messageTokens} tokens (${messages.length} messages)`);
 
-  // --- Chain summaries (from active conversation's relations) ---
+  // --- Chain summaries (from conversation's relations) ---
   let conversationChainSection = "";
-  if (activeConvo?._id) {
+  const chainConvoId = _conversationId || activeConvo?._id;
+  if (chainConvoId) {
     try {
-      conversationChainSection = await buildConversationChainContext(activeConvo._id);
+      conversationChainSection = await buildConversationChainContext(chainConvoId);
     } catch (err) {
       console.error("Failed to build conversation chain context:", err);
     }

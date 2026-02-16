@@ -13,6 +13,7 @@ import { selectModel, DEFAULT_ROUTING } from "@/lib/modelRouter";
 import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { createHash } from "crypto";
 import { fireWebhook } from "@/lib/webhooks";
+import { resolveConversation } from "@/lib/conversationManager";
 
 // Simple request deduplication
 const recentRequests = new Map<string, number>();
@@ -60,12 +61,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
+    // Resolve conversation
+    let conversationId: Id<"conversations"> | undefined;
+    try {
+      conversationId = await resolveConversation(
+        sessionId as Id<"sessions">,
+        gatewayId as Id<"gateways">,
+        userId ? (userId as Id<"authUsers">) : undefined,
+        content.trim()
+      );
+    } catch (err) {
+      console.error("[ConvoSegmentation] Non-stream route: failed to resolve conversation:", err);
+    }
+
     const messageId = await convexClient.mutation(api.functions.messages.create, {
       gatewayId: gatewayId as Id<"gateways">,
       sessionId: sessionId as Id<"sessions">,
       agentId: sessionDoc.agentId,
       role: "user",
       content: content.trim(),
+      conversationId,
     });
 
     const budgetCheck = await convexClient.query(api.functions.usage.checkBudget, {

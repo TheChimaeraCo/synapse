@@ -1,8 +1,11 @@
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { classifyTopic } from "@/lib/topicClassifier";
+import { summarizeConversation } from "@/lib/conversationSummarizer";
 
 const CONVERSATION_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours - safety net only, AI handles topic shifts via new_conversation tool
+const CLASSIFY_EVERY_N_MESSAGES = 4; // Run AI topic classification every N messages
 
 /**
  * Resolve the current conversation for a message.
@@ -33,13 +36,35 @@ export async function resolveConversation(
   // Check if user explicitly wants a new conversation
   const wantsNew = detectNewConversationIntent(newMessage);
 
-  // Under timeout AND no explicit intent - same conversation
-  if (gap < CONVERSATION_TIMEOUT_MS && !wantsNew) {
+  // Determine if we should run AI topic classification
+  let topicShifted = false;
+  if (!wantsNew && gap < CONVERSATION_TIMEOUT_MS && activeConvo.messageCount >= CLASSIFY_EVERY_N_MESSAGES && activeConvo.messageCount % CLASSIFY_EVERY_N_MESSAGES === 0) {
+    try {
+      // Get recent messages for classification
+      const recentMsgs = await convexClient.query(api.functions.messages.listByConversation, {
+        conversationId: activeConvo._id,
+        limit: 10,
+      });
+      const classification = await classifyTopic(
+        recentMsgs.map((m: any) => ({ role: m.role, content: m.content })),
+        { title: activeConvo.title, tags: activeConvo.tags, summary: activeConvo.summary }
+      );
+      topicShifted = !classification.sameTopic;
+      if (topicShifted) {
+        console.log(`[ConvoSegmentation] AI detected topic shift after ${activeConvo.messageCount} messages. New topic: ${classification.suggestedTitle || "unknown"}`);
+      }
+    } catch (err) {
+      console.error("[ConvoSegmentation] Topic classification failed, continuing same convo:", err);
+    }
+  }
+
+  // Under timeout AND no explicit intent AND no topic shift - same conversation
+  if (gap < CONVERSATION_TIMEOUT_MS && !wantsNew && !topicShifted) {
     await convexClient.mutation(api.functions.conversations.updateMessageCount, { id: activeConvo._id });
     return activeConvo._id;
   }
 
-  // Over timeout - new conversation
+  // Topic shift, timeout, or explicit intent - close and create new conversation
   const isRelated = checkTopicRelation(
     activeConvo.summary || activeConvo.title || "",
     newMessage
@@ -49,6 +74,11 @@ export async function resolveConversation(
   await convexClient.mutation(api.functions.conversations.close, {
     id: activeConvo._id,
   });
+
+  // Fire-and-forget summarization of the closed conversation
+  summarizeConversation(activeConvo._id).catch((err) =>
+    console.error("[ConvoSegmentation] Summarization failed:", err)
+  );
 
   // Create new one, chain if related
   const newConvoId = await convexClient.mutation(api.functions.conversations.create, {
