@@ -5,7 +5,7 @@ import { classifyTopic } from "@/lib/topicClassifier";
 import { summarizeConversation } from "@/lib/conversationSummarizer";
 
 const CONVERSATION_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours - safety net only, AI handles topic shifts via new_conversation tool
-const CLASSIFY_EVERY_N_MESSAGES = 4; // Run AI topic classification every N messages
+const CLASSIFY_EVERY_N_MESSAGES = 6; // Run AI topic classification after N messages (conservative)
 
 /**
  * Resolve the current conversation for a message.
@@ -40,7 +40,7 @@ export async function resolveConversation(
   let topicShifted = false;
   let classificationResult: { sameTopic: boolean; suggestedTitle?: string; newTags?: string[] } | null = null;
   const nextCount = activeConvo.messageCount + 1;
-  const shouldClassify = nextCount >= CLASSIFY_EVERY_N_MESSAGES;
+  const shouldClassify = nextCount >= CLASSIFY_EVERY_N_MESSAGES && (nextCount - CLASSIFY_EVERY_N_MESSAGES) % 3 === 0;
   console.log(`[ConvoSegmentation] Message ${nextCount} in conversation, shouldClassify: ${shouldClassify}`);
   if (!wantsNew && gap < CONVERSATION_TIMEOUT_MS && shouldClassify) {
     try {

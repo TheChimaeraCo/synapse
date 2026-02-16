@@ -82,11 +82,21 @@ export async function classifyTopic(
       .join("\n");
 
     const context = {
-      systemPrompt: "You are a topic classifier. Given recent messages and the current conversation context, determine if the topic has shifted. Respond with JSON only, no markdown: { \"sameTopic\": boolean, \"newTags\": string[], \"suggestedTitle\": string }",
+      systemPrompt: `You are a conservative topic classifier. You must determine if a conversation has COMPLETELY changed to an unrelated subject.
+
+IMPORTANT RULES:
+- "sameTopic": true means the conversation is still about the same general subject, even if the angle or sub-topic changed
+- Only set "sameTopic": false when the user has COMPLETELY abandoned the previous subject and started discussing something ENTIRELY DIFFERENT
+- Follow-up questions, clarifications, related tangents, and deeper dives into the same subject are ALL the same topic
+- "I want coffee" followed by "I just want caffeine" = SAME TOPIC (both about beverages/drinks)
+- "Tell me about Python" followed by "What about TypeScript?" = SAME TOPIC (both about programming)
+- "How do I cook pasta?" followed by "What's the best telescope?" = DIFFERENT TOPIC
+
+Respond with JSON only, no markdown: { "sameTopic": boolean, "newTags": string[], "suggestedTitle": string }`,
       messages: [
         {
           role: "user" as const,
-          content: `${convoContext}\n\nRecent messages:\n${messagesText}\n\nHas the topic shifted from the current conversation context? Respond with JSON only.`,
+          content: `${convoContext}\n\nRecent messages:\n${messagesText}\n\nIs the LATEST message still part of the same general conversation topic? Only say sameTopic:false if it's a COMPLETELY unrelated subject. Respond with JSON only.`,
           timestamp: Date.now(),
         },
       ],
