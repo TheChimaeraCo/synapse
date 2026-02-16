@@ -207,10 +207,21 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
           const closedConvo = conversations.find(
             (c) => c.status === "closed" && c.endSeq != null && msg.seq != null && msg.seq === (c.endSeq! + 1)
           );
+          // Show timestamp divider if 5+ minute gap from previous message
+          const prevMsg = idx > 0 ? messages[idx - 1] : null;
+          const showTimestamp = prevMsg && msg._creationTime && prevMsg._creationTime &&
+            (msg._creationTime - prevMsg._creationTime) >= 5 * 60 * 1000;
           return (
             <div key={msg._id}>
               {closedConvo && (
                 <ConversationSavedDivider conversationId={closedConvo._id} />
+              )}
+              {showTimestamp && (
+                <div className="flex justify-center py-2">
+                  <span className="text-[10px] text-zinc-500 bg-white/[0.03] px-3 py-1 rounded-full">
+                    {new Date(msg._creationTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
               )}
               <div id={msg.seq ? `msg-seq-${msg.seq}` : undefined}>
                 <MessageBubble message={msg} onRetry={() => retryLastMessage()} onBranch={handleBranch} onPin={handlePin} isPinned={pinnedMessageIds.has(msg._id)} />

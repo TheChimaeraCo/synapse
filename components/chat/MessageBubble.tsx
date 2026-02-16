@@ -189,6 +189,9 @@ function TelegramAccessActions({ message }: { message: MessageDisplay }) {
 
 // Memoized markdown components to avoid re-creating on every render
 const markdownComponents = {
+  a({ href, children, ...props }: any) {
+    return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
+  },
   code({ className, children, ...props }: any) {
     const match = /language-(\w+)/.exec(className || "");
     const content = String(children).replace(/\n$/, "");
@@ -279,6 +282,13 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
   const isSystem = message.role === "system";
   const isFailed = message.content?.startsWith("Error:");
   const [reactions, setReactions] = useState<ReactionCount[]>([]);
+  const [copiedMsg, setCopiedMsg] = useState(false);
+
+  const copyMessage = useCallback(() => {
+    navigator.clipboard.writeText(stripFileRefs(message.content));
+    setCopiedMsg(true);
+    setTimeout(() => setCopiedMsg(false), 1500);
+  }, [message.content]);
 
   // Fetch reactions for assistant messages
   useEffect(() => {
@@ -413,6 +423,14 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
             isUser ? "justify-end" : "justify-start"
           )}
         >
+          <button
+            onClick={copyMessage}
+            className="hover:text-white transition-colors relative"
+            aria-label="Copy message"
+            title={copiedMsg ? "Copied!" : "Copy message"}
+          >
+            {copiedMsg ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+          </button>
           <span>{formatRelativeTime(message._creationTime)}</span>
           {message.tokens && (
             <span>
