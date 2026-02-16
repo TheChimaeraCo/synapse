@@ -4,6 +4,9 @@
 export async function register() {
   // Only run on the server side, not during build
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Validate environment variables
+    const { validateEnv } = await import("./lib/env");
+    validateEnv();
     // Delay slightly to let Convex backend fully initialize
     setTimeout(async () => {
       try {

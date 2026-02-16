@@ -1,13 +1,20 @@
+# Synapse Docker Compose
+# Usage: docker compose up -d
+# Includes: Convex backend, dashboard, and Next.js app
+
 services:
+  # ---------------------------------------------------------------------------
+  # Convex Backend - self-hosted database and functions runtime
+  # ---------------------------------------------------------------------------
   backend:
     image: ghcr.io/get-convex/convex-backend:latest
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
-      - "3220:3210"
-      - "3221:3211"
+      - "3220:3210"   # API
+      - "3221:3211"   # Site (HTTP actions)
     volumes:
-      - data:/convex/data
+      - convex-data:/convex/data
     environment:
       - CONVEX_CLOUD_ORIGIN=http://127.0.0.1:3220
       - CONVEX_SITE_ORIGIN=http://127.0.0.1:3221
@@ -15,9 +22,15 @@ services:
       - DOCUMENT_RETENTION_DELAY=172800
     healthcheck:
       test: curl -f http://localhost:3210/version
-      interval: 5s
-      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Convex Dashboard - admin UI for the backend
+  # ---------------------------------------------------------------------------
   dashboard:
     image: ghcr.io/get-convex/convex-dashboard:latest
     stop_grace_period: 10s
@@ -29,6 +42,27 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Synapse App - Next.js frontend and API
+  # ---------------------------------------------------------------------------
+  synapse-app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - ../.env.local
+    environment:
+      - NEXT_PUBLIC_CONVEX_URL=http://backend:3210
+      - CONVEX_SELF_HOSTED_URL=http://backend:3210
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
-  data:
+  convex-data:
+    name: synapse-convex-data
