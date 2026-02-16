@@ -38,6 +38,7 @@ export async function resolveConversation(
 
   // Determine if we should run AI topic classification
   let topicShifted = false;
+  let classificationResult: { sameTopic: boolean; suggestedTitle?: string; newTags?: string[] } | null = null;
   const nextCount = activeConvo.messageCount + 1;
   const shouldClassify = nextCount >= CLASSIFY_EVERY_N_MESSAGES;
   console.log(`[ConvoSegmentation] Message ${nextCount} in conversation, shouldClassify: ${shouldClassify}`);
@@ -57,9 +58,22 @@ export async function resolveConversation(
         { title: activeConvo.title, tags: activeConvo.tags, summary: activeConvo.summary },
         gatewayId as string
       );
+      classificationResult = classification;
       topicShifted = !classification.sameTopic;
       if (topicShifted) {
         console.log(`[ConvoSegmentation] AI detected topic shift after ${activeConvo.messageCount} messages. New topic: ${classification.suggestedTitle || "unknown"}`);
+      } else if (!activeConvo.title && classification.suggestedTitle) {
+        // Same topic but conversation has no title yet - update it
+        try {
+          await convexClient.mutation(api.functions.conversations.update, {
+            id: activeConvo._id,
+            ...(classification.suggestedTitle ? { title: classification.suggestedTitle } : {}),
+            ...(classification.newTags?.length ? { tags: classification.newTags } : {}),
+          });
+          console.log(`[ConvoSegmentation] Updated conversation title: "${classification.suggestedTitle}"`);
+        } catch (err) {
+          console.error("[ConvoSegmentation] Failed to update conversation title:", err);
+        }
       }
     } catch (err) {
       console.error("[ConvoSegmentation] Topic classification failed, continuing same convo:", err);
@@ -73,10 +87,8 @@ export async function resolveConversation(
   }
 
   // Topic shift, timeout, or explicit intent - close and create new conversation
-  const isRelated = checkTopicRelation(
-    activeConvo.summary || activeConvo.title || "",
-    newMessage
-  );
+  // Always chain conversations in the same session (they share context history)
+  const isRelated = gap < CONVERSATION_TIMEOUT_MS;
 
   // Close the old conversation
   await convexClient.mutation(api.functions.conversations.close, {
@@ -95,6 +107,8 @@ export async function resolveConversation(
     userId,
     previousConvoId: isRelated ? activeConvo._id : undefined,
     depth: isRelated ? activeConvo.depth + 1 : 1,
+    ...(classificationResult?.suggestedTitle ? { title: classificationResult.suggestedTitle } : {}),
+    ...(classificationResult?.newTags?.length ? { tags: classificationResult.newTags } : {}),
   });
 
   return newConvoId;

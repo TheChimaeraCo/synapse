@@ -34,6 +34,8 @@ export const create = mutation({
       type: v.string(),
     }))),
     depth: v.optional(v.number()),
+    title: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -52,7 +54,26 @@ export const create = mutation({
       messageCount: 1,
       firstMessageAt: now,
       lastMessageAt: now,
+      ...(args.title ? { title: args.title } : {}),
+      ...(args.tags ? { tags: args.tags } : {}),
     });
+  },
+});
+
+export const update = mutation({
+  args: {
+    id: v.id("conversations"),
+    title: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const { id, ...updates } = args;
+    const patch: Record<string, any> = {};
+    if (updates.title !== undefined) patch.title = updates.title;
+    if (updates.tags !== undefined) patch.tags = updates.tags;
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(id, patch);
+    }
   },
 });
 

@@ -46,36 +46,47 @@ export async function summarizeConversation(
       .map((m: any) => `${m.role}: ${m.content}`)
       .join("\n\n");
 
-    // Use AI to summarize
-    const key = process.env.ANTHROPIC_API_KEY;
+    // Use AI to summarize via pi-ai (same as main chat/classifier)
+    const getConfig = async (k: string) => {
+      if (convo.gatewayId) {
+        try {
+          const r = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, { gatewayId: convo.gatewayId, key: k });
+          if (r?.value) return r.value;
+        } catch {}
+      }
+      return await convexClient.query(api.functions.config.get, { key: k });
+    };
+
+    const [providerSlug, apiKey] = await Promise.all([
+      getConfig("ai_provider"),
+      getConfig("ai_api_key"),
+    ]);
+    const provider = providerSlug || "anthropic";
+    const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
     if (!key) {
       console.error("[conversationSummarizer] No API key, skipping summarization");
       return;
     }
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-3-20250514",
-        max_tokens: 500,
-        messages: [
-          { role: "user", content: `${SUMMARY_PROMPT}\n\n---\n\n${formatted}` },
-        ],
-      }),
-    });
+    const envMap: Record<string, string> = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", openrouter: "OPENROUTER_API_KEY" };
+    if (envMap[provider]) process.env[envMap[provider]] = key;
 
-    if (!response.ok) {
-      console.error("[conversationSummarizer] API error:", response.status);
+    const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
+    registerBuiltInApiProviders();
+    const model = getModel(provider as any, "claude-3-haiku-20240307" as any);
+    if (!model) {
+      console.error("[conversationSummarizer] Model not found");
       return;
     }
 
-    const data = await response.json();
-    const text = data.content?.[0]?.text || "";
+    let text = "";
+    const aiStream = streamSimple(model, {
+      systemPrompt: "",
+      messages: [{ role: "user", content: `${SUMMARY_PROMPT}\n\n---\n\n${formatted}`, timestamp: Date.now() }],
+    }, { maxTokens: 500, apiKey: key });
+    for await (const event of aiStream) {
+      if (event.type === "text_delta") text += event.delta;
+    }
 
     // Parse JSON response
     let parsed: any;

@@ -110,6 +110,21 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         externalUserId: `discord:${userId}`,
       });
 
+      // Resolve conversation (segmentation)
+      let conversationId: Id<"conversations"> | undefined;
+      try {
+        const { resolveConversation } = await import("@/lib/conversationManager");
+        conversationId = await resolveConversation(
+          sessionId as Id<"sessions">,
+          gatewayId as Id<"gateways">,
+          undefined,
+          text
+        );
+        console.log(`[discord] Resolved conversation: ${conversationId}`);
+      } catch (err) {
+        console.error("[discord] Failed to resolve conversation:", err);
+      }
+
       // Store user message
       await convex.mutation(api.functions.messages.create, {
         gatewayId,
@@ -118,6 +133,7 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         role: "user",
         content: text,
         channelMessageId: msg.id,
+        conversationId,
       });
 
       // Check budget
@@ -181,7 +197,7 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         let claudeMessages: Array<{ role: "user" | "assistant"; content: string }>;
         try {
           const { buildContext } = await import("../contextBuilder");
-          const ctx = await buildContext(sessionId, agentId, text, 5000);
+          const ctx = await buildContext(sessionId, agentId, text, 5000, conversationId);
           systemPrompt = ctx.systemPrompt;
           claudeMessages = ctx.messages;
         } catch (e) {
@@ -257,6 +273,7 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
           cost,
           model: modelId,
           latencyMs,
+          conversationId,
         });
 
         // Record usage

@@ -183,6 +183,21 @@ export function createBot(config: BotConfig): Bot {
         externalUserId: `telegram:${userId}`,
       });
 
+      // Resolve conversation (segmentation)
+      let conversationId: Id<"conversations"> | undefined;
+      try {
+        const { resolveConversation } = await import("@/lib/conversationManager");
+        conversationId = await resolveConversation(
+          sessionId as Id<"sessions">,
+          gatewayId as Id<"gateways">,
+          undefined,
+          text
+        );
+        console.log(`[telegram] Resolved conversation: ${conversationId}`);
+      } catch (err) {
+        console.error("[telegram] Failed to resolve conversation:", err);
+      }
+
       // Store user message
       await convex.mutation(api.functions.messages.create, {
         gatewayId,
@@ -191,6 +206,7 @@ export function createBot(config: BotConfig): Bot {
         role: "user",
         content: text,
         channelMessageId: String(msg.message_id),
+        conversationId,
       });
 
       // Check budget
@@ -259,7 +275,7 @@ export function createBot(config: BotConfig): Bot {
         let claudeMessages: Array<{ role: "user" | "assistant"; content: string }>;
         try {
           const { buildContext } = await import("../contextBuilder");
-          const ctx = await buildContext(sessionId, agentId, text, 5000);
+          const ctx = await buildContext(sessionId, agentId, text, 5000, conversationId);
           systemPrompt = ctx.systemPrompt;
           claudeMessages = ctx.messages;
         } catch (e) {
@@ -338,6 +354,7 @@ export function createBot(config: BotConfig): Bot {
           cost,
           model: modelId,
           latencyMs,
+          conversationId,
         });
 
         // Record usage
