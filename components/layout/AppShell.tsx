@@ -6,6 +6,7 @@ import { Header } from "./Header";
 import { Menu, X, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useKeyboardShortcuts, SHORTCUTS } from "@/hooks/useKeyboardShortcuts";
+import { CommandPalette } from "@/components/layout/CommandPalette";
 
 function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
@@ -92,6 +93,9 @@ export function AppShell({
         </Header>
         <main className="flex-1 overflow-hidden">{children}</main>
       </div>
+
+      {/* Command palette */}
+      <CommandPalette />
 
       {/* Keyboard shortcuts overlay */}
       {showHelp && <ShortcutsOverlay onClose={() => setShowHelp(false)} />}

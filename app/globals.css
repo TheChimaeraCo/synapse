@@ -89,6 +89,40 @@
   --accent-glow: 0 0 20px rgba(59, 130, 246, 0.15);
 }
 
+/* Light theme overrides */
+[data-theme="light"] {
+  --background: transparent;
+  --foreground: oklch(0.2 0 0);
+  --card: rgba(0, 0, 0, 0.04);
+  --card-foreground: oklch(0.2 0 0);
+  --popover: rgba(255, 255, 255, 0.92);
+  --popover-foreground: oklch(0.2 0 0);
+  --primary: oklch(0.523 0.214 259);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: rgba(0, 0, 0, 0.06);
+  --secondary-foreground: oklch(0.2 0 0);
+  --muted: rgba(0, 0, 0, 0.04);
+  --muted-foreground: oklch(0.45 0 0);
+  --accent: rgba(0, 0, 0, 0.08);
+  --accent-foreground: oklch(0.2 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: rgba(0, 0, 0, 0.1);
+  --input: rgba(0, 0, 0, 0.06);
+  --ring: oklch(0.523 0.214 259);
+  --sidebar: rgba(0, 0, 0, 0.03);
+  --sidebar-foreground: oklch(0.2 0 0);
+  --sidebar-border: rgba(0, 0, 0, 0.08);
+
+  --glass-bg: rgba(0, 0, 0, 0.04);
+  --glass-bg-hover: rgba(0, 0, 0, 0.07);
+  --glass-bg-active: rgba(0, 0, 0, 0.10);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --glass-border-hover: rgba(0, 0, 0, 0.15);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  --glass-shadow-lg: 0 16px 64px rgba(0, 0, 0, 0.12);
+  --accent-glow: 0 0 20px rgba(59, 130, 246, 0.1);
+}
+
 @layer base {
   * {
     @apply border-border;
@@ -97,6 +131,11 @@
     @apply text-foreground;
     background: linear-gradient(135deg, #08080f 0%, #0d0d1a 50%, #080d15 100%);
     min-height: 100vh;
+  }
+  [data-theme="light"] body,
+  .light body {
+    background: linear-gradient(135deg, #f8f9fc 0%, #f0f2f8 50%, #f5f7fb 100%);
+    color: #1a1a2e;
   }
 }
 
@@ -140,6 +179,26 @@ select optgroup {
 /* Force dark color scheme on all selects */
 select {
   color-scheme: dark;
+}
+
+[data-theme="light"] select {
+  background-color: rgba(0, 0, 0, 0.04);
+  color: #1a1a2e;
+  border-color: rgba(0, 0, 0, 0.1);
+  color-scheme: light;
+}
+
+[data-theme="light"] select option {
+  background-color: #ffffff;
+  color: #1a1a2e;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
 }
 
 /* Smooth transitions on interactive elements */

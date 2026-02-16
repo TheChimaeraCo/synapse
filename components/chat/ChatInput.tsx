@@ -87,6 +87,19 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     }
   }, [sessionId]);
 
+  // Listen for file drop insertion
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.ref) {
+        setContent(prev => prev ? `${detail.ref}\n${prev}` : detail.ref);
+        setTimeout(() => textareaRef.current?.focus(), 100);
+      }
+    };
+    window.addEventListener("synapse:insert-file", handler);
+    return () => window.removeEventListener("synapse:insert-file", handler);
+  }, []);
+
   // Listen for cross-channel quote injection
   useEffect(() => {
     const handler = (e: Event) => {

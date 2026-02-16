@@ -7,6 +7,7 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { ChatInput } from "@/components/chat/ChatInput";
+import { DropZone } from "@/components/chat/DropZone";
 import { LiveAgentsPanel } from "@/components/chat/LiveAgentsPanel";
 import { ConversationsSidebar } from "@/components/chat/ConversationsSidebar";
 import { Button } from "@/components/ui/button";
@@ -80,9 +81,11 @@ export default function ChatSessionPage({
           onNewChat={handleNewChat}
         />
 
-        <ChatWindow sessionId={sessionId} conversationId={conversationId} />
-        {gatewayId && <LiveAgentsPanel sessionId={sessionId} gatewayId={gatewayId} />}
-        <ChatInput sessionId={sessionId} />
+        <DropZone sessionId={sessionId}>
+          <ChatWindow sessionId={sessionId} conversationId={conversationId} />
+          {gatewayId && <LiveAgentsPanel sessionId={sessionId} gatewayId={gatewayId} />}
+          <ChatInput sessionId={sessionId} />
+        </DropZone>
       </div>
     </AppShell>
   );

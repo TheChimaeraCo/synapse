@@ -35,7 +35,8 @@ import { useSession } from "next-auth/react";
 import { ConversationModal } from "@/components/chat/ConversationModal";
 import { ConnectionStatus } from "@/components/ui/ConnectionStatus";
 import { GatewaySwitcher } from "@/components/layout/GatewaySwitcher";
-import { ChevronDown, Download } from "lucide-react";
+import { useTheme } from "@/contexts/ThemeContext";
+import { ChevronDown, Download, Sun, Moon } from "lucide-react";
 
 interface WorkerAgent {
   _id: string;
@@ -727,6 +728,20 @@ function GatewaySelector() {
   );
 }
 
+function ThemeToggleButton() {
+  const { resolvedTheme, toggleTheme } = useTheme();
+  return (
+    <button
+      onClick={toggleTheme}
+      className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.08] transition-all border border-white/[0.08] bg-white/[0.04]"
+      aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
+    >
+      {resolvedTheme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+      {resolvedTheme === "dark" ? "Light Mode" : "Dark Mode"}
+    </button>
+  );
+}
+
 export function Sidebar({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname();
 
@@ -795,6 +810,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
       {/* Footer */}
       <div className="px-4 py-4 space-y-3 border-t border-white/[0.06]">
+        <ThemeToggleButton />
         <InstallAppButton />
         <ConnectionStatus />
         <div className="text-[11px] text-zinc-600">Synapse v0.1.0</div>

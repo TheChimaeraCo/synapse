@@ -762,6 +762,17 @@ export default defineSchema({
     .index("by_session", ["sessionId"])
     .index("by_user", ["userId"]),
 
+  // --- MESSAGE REACTIONS ---
+  messageReactions: defineTable({
+    gatewayId: v.id("gateways"),
+    messageId: v.id("messages"),
+    userId: v.id("authUsers"),
+    emoji: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_user_message", ["userId", "messageId"]),
+
   // --- CHANNEL MESSAGES (raw audit trail) ---
   channelMessages: defineTable({
     gatewayId: v.id("gateways"),

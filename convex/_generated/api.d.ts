@@ -35,6 +35,7 @@ import type * as functions_health from "../functions/health.js";
 import type * as functions_heartbeat from "../functions/heartbeat.js";
 import type * as functions_knowledge from "../functions/knowledge.js";
 import type * as functions_messagePins from "../functions/messagePins.js";
+import type * as functions_messageReactions from "../functions/messageReactions.js";
 import type * as functions_messages from "../functions/messages.js";
 import type * as functions_migration from "../functions/migration.js";
 import type * as functions_notifications from "../functions/notifications.js";
@@ -96,6 +97,7 @@ declare const fullApi: ApiFromModules<{
   "functions/heartbeat": typeof functions_heartbeat;
   "functions/knowledge": typeof functions_knowledge;
   "functions/messagePins": typeof functions_messagePins;
+  "functions/messageReactions": typeof functions_messageReactions;
   "functions/messages": typeof functions_messages;
   "functions/migration": typeof functions_migration;
   "functions/notifications": typeof functions_notifications;

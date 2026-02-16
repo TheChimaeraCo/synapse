@@ -7,8 +7,8 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { cn, formatRelativeTime, formatCost, formatTokens } from "@/lib/utils";
 import type { MessageDisplay } from "@/lib/types";
-import React, { useState, useRef, useMemo, useCallback } from "react";
-import { Check, Copy, Download, FileIcon, ImageIcon, Volume2, Loader2, RotateCcw, GitBranch, Star } from "lucide-react";
+import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
+import { Check, Copy, Download, FileIcon, ImageIcon, Volume2, Loader2, RotateCcw, GitBranch, Star, SmilePlus } from "lucide-react";
 
 function CodeBlock({ language, children }: { language?: string; children: string }) {
   const [copied, setCopied] = useState(false);
@@ -220,10 +220,111 @@ const markdownComponents = {
 
 const remarkPlugins = [remarkGfm];
 
+const REACTION_EMOJIS = ["👍", "👎", "❤️", "🎯", "💡"];
+
+interface ReactionCount {
+  emoji: string;
+  count: number;
+  reacted: boolean; // whether current user has reacted
+}
+
+function ReactionBar({ messageId, reactions, onReact }: { messageId: string; reactions: ReactionCount[]; onReact: (emoji: string) => void }) {
+  const [showPicker, setShowPicker] = useState(false);
+
+  return (
+    <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+      {reactions.filter(r => r.count > 0).map(r => (
+        <button
+          key={r.emoji}
+          onClick={() => onReact(r.emoji)}
+          className={cn(
+            "flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] transition-colors border",
+            r.reacted
+              ? "bg-blue-500/15 border-blue-500/30 text-blue-300"
+              : "bg-white/[0.04] border-white/[0.08] text-zinc-400 hover:bg-white/[0.08]"
+          )}
+        >
+          <span>{r.emoji}</span>
+          <span className="font-mono text-[10px]">{r.count}</span>
+        </button>
+      ))}
+      <div className="relative">
+        <button
+          onClick={() => setShowPicker(v => !v)}
+          className="p-1 rounded-full text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06] transition-colors opacity-0 group-hover:opacity-100"
+          aria-label="Add reaction"
+        >
+          <SmilePlus className="h-3.5 w-3.5" />
+        </button>
+        {showPicker && (
+          <div className="absolute bottom-full left-0 mb-1 flex gap-0.5 px-2 py-1.5 rounded-xl bg-white/[0.07] backdrop-blur-xl border border-white/[0.12] shadow-lg z-10">
+            {REACTION_EMOJIS.map(emoji => (
+              <button
+                key={emoji}
+                onClick={() => { onReact(emoji); setShowPicker(false); }}
+                className="p-1 rounded-lg hover:bg-white/[0.1] transition-colors text-sm"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export const MessageBubble = React.memo(function MessageBubble({ message, onRetry, onBranch, onPin, isPinned }: { message: MessageDisplay; onRetry?: (messageId: string) => void; onBranch?: (messageId: string) => void; onPin?: (messageId: string) => void; isPinned?: boolean }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isFailed = message.content?.startsWith("Error:");
+  const [reactions, setReactions] = useState<ReactionCount[]>([]);
+
+  // Fetch reactions for assistant messages
+  useEffect(() => {
+    if (isUser || isSystem) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await gatewayFetch(`/api/reactions?messageId=${message._id}`);
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          const rawReactions = data.reactions || [];
+          // Aggregate by emoji
+          const counts = new Map<string, { count: number; reacted: boolean }>();
+          for (const r of rawReactions) {
+            const existing = counts.get(r.emoji) || { count: 0, reacted: false };
+            existing.count++;
+            counts.set(r.emoji, existing);
+          }
+          setReactions(REACTION_EMOJIS.map(emoji => ({
+            emoji,
+            count: counts.get(emoji)?.count || 0,
+            reacted: counts.get(emoji)?.reacted || false,
+          })));
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [message._id, isUser, isSystem]);
+
+  const handleReact = useCallback(async (emoji: string) => {
+    try {
+      const res = await gatewayFetch("/api/reactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId: message._id, emoji }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setReactions(prev => prev.map(r =>
+          r.emoji === emoji
+            ? { ...r, count: data.action === "added" ? r.count + 1 : Math.max(0, r.count - 1), reacted: data.action === "added" }
+            : r
+        ));
+      }
+    } catch {}
+  }, [message._id]);
 
   if (isSystem) {
     const meta = (message as any).metadata;
@@ -345,6 +446,11 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
             </button>
           )}
         </div>
+
+        {/* Reactions for assistant messages */}
+        {!isUser && (
+          <ReactionBar messageId={message._id} reactions={reactions} onReact={handleReact} />
+        )}
       </div>
     </article>
   );
