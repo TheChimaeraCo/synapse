@@ -31,6 +31,8 @@ export function ChannelsTab() {
 
   const telegramToken = configData?.telegram_bot_token || "";
   const telegramConnected = !!telegramToken;
+  const discordToken = configData?.discord_bot_token || "";
+  const discordConnected = !!discordToken;
 
   const [editingTelegram, setEditingTelegram] = useState(false);
   const [botToken, setBotToken] = useState("");
@@ -41,7 +43,18 @@ export function ChannelsTab() {
   const [tokenValid, setTokenValid] = useState<boolean | null>(null);
   const [expandedChannel, setExpandedChannel] = useState<string | null>(null);
 
+  // Discord state
+  const [editingDiscord, setEditingDiscord] = useState(false);
+  const [discordBotToken, setDiscordBotToken] = useState("");
+  const [discordChannelIds, setDiscordChannelIds] = useState("");
+  const [showDiscordToken, setShowDiscordToken] = useState(false);
+  const [discordTesting, setDiscordTesting] = useState(false);
+  const [discordSaving, setDiscordSaving] = useState(false);
+  const [discordValid, setDiscordValid] = useState<boolean | null>(null);
+  const [discordBotName, setDiscordBotName] = useState<string | null>(null);
+
   const telegramChannel = channels?.find((c) => c.platform === "telegram");
+  const discordChannel = channels?.find((c) => c.platform === "discord");
   const hubChannel = channels?.find((c) => c.platform === "hub");
   const apiChannels = channels?.filter((c) => c.platform === "api") || [];
 
@@ -117,6 +130,53 @@ export function ChannelsTab() {
       toast.error("Failed to register webhook");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestDiscord = async () => {
+    if (!discordBotToken) return;
+    setDiscordTesting(true);
+    setDiscordValid(null);
+    try {
+      const res = await gatewayFetch("/api/config/test-discord", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ botToken: discordBotToken }),
+      });
+      const result = await res.json();
+      setDiscordValid(result.valid);
+      if (result.valid && result.botName) setDiscordBotName(result.botName);
+      else toast.error(result.error || "Invalid token");
+    } catch {
+      setDiscordValid(false);
+      toast.error("Failed to test");
+    } finally {
+      setDiscordTesting(false);
+    }
+  };
+
+  const handleSaveDiscord = async () => {
+    setDiscordSaving(true);
+    try {
+      await gatewayFetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "discord_bot_token", value: discordBotToken }),
+      });
+      if (discordChannelIds.trim()) {
+        await gatewayFetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: "discord_channel_ids", value: discordChannelIds.trim() }),
+        });
+      }
+      toast.success("Discord updated");
+      setEditingDiscord(false);
+      refetchConfig();
+    } catch {
+      toast.error("Failed to save");
+    } finally {
+      setDiscordSaving(false);
     }
   };
 
@@ -521,12 +581,102 @@ curl -N -X POST ${typeof window !== 'undefined' ? window.location.origin : 'http
         </CardContent>
       </Card>
 
+      {/* Discord */}
+      <Card className="bg-white/[0.04] border-white/[0.06]">
+        <CardContent className="py-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-indigo-900/50 flex items-center justify-center">
+                <MessageSquare className="w-5 h-5 text-indigo-400" />
+              </div>
+              <div>
+                <p className="text-white font-medium">Discord</p>
+                <p className="text-zinc-500 text-sm">
+                  {discordConnected ? "Connected" : "Not configured"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {discordChannel && (
+                <button
+                  onClick={() => handleToggleChannel(discordChannel._id, isEnabled(discordChannel))}
+                  className="text-zinc-400 hover:text-white"
+                  title={isEnabled(discordChannel) ? "Disable" : "Enable"}
+                >
+                  {isEnabled(discordChannel) ? (
+                    <ToggleRight className="w-6 h-6 text-green-400" />
+                  ) : (
+                    <ToggleLeft className="w-6 h-6 text-zinc-500" />
+                  )}
+                </button>
+              )}
+              <Badge className={discordConnected ? "bg-green-900 text-green-300" : "bg-white/[0.06] text-zinc-400"}>
+                {discordConnected ? "Connected" : "Disconnected"}
+              </Badge>
+            </div>
+          </div>
+
+          {discordConnected && !editingDiscord && (
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setEditingDiscord(true); setDiscordBotToken(""); setDiscordValid(null); setDiscordChannelIds(configData?.discord_channel_ids || ""); }} className="border-white/[0.08] text-zinc-300">
+                Edit Token
+              </Button>
+            </div>
+          )}
+
+          {(editingDiscord || !discordConnected) && (
+            <div className="space-y-3 pt-2 border-t border-white/[0.06]">
+              <div>
+                <label className="text-sm text-zinc-400 mb-1 block">Bot Token</label>
+                <div className="relative">
+                  <Input
+                    type={showDiscordToken ? "text" : "password"}
+                    value={discordBotToken}
+                    onChange={(e) => { setDiscordBotToken(e.target.value); setDiscordValid(null); setDiscordBotName(null); }}
+                    placeholder="MTIzNDU2Nzg5..."
+                    className="bg-white/[0.06] border-white/[0.08] text-white pr-16"
+                  />
+                  <button type="button" onClick={() => setShowDiscordToken(!showDiscordToken)} className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-white">
+                    {showDiscordToken ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm text-zinc-400 mb-1 block">Channel IDs <span className="text-zinc-600">(optional, comma-separated)</span></label>
+                <Input
+                  value={discordChannelIds}
+                  onChange={(e) => setDiscordChannelIds(e.target.value)}
+                  placeholder="123456789,987654321"
+                  className="bg-white/[0.06] border-white/[0.08] text-white"
+                />
+                <p className="text-xs text-zinc-500 mt-1">Leave empty to respond in all channels. Restrict to specific channels for safety.</p>
+              </div>
+              <div className="flex gap-2 items-center">
+                <Button variant="outline" size="sm" onClick={handleTestDiscord} disabled={discordTesting || !discordBotToken} className="border-white/[0.08] text-zinc-300">
+                  {discordTesting ? "Testing..." : "Test"}
+                </Button>
+                {discordValid === true && discordBotName && <Badge className="bg-green-900 text-green-300">{discordBotName}</Badge>}
+                {discordValid === false && <Badge className="bg-red-900 text-red-300">Invalid</Badge>}
+              </div>
+              <div className="flex gap-2">
+                {editingDiscord && (
+                  <Button variant="outline" size="sm" onClick={() => setEditingDiscord(false)} className="border-white/[0.08] text-zinc-300">Cancel</Button>
+                )}
+                <Button size="sm" onClick={handleSaveDiscord} disabled={discordSaving || !discordBotToken || !discordValid}>
+                  {discordSaving ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Future channels */}
       <Card className="bg-white/[0.04]/50 border-white/[0.06] border-dashed">
         <CardContent className="flex items-center justify-center py-8">
           <div className="text-center">
             <Plus className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
-            <p className="text-zinc-500 text-sm">Discord, Slack, and more coming soon</p>
+            <p className="text-zinc-500 text-sm">Slack and more coming soon</p>
           </div>
         </CardContent>
       </Card>
