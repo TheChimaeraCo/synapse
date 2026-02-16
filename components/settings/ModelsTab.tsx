@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -212,4 +213,3 @@ export function ModelsTab() {
     </div>
   );
 }
-import { HelpTooltip } from "@/components/HelpTooltip";

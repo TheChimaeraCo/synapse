@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "@/components/HelpTooltip";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
@@ -369,4 +370,3 @@ export function AgentSoulTab() {
     </div>
   );
 }
-import { HelpTooltip } from "@/components/HelpTooltip";

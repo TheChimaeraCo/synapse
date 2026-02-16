@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useFetch } from "@/lib/hooks";
-import { MessageSquare, Send, Plus, Settings2, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Zap, Copy, RefreshCw, Eye, EyeOff } from "lucide-react";
+import { MessageSquare, Send, Plus, Settings2, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Zap, Copy, RefreshCw, Eye, EyeOff, Trash2 } from "lucide-react";
 
 interface Channel {
   _id: string;
@@ -145,6 +145,17 @@ export function ChannelsTab() {
       refetchChannels();
     } catch {
       toast.error("Failed to update");
+    }
+  };
+
+  const handleDeleteChannel = async (channelId: string) => {
+    if (!confirm("Delete this channel? This cannot be undone.")) return;
+    try {
+      await gatewayFetch(`/api/channels/${channelId}`, { method: "DELETE" });
+      toast.success("Channel deleted");
+      refetchChannels();
+    } catch {
+      toast.error("Failed to delete channel");
     }
   };
 
@@ -394,7 +405,7 @@ export function ChannelsTab() {
                     )}
                   </div>
                 </div>
-                <div>
+                <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -413,6 +424,15 @@ export function ChannelsTab() {
                   >
                     <RefreshCw className="w-3 h-3 mr-1.5" />
                     Regenerate Key
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-red-500/20 text-red-400 hover:bg-red-500/10"
+                    onClick={() => handleDeleteChannel(ch._id)}
+                  >
+                    <Trash2 className="w-3 h-3 mr-1.5" />
+                    Delete
                   </Button>
                 </div>
                 <div className="bg-white/[0.03] rounded-lg p-3 text-sm text-zinc-400">

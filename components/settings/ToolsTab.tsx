@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "@/components/HelpTooltip";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 
 import { useEffect, useState } from "react";
@@ -125,4 +126,3 @@ export function ToolsTab() {
     </div>
   );
 }
-import { HelpTooltip } from "@/components/HelpTooltip";
