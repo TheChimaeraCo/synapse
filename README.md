@@ -1,60 +1,86 @@
-# Synapse
+<p align="center">
+  <img src="public/icons/icon-192x192.png" alt="Synapse" width="80" />
+</p>
 
-> **Beta v0.1** - Your AI command center.
+<h1 align="center">Synapse</h1>
 
-Synapse is a self-hosted platform for managing AI agents across multiple channels. Connect Telegram bots, Discord bots, and web interfaces to a unified backend with conversation memory, tool execution, and real-time monitoring.
+<p align="center">
+  <strong>Your self-hosted AI command center.</strong><br/>
+  Manage AI agents across multiple channels from a single, beautiful dashboard.
+</p>
 
-Built for people who run AI agents in production and need a single place to manage them.
+<p align="center">
+  <a href="https://github.com/TheChimaeraCo/synapse/stargazers"><img src="https://img.shields.io/github/stars/TheChimaeraCo/synapse?style=flat-square&color=blue" alt="Stars" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-FSL-blue?style=flat-square" alt="License" /></a>
+  <img src="https://img.shields.io/badge/version-0.2.0-blue?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/next.js-16-black?style=flat-square" alt="Next.js" />
+  <img src="https://img.shields.io/badge/convex-realtime-orange?style=flat-square" alt="Convex" />
+</p>
 
-## What's New - v0.1 Beta
+<!-- screenshots -->
+<!-- Add screenshots here: dashboard, chat, settings, mobile PWA -->
 
-The foundation release includes everything you need to run AI agents in production:
+---
 
-- Multi-gateway architecture with invite-only registration
-- Multi-channel support (Web, Telegram, Discord, WhatsApp)
-- Multi-agent system with sub-agents, parallel execution, and cost tracking
-- 24+ builtin tools with self-modification capabilities
-- Semantic memory and knowledge management
-- 10-layer prompt injection defense
-- Premium Apple-glass UI as a PWA with push notifications
-- PM2 dashboard integration
-- License system with tiered feature gating
+## What is Synapse?
 
-See the full [Roadmap](./ROADMAP.md) for what's built, in progress, and planned.
+Synapse is a self-hosted platform for running AI agents in production. Connect Telegram bots, Discord bots, WhatsApp, API endpoints, and a built-in web chat to a unified backend with conversation memory, tool execution, analytics, and real-time monitoring.
+
+Built for people who run AI agents and need a single place to manage them all.
 
 ## Features
 
-- **Multi-gateway architecture** - Run multiple AI gateways, each with their own model configuration, system prompts, and tool sets
-- **Multi-channel support** - Connect Telegram, Discord, and a built-in web chat to any gateway
-- **Multi-agent system** - Sub-agents with parallel execution, abort control, and cost tracking
-- **Conversation chains** - Agents maintain context across sessions with decisions and summaries
-- **Tool execution** - 24+ builtin tools with a configurable execution loop
-- **Semantic memory** - Vector-based knowledge storage for long-term agent recall
-- **A2A messaging** - Agent-to-agent communication across gateways
-- **Self-modification** - Agents can deploy code and create new tools at runtime
-- **File manager** - Upload, organize, and edit files from the browser
-- **PM2 integration** - Manage agent processes directly from the dashboard
-- **PWA** - Install as a native app on desktop and mobile with push notifications
-- **Admin console** - User management, invite system, gateway configuration, and usage monitoring
+### 🌐 Multi-Gateway Architecture
+Run multiple AI gateways, each with their own model configuration, system prompts, tool sets, and knowledge bases. Switch between gateways instantly.
 
-## Tech Stack
+### 📡 Multi-Channel Support
+Connect any gateway to multiple channels simultaneously:
+- **Web Chat** - Built-in glass-themed chat UI
+- **Telegram** - Full bot integration via grammY
+- **Discord** - Bot support with slash commands
+- **WhatsApp** - Business API integration
+- **API** - Programmatic access for custom integrations
 
-- **Framework:** Next.js 14 (App Router)
-- **Backend:** Convex (real-time database + serverless functions)
-- **Auth:** Auth.js v5
-- **Telegram:** grammY
-- **UI:** Tailwind CSS, Radix UI, shadcn/ui
-- **Process management:** PM2
+### 🤖 Multi-Agent System
+Sub-agents with parallel execution, abort control, and per-agent cost tracking. Agents can delegate tasks to other agents across gateways via A2A messaging.
+
+### 🧰 24+ Built-in Tools
+Web search, code execution, file management, image generation, and more. Agents can create new tools at runtime through self-modification.
+
+### 🧠 Knowledge & Memory
+Semantic vector search over uploaded documents. Agents maintain conversation context across sessions with automatic summarization and decision tracking.
+
+### 📊 Analytics Dashboard
+Track token usage, costs, response times, and conversation patterns across all gateways and channels. Export data for deeper analysis.
+
+### 🔔 Webhooks & Scheduled Messages
+HMAC-signed webhook delivery for external integrations. Schedule messages and recurring tasks with cron-like precision.
+
+### 📱 PWA with Push Notifications
+Install as a native app on desktop and mobile. Receive push notifications for agent events, approvals, and mentions.
+
+### 🎨 Themes & Customization
+Dark glassmorphism UI with customizable accent colors. Multiple theme options and a premium Apple-glass aesthetic.
+
+### 🔒 Security & Access Control
+Role-based permissions, invite-only registration, rate limiting, circuit breakers, 10-layer prompt injection defense, and audit logging.
+
+### 📋 Admin Console
+User management, PM2 process dashboard, gateway configuration, usage monitoring, and system health at a glance.
+
+### 📁 File & Project Management
+Upload, organize, and edit files from the browser. Manage code projects with syntax-highlighted editing.
 
 ## Quick Start
 
-### Prerequisites
+### With Docker (Recommended)
 
-- Node.js 20+
-- A Convex account or self-hosted Convex instance
-- (Optional) Telegram bot token, Discord bot token
+```bash
+docker pull ghcr.io/thechimaeraco/synapse:latest
+docker run -d -p 3000:3000 --env-file .env.local synapse
+```
 
-### Setup
+### With npm
 
 ```bash
 # Clone the repository
@@ -64,69 +90,92 @@ cd synapse
 # Install dependencies
 npm install
 
-# Run the interactive setup
+# Run the interactive setup (walks you through everything)
 npm run init
 ```
 
-The init script walks you through Convex setup, environment configuration, and first-user creation.
+The init script handles Convex setup, environment configuration, and first-user creation.
 
 ### Manual Setup
 
 ```bash
-# Copy environment template
 cp .env.example .env.local
-
-# Edit .env.local with your values (see docs/configuration.md)
+# Edit .env.local with your values
 
 # Push the Convex schema
 npx convex deploy
 
-# Start the dev server
-npm run dev
-```
-
-### Running in Production
-
-```bash
-# Build and start with PM2
+# Build and start
 npm run build
 npm run synapse
 ```
 
 ## Architecture
 
-Synapse uses a **gateway/channel/agent** model:
-
 ```
-Gateway (model config + tools + system prompt)
-  |
-  +-- Channel (Telegram bot, Discord bot, or web chat)
-  |     |
-  |     +-- Session (per-user conversation)
-  |           |
-  |           +-- Messages (with tool calls, attachments, etc.)
-  |
-  +-- Channel ...
+Synapse
+├── Next.js 16 (App Router)     - Frontend + API routes
+├── Convex                       - Real-time database + serverless functions
+├── pi-ai                        - AI model routing (OpenAI, Anthropic, etc.)
+├── grammY                       - Telegram bot framework
+└── Auth.js v5                   - Authentication
 ```
 
-**Gateways** define how an AI agent behaves - which model it uses, what tools are available, and what system prompt it follows.
+Synapse uses a **gateway / channel / session** model:
 
-**Channels** are the interfaces users interact through. A single gateway can serve multiple channels simultaneously.
+```
+Gateway (model + tools + system prompt + knowledge)
+  ├── Channel (Telegram, Discord, Web, API, WhatsApp)
+  │     └── Session (per-user conversation with full history)
+  └── Channel ...
+```
 
-**Sessions** track per-user conversations with full history, enabling context-aware responses across interactions.
+**Gateways** define how an AI agent behaves. **Channels** are the interfaces users interact through. A single gateway can serve multiple channels simultaneously. Convex handles real-time sync, so changes in the admin console reflect instantly everywhere.
 
-Convex handles real-time data sync, so changes in the admin console reflect instantly across all connected channels.
+## API Access
+
+Synapse exposes a REST API for programmatic access. Create an API channel in your gateway settings, then use the provided API key:
+
+```bash
+curl -X POST https://your-synapse.example.com/api/sessions/SESSION_ID/messages \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Hello from the API"}'
+```
+
+See the API channel settings page for full endpoint documentation.
+
+## Configuration
+
+Core settings live in `.env.local`. See `.env.example` for all available options. Most configuration happens through the web UI:
+
+- **Gateway settings** - Model, temperature, tools, system prompt, knowledge
+- **Channel settings** - Platform-specific configuration per channel
+- **User management** - Roles, permissions, invites
+- **Webhooks** - External integration endpoints with HMAC signing
+- **Scheduled messages** - Cron-style recurring tasks
 
 ## Documentation
 
 - [Getting Started](./docs/getting-started.md) - Full setup guide
-- [Architecture](./docs/architecture.md) - How Synapse works under the hood
+- [Architecture](./docs/architecture.md) - How it works under the hood
 - [Configuration](./docs/configuration.md) - All configuration options
-- [Tools](./docs/tools.md) - Builtin tools reference
+- [Tools](./docs/tools.md) - Built-in tools reference
 - [Channels](./docs/channels.md) - Channel setup guides
-- [Licensing](./docs/licensing.md) - License tiers and pricing
-- [Roadmap](./ROADMAP.md) - What's built, in progress, and planned
-- [Contributing](./CONTRIBUTING.md) - How to contribute
+- [Licensing](./docs/licensing.md) - License tiers and details
+- [Roadmap](./ROADMAP.md) - What's built and what's planned
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for:
+- Development setup
+- Project structure overview
+- How to add tools, settings tabs, and channel types
+- Code style guidelines
+
+## Security
+
+Found a vulnerability? See [SECURITY.md](./SECURITY.md) for our disclosure policy.
 
 ## License
 
@@ -135,9 +184,10 @@ Synapse is source-available under the [Functional Source License (FSL)](https://
 - **Personal use** (up to 5 users): Free
 - **Commercial use**: Requires a license from The Chimaera Company LLC
 
-See [LICENSE](./LICENSE) for full terms, or read [docs/licensing.md](./docs/licensing.md) for tier details.
+See [LICENSE](./LICENSE) for full terms.
 
-## Links
+---
 
-- **The Chimaera Company LLC** - [chimaeraco.dev](https://chimaeraco.dev)
-- **Licensing questions** - [licensing@chimaeraco.dev](mailto:licensing@chimaeraco.dev)
+<p align="center">
+  Built by <a href="https://chimaeraco.dev"><strong>The Chimaera Company</strong></a>
+</p>

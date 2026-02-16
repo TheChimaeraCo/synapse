@@ -1,7 +1,18 @@
 {
   "name": "synapse",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
+  "description": "Self-hosted AI command center. Manage AI agents across Telegram, Discord, WhatsApp, and web from a single dashboard.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TheChimaeraCo/synapse.git"
+  },
+  "homepage": "https://github.com/TheChimaeraCo/synapse",
+  "bugs": {
+    "url": "https://github.com/TheChimaeraCo/synapse/issues"
+  },
+  "license": "FSL-1.1-MIT",
+  "author": "The Chimaera Company LLC",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
