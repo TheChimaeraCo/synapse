@@ -202,23 +202,23 @@ export default function ChatPage() {
         {/* Main chat area - takes full width now */}
         <div className="flex flex-1 flex-col min-w-0">
           {/* Mobile top bar */}
-          <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06] lg:hidden shrink-0 bg-white/[0.02] backdrop-blur-2xl">
-            <div className="flex items-center gap-1">
-              <span className="text-sm font-medium text-zinc-300">
+          <div className="flex items-center justify-between px-3 py-1 border-b border-white/[0.06] lg:hidden shrink-0 bg-white/[0.02] backdrop-blur-2xl">
+            <div className="flex items-center gap-1 min-w-0">
+              <span className="text-sm font-medium text-zinc-300 truncate">
                 {activeChannel ? `#${activeChannel.name}` : "Chat"}
               </span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5">
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 text-zinc-400 hover:text-zinc-200"
+                className="h-10 w-10 min-w-[44px] min-h-[44px] text-zinc-400 hover:text-zinc-200"
                 onClick={() => setConvoSidebarOpen((v) => !v)}
               >
                 <History className="h-4 w-4" />
               </Button>
               <Link href="/">
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-zinc-200">
+                <Button variant="ghost" size="icon" className="h-10 w-10 min-w-[44px] min-h-[44px] text-zinc-400 hover:text-zinc-200">
                   <LayoutDashboard className="h-4 w-4" />
                 </Button>
               </Link>

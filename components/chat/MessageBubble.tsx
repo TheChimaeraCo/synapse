@@ -20,7 +20,7 @@ function CodeBlock({ language, children }: { language?: string; children: string
   };
 
   return (
-    <div className="relative group/code my-3 rounded-xl overflow-hidden border border-white/[0.08] shadow-[0_4px_16px_rgba(0,0,0,0.2)]">
+    <div className="relative group/code my-3 rounded-xl overflow-hidden border border-white/[0.08] shadow-[0_4px_16px_rgba(0,0,0,0.2)] max-w-[calc(100vw-4rem)] sm:max-w-none">
       <div className="flex items-center justify-between bg-white/[0.06] px-4 py-2 text-xs text-zinc-400">
         <span>{language || "text"}</span>
         <button onClick={copy} aria-label={copied ? "Copied to clipboard" : "Copy code"} className="flex items-center gap-1 hover:text-white transition-colors">
@@ -202,8 +202,8 @@ const markdownComponents = {
   },
   table({ children }: any) {
     return (
-      <div className="my-2 overflow-x-auto rounded-xl border border-white/[0.08]">
-        <table className="w-full border-collapse text-xs">{children}</table>
+      <div className="my-2 overflow-x-auto rounded-xl border border-white/[0.08] max-w-[calc(100vw-5rem)] sm:max-w-none -mx-1">
+        <table className="w-full border-collapse text-xs min-w-[300px]">{children}</table>
       </div>
     );
   },

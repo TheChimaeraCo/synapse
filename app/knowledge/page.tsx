@@ -153,7 +153,7 @@ export default function KnowledgePage() {
     <AppShell title="Knowledge Base">
       <div className="p-4 lg:p-6 space-y-5 overflow-auto h-full">
         {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center justify-between flex-wrap gap-2 min-w-0">
           <div>
             <h1 className="text-xl font-semibold text-zinc-100">
               Knowledge Base
@@ -255,18 +255,18 @@ export default function KnowledgePage() {
                   )}
                 </div>
               </div>
-              <div className="flex gap-2 mb-3">
+              <div className="flex flex-col sm:flex-row gap-2 mb-3">
                 <input
                   value={memorySearch}
                   onChange={(e) => setMemorySearch(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleMemorySearch()}
-                  placeholder="Search memories by keyword or concept..."
-                  className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-blue-500/30"
+                  placeholder="Search memories..."
+                  className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-blue-500/30"
                 />
                 <button
                   onClick={handleMemorySearch}
                   disabled={memorySearching}
-                  className="px-3 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-medium hover:brightness-110 transition-all disabled:opacity-50"
+                  className="px-3 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-medium hover:brightness-110 transition-all disabled:opacity-50 sm:w-auto w-full"
                 >
                   {memorySearching ? "..." : "Search"}
                 </button>

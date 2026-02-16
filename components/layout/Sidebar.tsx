@@ -102,12 +102,64 @@ const navLinks = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/knowledge", label: "Knowledge", icon: Brain },
   { href: "/files", label: "Files", icon: FolderOpen },
+  { href: "/settings", label: "Settings", icon: Settings },
+];
+
+const secondaryNavLinks = [
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/analytics", label: "Analytics", icon: Zap },
   { href: "/docs", label: "API Docs", icon: FileText },
   { href: "/admin/audit", label: "Audit Log", icon: Shield },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
+
+function SidebarMore({ pathname, onClose }: { pathname: string; onClose?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const hasActiveSecondary = secondaryNavLinks.some(
+    (l) => pathname.startsWith(l.href)
+  );
+
+  // Auto-open if a secondary link is active
+  useEffect(() => {
+    if (hasActiveSecondary) setOpen(true);
+  }, [hasActiveSecondary]);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-xl px-3.5 py-2 text-sm font-medium transition-all duration-200 text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300",
+        )}
+      >
+        <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+        <span className="text-xs">More</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-0.5 mt-0.5 ml-2">
+          {secondaryNavLinks.map((link) => {
+            const isActive = pathname.startsWith(link.href);
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={onClose}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl px-3 py-2 text-xs font-medium transition-all duration-200",
+                  isActive
+                    ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10 text-blue-300 border border-blue-500/20"
+                    : "text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300"
+                )}
+              >
+                <link.icon className={cn("h-3.5 w-3.5", isActive && "text-blue-400")} />
+                {link.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function formatElapsed(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -744,6 +796,19 @@ function ThemeToggleButton() {
   );
 }
 
+function ThemeToggleCompact() {
+  const { resolvedTheme, toggleTheme } = useTheme();
+  return (
+    <button
+      onClick={toggleTheme}
+      className="flex items-center justify-center h-8 w-8 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.08] transition-all border border-white/[0.08] bg-white/[0.04]"
+      aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
+    >
+      {resolvedTheme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
+
 export function Sidebar({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname();
 
@@ -801,23 +866,27 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             </Link>
           );
         })}
+        <SidebarMore pathname={pathname} onClose={onClose} />
       </nav>
 
       <Separator />
 
-      {/* Channels (on chat page) or Agents only - fills remaining space */}
+      {/* Channels + agents - fills remaining space */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         {pathname.startsWith("/chat") && <SidebarChannels />}
-        <Separator />
         <SidebarAgents />
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-4 space-y-3 border-t border-white/[0.06]">
-        <ThemeToggleButton />
-        <InstallAppButton />
-        <ConnectionStatus />
-        <div className="text-[11px] text-zinc-600">Synapse v0.1.0</div>
+      <div className="px-4 py-3 border-t border-white/[0.06] space-y-2">
+        <div className="flex items-center gap-2">
+          <ThemeToggleCompact />
+          <InstallAppButton />
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] text-zinc-600">Synapse v0.2.0</div>
+          <ConnectionStatus />
+        </div>
       </div>
     </div>
   );

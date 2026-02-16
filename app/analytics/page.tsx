@@ -70,7 +70,7 @@ function HorizontalBarChart({ items, color = "blue" }: { items: [string, number]
     <div className="space-y-2">
       {items.map(([name, count]) => (
         <div key={name} className="flex items-center gap-3">
-          <span className="text-xs text-zinc-400 w-28 truncate text-right">{name}</span>
+          <span className="text-xs text-zinc-400 w-20 sm:w-28 truncate text-right">{name}</span>
           <div className="flex-1 h-5 bg-white/[0.04] rounded-lg overflow-hidden">
             <div className="h-full rounded-lg transition-all"
               style={{
@@ -176,9 +176,9 @@ export default function AnalyticsPage() {
                 const maxCost = Math.max(...data.costByModel.map(x => x.cost), 0.001);
                 return (
                   <div key={m.model} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-zinc-300 font-mono">{m.model}</span>
-                      <span className="text-zinc-400">${m.cost.toFixed(4)} ({m.count} calls)</span>
+                    <div className="flex items-center justify-between text-xs gap-2">
+                      <span className="text-zinc-300 font-mono truncate min-w-0">{m.model}</span>
+                      <span className="text-zinc-400 shrink-0">${m.cost.toFixed(4)} ({m.count})</span>
                     </div>
                     <div className="h-2 bg-white/[0.04] rounded-full overflow-hidden">
                       <div
@@ -186,9 +186,9 @@ export default function AnalyticsPage() {
                         style={{ width: `${(m.cost / maxCost) * 100}%` }}
                       />
                     </div>
-                    <div className="flex gap-4 text-[10px] text-zinc-500">
-                      <span>Input: {(m.input / 1000).toFixed(1)}k tokens</span>
-                      <span>Output: {(m.output / 1000).toFixed(1)}k tokens</span>
+                    <div className="flex flex-wrap gap-2 sm:gap-4 text-[10px] text-zinc-500">
+                      <span>In: {(m.input / 1000).toFixed(1)}k</span>
+                      <span>Out: {(m.output / 1000).toFixed(1)}k</span>
                     </div>
                   </div>
                 );

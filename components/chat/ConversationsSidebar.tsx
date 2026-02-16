@@ -74,7 +74,7 @@ export function ConversationsSidebar({
         ref={sidebarRef}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
-        className={`fixed inset-y-0 right-0 z-50 w-[340px] transform transition-transform duration-300 ease-out bg-white/[0.05] backdrop-blur-3xl border-l border-white/[0.08] flex flex-col shadow-[0_16px_64px_rgba(0,0,0,0.4)] ${
+        className={`fixed inset-y-0 right-0 z-50 w-[calc(100vw-3rem)] sm:w-[340px] max-w-[340px] transform transition-transform duration-300 ease-out bg-white/[0.05] backdrop-blur-3xl border-l border-white/[0.08] flex flex-col shadow-[0_16px_64px_rgba(0,0,0,0.4)] ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >

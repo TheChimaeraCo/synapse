@@ -368,7 +368,7 @@ export default function FilesPage() {
       {/* Top toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10 bg-white/[0.03]">
         {/* Mobile tree toggle */}
-        <button className="md:hidden p-1 hover:bg-white/10 rounded" onClick={() => setShowMobileTree(!showMobileTree)}>
+        <button className="md:hidden p-2.5 hover:bg-white/10 rounded min-w-[44px] min-h-[44px] flex items-center justify-center" onClick={() => setShowMobileTree(!showMobileTree)}>
           <Folder className="w-4 h-4" />
         </button>
         {/* Breadcrumbs */}
@@ -398,8 +398,8 @@ export default function FilesPage() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel - File tree */}
-        <div className={`${showMobileTree ? "fixed inset-0 z-50 bg-black/50 md:relative md:bg-transparent" : "hidden md:block"} md:w-[280px] md:min-w-[280px] md:border-r md:border-white/10`}>
-          <div className={`${showMobileTree ? "w-[280px] h-full" : "h-full"} bg-white/[0.04] backdrop-blur-2xl flex flex-col`}>
+        <div className={`${showMobileTree ? "fixed inset-0 z-50 bg-black/50 md:relative md:bg-transparent flex" : "hidden md:block"} md:w-[280px] md:min-w-[280px] md:border-r md:border-white/10`}>
+          <div className={`${showMobileTree ? "w-[280px] max-w-[80vw] h-full" : "h-full"} bg-white/[0.04] backdrop-blur-2xl flex flex-col shrink-0`}>
             {/* Search */}
             <div className="p-2 border-b border-white/10">
               <div className="flex items-center gap-2 px-2 py-1.5 bg-white/[0.06] rounded border border-white/10">
@@ -660,8 +660,8 @@ export default function FilesPage() {
       {/* Context menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 bg-white/[0.07] backdrop-blur-3xl border border-white/[0.12] rounded-2xl shadow-[0_16px_64px_rgba(0,0,0,0.4)] py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          className="fixed z-50 bg-white/[0.07] backdrop-blur-3xl border border-white/[0.12] rounded-2xl shadow-[0_16px_64px_rgba(0,0,0,0.4)] py-1 min-w-[180px] max-w-[calc(100vw-1rem)]"
+          style={{ left: Math.min(contextMenu.x, window.innerWidth - 200), top: Math.min(contextMenu.y, window.innerHeight - 300) }}
           onClick={(e) => e.stopPropagation()}
         >
           {[

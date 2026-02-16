@@ -320,7 +320,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   };
 
   return (
-    <div className="border-t border-white/[0.06] p-3 sm:p-5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-white/[0.02] backdrop-blur-2xl">
+    <div className="border-t border-white/[0.06] p-2 sm:p-5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-white/[0.02] backdrop-blur-2xl">
       <div className="relative">
         {showSuggestions && (
           <div className="absolute bottom-full left-0 mb-2 w-80 rounded-xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-3xl shadow-[0_16px_64px_rgba(0,0,0,0.4)] overflow-hidden z-10">
@@ -394,12 +394,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           </div>
         )}
 
-        <div className="flex gap-2">
+        <div className="flex gap-1.5 sm:gap-2">
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="shrink-0 self-end text-zinc-400 hover:text-zinc-200"
+            className="shrink-0 self-end min-w-[44px] min-h-[44px] text-zinc-400 hover:text-zinc-200"
             onClick={() => fileInputRef.current?.click()}
             disabled={isDisabled || uploading}
             aria-label="Attach file"
@@ -410,7 +410,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             type="button"
             variant="ghost"
             size="icon"
-            className={`shrink-0 self-end ${recording ? "text-red-400 animate-pulse" : "text-zinc-400 hover:text-zinc-200"}`}
+            className={`shrink-0 self-end min-w-[44px] min-h-[44px] hidden sm:inline-flex ${recording ? "text-red-400 animate-pulse" : "text-zinc-400 hover:text-zinc-200"}`}
             onMouseDown={startRecording}
             onMouseUp={stopRecording}
             onMouseLeave={() => recording && stopRecording()}
@@ -422,12 +422,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           >
             {transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> : recording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
           </Button>
-          <div className="relative shrink-0 self-end">
+          <div className="relative shrink-0 self-end hidden sm:block">
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className={`text-zinc-400 hover:text-zinc-200 ${showScheduler ? "text-blue-400" : ""}`}
+              className={`min-w-[44px] min-h-[44px] text-zinc-400 hover:text-zinc-200 ${showScheduler ? "text-blue-400" : ""}`}
               onClick={() => setShowScheduler(!showScheduler)}
               disabled={isDisabled}
               aria-label="Schedule message"
@@ -455,8 +455,8 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             value={content}
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type a message... (/ for commands, Shift+Enter for new line)"
-            className="min-h-[44px] max-h-32 resize-none bg-card"
+            placeholder="Type a message..."
+            className="min-h-[44px] max-h-32 resize-none bg-card text-base sm:text-sm"
             rows={1}
           />
           {isStreaming ? (
@@ -464,7 +464,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               onClick={handleStop}
               size="icon"
               variant="destructive"
-              className="shrink-0 self-end"
+              className="shrink-0 self-end min-w-[44px] min-h-[44px]"
               aria-label="Stop streaming"
             >
               <Square className="h-4 w-4" />
@@ -474,7 +474,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               onClick={handleSend}
               disabled={isDisabled || !content.trim()}
               size="icon"
-              className="shrink-0 self-end"
+              className="shrink-0 self-end min-w-[44px] min-h-[44px]"
               aria-label="Send message"
             >
               <Send className="h-4 w-4" />
