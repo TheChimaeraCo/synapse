@@ -2,6 +2,40 @@
 
 All notable changes to Synapse are documented in this file.
 
+## [0.3.0] - 2026-02-16
+
+### Full Platform Support & Conversation Intelligence
+
+**Platform Channels**
+- All 5 platform channels fully implemented: Hub, Telegram, Discord, WhatsApp, Slack
+- Channel-specific message formatting and delivery
+- Unified channel management in settings
+
+**Conversation Segmentation**
+- Automatic topic detection and conversation splitting
+- Conservative classifier (tested, low false-positive rate)
+- 17 dedicated tests for segmentation logic
+
+**Settings Reorganization**
+- Settings split into 7 organized categories
+- Cleaner navigation and discoverability
+
+**Mobile UX Polish**
+- Responsive layout improvements across all pages
+- Touch-friendly controls and spacing
+
+**Performance**
+- Lazy loading for heavy components
+- Reduced initial bundle size
+
+**Testing & Reliability**
+- 71 tests across 9 test files, all passing
+- Error handling hardening throughout API routes
+
+**Dashboard & Chat UX**
+- Enhanced dashboard with activity metrics
+- Chat input and message display improvements
+
 ## [0.2.0] - 2026-02-16
 
 ### Wave 18 - Agent Capabilities & Intelligence

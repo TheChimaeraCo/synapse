@@ -1,6 +1,6 @@
 {
   "name": "synapse",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Self-hosted AI command center. Manage AI agents across Telegram, Discord, WhatsApp, and web from a single dashboard.",
   "repository": {
