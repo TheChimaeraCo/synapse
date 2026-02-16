@@ -72,7 +72,7 @@ export function ModelsTab() {
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">Models</h2>
+        <h2 className="text-xl font-semibold text-white mb-1">Models<HelpTooltip title="Models" content="Configure which AI models are available. Set default models, temperature, max tokens, and per-model pricing for budget tracking." /></h2>
         <p className="text-sm text-zinc-400">Configure model catalog, aliases, fallbacks, and defaults.</p>
       </div>
 
@@ -212,3 +212,4 @@ export function ModelsTab() {
     </div>
   );
 }
+import { HelpTooltip } from "@/components/HelpTooltip";

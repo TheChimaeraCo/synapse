@@ -21,7 +21,10 @@ start: build ## Build and start with PM2
 stop: ## Stop PM2 process
 	pm2 stop synapse-hub
 
-test: build ## Smoke test (build succeeds)
+test: ## Run test suite
+	npm test
+
+test-build: build ## Smoke test (build succeeds)
 	@echo "Build succeeded - smoke test passed"
 
 backup: ## Run backup script

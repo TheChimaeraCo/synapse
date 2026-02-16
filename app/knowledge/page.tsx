@@ -11,6 +11,9 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useFetch } from "@/lib/hooks";
 import { toast } from "sonner";
 import { Plus, Search, X, Trash2, Brain } from "lucide-react";
+import { HelpTooltip } from "@/components/HelpTooltip";
+import { KnowledgeSkeleton } from "@/components/ui/Skeletons";
+import { EmptyKnowledgeIllustration } from "@/components/ui/EmptyStates";
 
 interface KnowledgeEntry {
   _id: string;
@@ -152,7 +155,10 @@ export default function KnowledgePage() {
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
-            <h1 className="text-xl font-semibold text-zinc-100">Knowledge Base</h1>
+            <h1 className="text-xl font-semibold text-zinc-100">
+              Knowledge Base
+              <HelpTooltip title="Knowledge Base" content="Add facts, instructions, and context your AI references during conversations. Entries are automatically retrieved when relevant to a user's message." />
+            </h1>
             <p className="text-xs text-zinc-500 mt-0.5">Facts and preferences learned from conversations</p>
           </div>
           <div className="flex items-center gap-2">
@@ -189,14 +195,10 @@ export default function KnowledgePage() {
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-          </div>
+          <KnowledgeSkeleton />
         ) : entries.length === 0 ? (
-          <div className="flex flex-col items-center justify-center min-h-[300px] text-zinc-400">
-            <div className="w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-4">
-              <Search className="h-7 w-7 text-zinc-600" />
-            </div>
+          <div className="flex flex-col items-center justify-center min-h-[300px] text-zinc-400 animate-fade-in">
+            <EmptyKnowledgeIllustration />
             <p className="text-lg font-medium text-zinc-300 mb-1">No knowledge yet</p>
             <p className="text-sm text-zinc-500 mb-4">Add facts and preferences manually or let your AI learn from conversations.</p>
             <button
@@ -208,7 +210,7 @@ export default function KnowledgePage() {
             </button>
           </div>
         ) : (
-          <>
+          <div className="animate-fade-in">
             {/* Visualizations */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
@@ -310,7 +312,7 @@ export default function KnowledgePage() {
               onDelete={handleDelete}
               selectedId={selectedId}
             />
-          </>
+          </div>
         )}
 
         {/* Modal */}

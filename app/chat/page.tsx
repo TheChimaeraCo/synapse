@@ -12,6 +12,8 @@ import { ChannelHeader } from "@/components/chat/ChannelHeader";
 import { AskInPopup } from "@/components/chat/AskInPopup";
 import { Button } from "@/components/ui/button";
 import { MessageSquare, Loader2, LayoutDashboard, Menu, Plus, X, History } from "lucide-react";
+import { ChatSkeleton } from "@/components/ui/Skeletons";
+import { EmptyChatIllustration } from "@/components/ui/EmptyStates";
 import Link from "next/link";
 import type { ChannelDisplay } from "@/lib/types";
 
@@ -189,9 +191,7 @@ export default function ChatPage() {
   if (loading) {
     return (
       <AppShell title="Chat">
-        <div className="flex h-full items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
+        <ChatSkeleton />
       </AppShell>
     );
   }
@@ -276,10 +276,13 @@ export default function ChatPage() {
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center">
-              <div className="text-center">
-                <MessageSquare className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-muted-foreground">
-                  {channels.length === 0 ? "No channels available" : "Loading channel..."}
+              <div className="text-center animate-fade-in">
+                <EmptyChatIllustration />
+                <p className="text-lg font-medium text-zinc-300 mb-1">
+                  {channels.length === 0 ? "No conversations yet" : "Loading channel..."}
+                </p>
+                <p className="text-sm text-zinc-500">
+                  {channels.length === 0 ? "Start chatting with your AI assistant" : "Setting up your session..."}
                 </p>
               </div>
             </div>

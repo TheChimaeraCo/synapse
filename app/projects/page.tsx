@@ -22,6 +22,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, FolderKanban, Calendar, MessageSquare, Bot, Archive, Play, ChevronDown, ChevronUp } from "lucide-react";
+import { ProjectsSkeleton } from "@/components/ui/Skeletons";
+import { EmptyProjectsIllustration } from "@/components/ui/EmptyStates";
 
 interface Project {
   _id: string;
@@ -195,7 +197,7 @@ export default function ProjectsPage() {
     const isExpanded = expandedProject === project._id;
 
     return (
-      <div key={project._id} className="bg-white/5 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden hover:border-white/20 transition-all">
+      <div key={project._id} className="bg-white/5 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden card-interactive">
         {/* Card Header */}
         <div className="p-4">
           <div className="flex items-center justify-between mb-2">
@@ -438,11 +440,7 @@ export default function ProjectsPage() {
         </div>
 
         {/* Loading State */}
-        {loading && (
-          <div className="flex flex-col items-center justify-center min-h-[300px]">
-            <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-          </div>
-        )}
+        {loading && <ProjectsSkeleton />}
 
         {/* Cards View */}
         {!loading && viewMode === "cards" && (
@@ -451,7 +449,7 @@ export default function ProjectsPage() {
             {activeProjects.length > 0 && (
               <div>
                 <h2 className="text-sm font-semibold text-white/60 mb-3">Active Projects</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-stagger-in">
                   {activeProjects.map(renderProjectCard)}
                 </div>
               </div>
@@ -468,10 +466,10 @@ export default function ProjectsPage() {
             )}
 
             {projects.length === 0 && (
-              <div className="flex flex-col items-center justify-center min-h-[300px] text-white/30">
-                <FolderKanban className="h-12 w-12 mb-4" />
-                <p className="text-lg font-medium mb-1">No projects yet</p>
-                <p className="text-sm">Create one manually or ask your AI to propose a project.</p>
+              <div className="flex flex-col items-center justify-center min-h-[300px] text-white/30 animate-fade-in">
+                <EmptyProjectsIllustration />
+                <p className="text-lg font-medium text-zinc-300 mb-1">No projects yet</p>
+                <p className="text-sm text-zinc-500">Create one manually or ask your AI to propose a project.</p>
               </div>
             )}
           </div>

@@ -310,6 +310,41 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+/* Micro-animation utilities */
+@keyframes staggerFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-stagger-in > * {
+  opacity: 0;
+  animation: staggerFadeIn 0.25s ease-out forwards;
+}
+.animate-stagger-in > *:nth-child(1) { animation-delay: 0ms; }
+.animate-stagger-in > *:nth-child(2) { animation-delay: 50ms; }
+.animate-stagger-in > *:nth-child(3) { animation-delay: 100ms; }
+.animate-stagger-in > *:nth-child(4) { animation-delay: 150ms; }
+.animate-stagger-in > *:nth-child(5) { animation-delay: 200ms; }
+.animate-stagger-in > *:nth-child(6) { animation-delay: 250ms; }
+.animate-stagger-in > *:nth-child(7) { animation-delay: 300ms; }
+.animate-stagger-in > *:nth-child(8) { animation-delay: 350ms; }
+.animate-stagger-in > *:nth-child(n+9) { animation-delay: 400ms; }
+
+/* Interactive card hover */
+.card-interactive {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.card-interactive:hover {
+  transform: translateY(-1px) scale(1.005);
+  box-shadow: 0 0 24px rgba(59, 130, 246, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Button press effect */
+.btn-press:active {
+  transform: scale(0.97);
+}
+
 .animate-shimmer {
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
   background-size: 200% 100%;

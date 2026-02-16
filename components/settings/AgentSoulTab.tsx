@@ -136,7 +136,7 @@ export function AgentSoulTab() {
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">Agent Soul</h2>
+        <h2 className="text-xl font-semibold text-white mb-1">Agent Soul<HelpTooltip title="Agent Soul" content="Define your AI agent's personality, system prompt, and behavioral guidelines. This shapes how your AI responds across all channels." /></h2>
         <p className="text-sm text-zinc-400">Define your agent's personality, identity, and how it communicates.</p>
       </div>
 
@@ -369,3 +369,4 @@ export function AgentSoulTab() {
     </div>
   );
 }
+import { HelpTooltip } from "@/components/HelpTooltip";

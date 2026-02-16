@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { PROVIDERS, type AnthropicAuthMethod } from "@/lib/providers";
 import { useFetch } from "@/lib/hooks";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 export function ProviderTab() {
   const { data: configData, refetch } = useFetch<Record<string, string>>("/api/config/all");
@@ -91,7 +92,7 @@ export function ProviderTab() {
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">AI Provider</h2>
+        <h2 className="text-xl font-semibold text-white mb-1">AI Provider<HelpTooltip title="AI Provider" content="Configure which AI service powers your gateway. Supports OpenAI, Anthropic, Google, and OpenRouter. Your API key is stored locally and never shared." /></h2>
         <p className="text-sm text-zinc-400">Manage your AI provider and API credentials.</p>
       </div>
 

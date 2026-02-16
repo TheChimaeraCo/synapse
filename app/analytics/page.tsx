@@ -3,6 +3,8 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { AppShell } from "@/components/layout/AppShell";
 import { useState, useEffect } from "react";
 import { Loader2, BarChart3, MessageSquare, Clock, Zap, Activity } from "lucide-react";
+import { AnalyticsSkeleton } from "@/components/ui/Skeletons";
+import { EmptyAnalyticsIllustration } from "@/components/ui/EmptyStates";
 
 interface AnalyticsData {
   days: string[];
@@ -109,9 +111,7 @@ export default function AnalyticsPage() {
   if (loading) {
     return (
       <AppShell title="Analytics">
-        <div className="flex items-center justify-center h-64 text-zinc-400">
-          <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading analytics...
-        </div>
+        <AnalyticsSkeleton />
       </AppShell>
     );
   }
@@ -119,14 +119,18 @@ export default function AnalyticsPage() {
   if (!data) {
     return (
       <AppShell title="Analytics">
-        <div className="text-center text-zinc-500 py-16">Failed to load analytics data</div>
+        <div className="flex flex-col items-center justify-center py-16 animate-fade-in">
+          <EmptyAnalyticsIllustration />
+          <p className="text-lg font-medium text-zinc-300 mb-1">No analytics data</p>
+          <p className="text-sm text-zinc-500">Start conversations to see usage analytics here.</p>
+        </div>
       </AppShell>
     );
   }
 
   return (
     <AppShell title="Analytics">
-      <div className="p-4 lg:p-6 space-y-6 overflow-auto max-h-[calc(100vh-4rem)]">
+      <div className="p-4 lg:p-6 space-y-6 overflow-auto max-h-[calc(100vh-4rem)] animate-fade-in">
         {/* Stat cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard label="Total Messages" value={data.totalMessages.toLocaleString()} icon={MessageSquare} />

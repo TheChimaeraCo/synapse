@@ -776,8 +776,9 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
       <Separator />
 
       {/* Nav links */}
-      <nav className="flex flex-col gap-1 px-3 py-2">
+      <nav data-tour="sidebar" className="flex flex-col gap-1 px-3 py-2">
         {navLinks.map((link) => {
+          const tourId = link.href === "/chat" ? "chat-link" : link.href === "/knowledge" ? "knowledge-link" : link.href === "/settings" ? "settings-link" : undefined;
           const isActive =
             link.href === "/"
               ? pathname === "/"
@@ -787,6 +788,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               key={link.href}
               href={link.href}
               onClick={onClose}
+              {...(tourId ? { "data-tour": tourId } : {})}
               className={cn(
                 "flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200",
                 isActive

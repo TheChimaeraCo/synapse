@@ -7,6 +7,7 @@ import { Menu, X, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useKeyboardShortcuts, SHORTCUTS } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/layout/CommandPalette";
+import { OnboardingTour } from "@/components/OnboardingTour";
 
 function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
@@ -99,6 +100,9 @@ export function AppShell({
 
       {/* Keyboard shortcuts overlay */}
       {showHelp && <ShortcutsOverlay onClose={() => setShowHelp(false)} />}
+
+      {/* Onboarding tour */}
+      <OnboardingTour />
     </div>
   );
 }

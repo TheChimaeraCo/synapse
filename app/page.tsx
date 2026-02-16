@@ -13,6 +13,8 @@ import { ChannelGrid } from "@/components/dashboard/ChannelGrid";
 import { HealthStrip } from "@/components/dashboard/HealthStrip";
 import { RecentConversations } from "@/components/dashboard/RecentConversations";
 import { PM2Panel } from "@/components/dashboard/PM2Panel";
+import { GettingStarted } from "@/components/dashboard/GettingStarted";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 interface DetailedStats {
   messagesToday: number;
@@ -65,17 +67,24 @@ export default function DashboardPage() {
   return (
     <AppShell title="Dashboard">
       <div className="p-4 lg:p-8 overflow-auto h-full">
-        <div className="flex flex-col gap-6 max-w-7xl mx-auto">
+        <div className="flex flex-col gap-6 max-w-7xl mx-auto animate-fade-in">
 
           {/* Welcome Header */}
           <div className="mb-2">
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-zinc-100 break-words">
               {getGreeting()}, {ownerName.split(" ")[0]}
+              <HelpTooltip title="Dashboard" content="Your command center. View message stats, active channels, recent conversations, and system health at a glance." />
             </h1>
             <p className="text-sm text-zinc-500 mt-1">
               {activeGateway?.name ? `${activeGateway.name} - ` : ""}{dateStr}
             </p>
           </div>
+
+          {/* Getting Started (for new users) */}
+          <GettingStarted
+            messageCount={stats?.messagesToday ?? 0}
+            hasProvider={!!gatewayId}
+          />
 
           {/* Hero Stats Row */}
           {!stats ? <StatsCardsSkeleton /> : <StatsCards stats={stats} />}

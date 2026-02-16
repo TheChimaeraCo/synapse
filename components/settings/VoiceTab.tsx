@@ -48,7 +48,7 @@ export function VoiceTab() {
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">Voice & Audio</h2>
+        <h2 className="text-xl font-semibold text-white mb-1">Voice & Audio<HelpTooltip title="Voice & Audio" content="Configure text-to-speech and speech-to-text settings. Choose voices, languages, and audio processing options." /></h2>
         <p className="text-sm text-zinc-400">Configure text-to-speech and speech-to-text settings.</p>
       </div>
 
@@ -232,3 +232,4 @@ export function VoiceTab() {
     </div>
   );
 }
+import { HelpTooltip } from "@/components/HelpTooltip";

@@ -1,5 +1,6 @@
 "use client";
 import { gatewayFetch } from "@/lib/gatewayFetch";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -152,7 +153,7 @@ export function ChannelsTab() {
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">Channels</h2>
+        <h2 className="text-xl font-semibold text-white mb-1">Channels<HelpTooltip title="Channels" content="Channels connect your AI to different platforms like Telegram, Discord, and the web. Each channel can have its own model, personality, and tools." /></h2>
         <p className="text-sm text-zinc-400">Manage connected messaging channels.</p>
       </div>
 

@@ -60,7 +60,7 @@ export function ToolsTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-white">Tools</h2>
+          <h2 className="text-lg font-semibold text-white">Tools<HelpTooltip title="Tools" content="Tools extend your AI with abilities like web search, code execution, and file access. Enable or disable tools per channel." /></h2>
           <p className="text-sm text-zinc-400 mt-1">
             Enable or disable tools the AI agent can use during conversations.
           </p>
@@ -125,3 +125,4 @@ export function ToolsTab() {
     </div>
   );
 }
+import { HelpTooltip } from "@/components/HelpTooltip";
