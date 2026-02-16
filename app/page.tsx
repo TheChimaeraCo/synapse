@@ -53,7 +53,7 @@ export default function DashboardPage() {
 
   const gatewayId = (session?.user as any)?.gatewayId;
 
-  const { data: stats } = useFetch<DetailedStats>(
+  const { data: stats, error: statsError } = useFetch<DetailedStats>(
     gatewayId ? "/api/dashboard/stats" : null, 30000
   );
 
@@ -87,7 +87,11 @@ export default function DashboardPage() {
           />
 
           {/* Hero Stats Row */}
-          {!stats ? <StatsCardsSkeleton /> : <StatsCards stats={stats} />}
+          {statsError ? (
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.05] backdrop-blur-2xl p-6 text-center">
+              <p className="text-sm text-red-400">Failed to load stats. The gateway may be temporarily unavailable.</p>
+            </div>
+          ) : !stats ? <StatsCardsSkeleton /> : <StatsCards stats={stats} />}
 
           {/* Chart + Gateway Overview */}
           <div className="grid gap-4 lg:grid-cols-3">

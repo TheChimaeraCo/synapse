@@ -31,7 +31,8 @@ export async function GET(
       role: invite.role,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error("Invite lookup error:", err);
+    return NextResponse.json({ error: "Failed to validate invite" }, { status: 500 });
   }
 }
 
@@ -54,6 +55,7 @@ export async function POST(
     if (err instanceof GatewayError) {
       return NextResponse.json({ error: err.message }, { status: err.statusCode });
     }
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    console.error("Invite use error:", err);
+    return NextResponse.json({ error: "Failed to accept invite" }, { status: 400 });
   }
 }

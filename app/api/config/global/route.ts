@@ -40,7 +40,8 @@ export async function GET(req: NextRequest) {
     if (err instanceof GatewayError) {
       return NextResponse.json({ error: err.message }, { status: err.statusCode });
     }
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error("Global config GET error:", err);
+    return NextResponse.json({ error: "Failed to fetch config" }, { status: 500 });
   }
 }
 
@@ -72,6 +73,7 @@ export async function POST(req: NextRequest) {
     if (err instanceof GatewayError) {
       return NextResponse.json({ error: err.message }, { status: err.statusCode });
     }
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error("Global config POST error:", err);
+    return NextResponse.json({ error: "Failed to save config" }, { status: 500 });
   }
 }

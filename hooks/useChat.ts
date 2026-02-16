@@ -34,6 +34,7 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
         const data = await res.json();
         if (data.error === "invalid_session") {
           console.warn("[useChat] Invalid session:", sessionId);
+          setLoaded(true); // Still mark as loaded so UI doesn't hang
           return;
         }
         const serverMsgs: Message[] = data.messages || [];
@@ -44,10 +45,13 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
         if (filtered.length > 0) {
           setMessages(filtered);
         }
-        setLoaded(true);
+      } else {
+        console.error("[useChat] fetchMessages HTTP error:", res.status);
       }
+      setLoaded(true);
     } catch (e) {
       console.error("[useChat] fetchMessages error:", e);
+      setLoaded(true); // Don't leave UI in loading state on error
     }
   }, [sessionId]);
 
@@ -152,13 +156,41 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
         return { action: "new_session" };
       }
 
-      // Refresh messages from server to get the saved versions
-      // Small delay to ensure Convex has written the assistant message
-      await new Promise(r => setTimeout(r, 500));
-      await fetchMessages();
+      // If we got an error during streaming, show it as a failed message
+      if (accumulated.startsWith("Error:") && accumulated.length > 6) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            _id: `error-${Date.now()}`,
+            role: "assistant",
+            content: accumulated,
+            _creationTime: Date.now(),
+          },
+        ]);
+      } else {
+        // Refresh messages from server to get the saved versions
+        // Small delay to ensure Convex has written the assistant message
+        await new Promise(r => setTimeout(r, 500));
+        await fetchMessages();
+      }
     } catch (err: any) {
-      if (err.name !== "AbortError") {
+      if (err.name === "AbortError") {
+        // User cancelled - not an error
+      } else {
         console.error("Chat stream error:", err);
+        // Show error as a failed assistant message so user sees it and can retry
+        const errorContent = err.message?.includes("Failed to fetch")
+          ? "Error: Network error - please check your connection and try again."
+          : `Error: ${err.message || "Something went wrong. Please try again."}`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            _id: `error-${Date.now()}`,
+            role: "assistant",
+            content: errorContent,
+            _creationTime: Date.now(),
+          },
+        ]);
       }
     } finally {
       setIsStreaming(false);

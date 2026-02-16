@@ -27,6 +27,7 @@ export async function DELETE(req: NextRequest) {
     const result = await convexClient.mutation(api.functions.toolCache.clearAll, {});
     return NextResponse.json(result);
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error("Tool cache clear error:", err);
+    return NextResponse.json({ error: "Failed to clear cache" }, { status: 500 });
   }
 }

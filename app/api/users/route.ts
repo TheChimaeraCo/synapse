@@ -16,6 +16,7 @@ export async function GET() {
     const safe = users.map(({ passwordHash, ...rest }: any) => rest);
     return NextResponse.json(safe);
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    console.error("Users list error:", e);
+    return NextResponse.json({ error: "Failed to fetch users" }, { status: 500 });
   }
 }
