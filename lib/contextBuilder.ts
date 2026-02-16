@@ -330,17 +330,17 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
   }
 
   // --- Layer 4: Topic context (past conversation search) ---
+  // Always search past conversations - this is how the agent feels human
+  // and can reference prior discussions naturally
   let topicSection = "";
-  if (escParams.searchPast || userMessage.length > 20) {
-    try {
-      topicSection = await buildTopicContext(
-        agent.gatewayId,
-        userMessage,
-        500 // soft cap for topic context
-      );
-    } catch (err) {
-      console.error("Topic context failed:", err);
-    }
+  try {
+    topicSection = await buildTopicContext(
+      agent.gatewayId,
+      userMessage,
+      800 // soft cap for topic context
+    );
+  } catch (err) {
+    console.error("Topic context failed:", err);
   }
 
   // --- Escalation hint ---

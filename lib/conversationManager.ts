@@ -165,19 +165,18 @@ export async function buildConversationChainContext(
   const previousConvos = chain.slice(1);
   if (previousConvos.length === 0) return "";
 
-  let context = "\n\n## Previous related conversations:\n";
+  let context = "\n\n## Earlier in this conversation thread:\n";
   for (const convo of previousConvos) {
     if (!convo.summary && !convo.title) continue;
-    context += `\n### ${convo.title || "Untitled conversation"}\n`;
-    if (convo.summary) context += `${convo.summary}\n`;
-    if (convo.decisions && convo.decisions.length > 0) {
-      context += "Decisions made:\n";
-      for (const d of convo.decisions) {
-        context += `- ${d.what}${d.reasoning ? ` (${d.reasoning})` : ""}\n`;
-      }
+    if (convo.title && convo.summary) {
+      context += `- "${convo.title}": ${convo.summary}\n`;
+    } else if (convo.summary) {
+      context += `- ${convo.summary}\n`;
+    } else {
+      context += `- Discussed "${convo.title}"\n`;
     }
-    if (convo.topics && convo.topics.length > 0) {
-      context += `Topics: ${convo.topics.join(", ")}\n`;
+    if (convo.decisions && convo.decisions.length > 0) {
+      context += "  Decisions: " + convo.decisions.map((d: any) => `${d.what}${d.reasoning ? ` (${d.reasoning})` : ""}`).join("; ") + "\n";
     }
   }
 

@@ -26,18 +26,21 @@ export async function buildTopicContext(
 
     if (!related || related.length === 0) return "";
 
-    let context = "\n\n## Related past conversations:\n";
+    let context = "\n\n## What you've previously discussed with this user:\n";
     let tokens = estimateTokens(context);
 
     for (const convo of related) {
       let entry = "";
-      if (convo.title) entry += `**${convo.title}**\n`;
-      if (convo.summary) entry += `${convo.summary}\n`;
-      if (convo.decisions && convo.decisions.length > 0) {
-        entry += "Decisions: " + convo.decisions.map((d: any) => d.what).join("; ") + "\n";
+      // Format naturally - like recalling a memory, not a data dump
+      if (convo.title && convo.summary) {
+        entry += `- You previously talked about "${convo.title}": ${convo.summary}\n`;
+      } else if (convo.summary) {
+        entry += `- In an earlier conversation: ${convo.summary}\n`;
+      } else if (convo.title) {
+        entry += `- You previously discussed "${convo.title}"\n`;
       }
-      if (convo.topics && convo.topics.length > 0) {
-        entry += `Topics: ${convo.topics.join(", ")}\n`;
+      if (convo.decisions && convo.decisions.length > 0) {
+        entry += "  Decisions made: " + convo.decisions.map((d: any) => d.what).join("; ") + "\n";
       }
       entry += "\n";
 
