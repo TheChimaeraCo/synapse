@@ -37,8 +37,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ id });
     }
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError(err);
   }
 }
 
@@ -55,8 +55,8 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError(err);
   }
 }
 
@@ -73,7 +73,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Invalid type" }, { status: 400 });
     }
     return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError(err);
   }
 }

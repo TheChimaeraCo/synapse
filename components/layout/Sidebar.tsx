@@ -101,6 +101,7 @@ const navLinks = [
   { href: "/knowledge", label: "Knowledge", icon: Brain },
   { href: "/files", label: "Files", icon: FolderOpen },
   { href: "/projects", label: "Projects", icon: FolderKanban },
+  { href: "/analytics", label: "Analytics", icon: Zap },
   { href: "/docs", label: "API Docs", icon: FileText },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -137,15 +138,18 @@ function AgentLogModal({ agent, onClose }: { agent: WorkerAgent; onClose: () => 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="agent-log-title"
         className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col glass-shadow"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div>
-            <h3 className="text-sm font-medium text-zinc-200">{agent.label}</h3>
+            <h3 id="agent-log-title" className="text-sm font-medium text-zinc-200">{agent.label}</h3>
             {agent.task && <p className="text-xs text-zinc-500 mt-0.5 truncate max-w-md">{agent.task}</p>}
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+          <button onClick={onClose} aria-label="Close agent logs" className="text-zinc-500 hover:text-zinc-300">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -238,6 +242,7 @@ function AgentItem({ agent, onKill }: { agent: WorkerAgent; onKill?: (id: string
             <button
               onClick={(e) => { e.stopPropagation(); onKill(agent._id); }}
               className="p-0.5 rounded hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-colors shrink-0"
+              aria-label="Kill agent"
               title="Kill agent"
             >
               <Square className="h-2.5 w-2.5 fill-current" />
@@ -741,6 +746,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             size="icon"
             className="lg:hidden"
             onClick={onClose}
+            aria-label="Close sidebar"
           >
             <X className="h-4 w-4" />
           </Button>

@@ -174,6 +174,78 @@ export const deleteSession = mutation({
   },
 });
 
+export const switchAgent = mutation({
+  args: { id: v.id("sessions"), agentId: v.id("agents") },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.id);
+    if (!session) throw new Error("Session not found");
+    await ctx.db.patch(args.id, { agentId: args.agentId });
+  },
+});
+
+export const branch = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    messageId: v.id("messages"),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found");
+
+    const targetMsg = await ctx.db.get(args.messageId);
+    if (!targetMsg || targetMsg.sessionId !== args.sessionId) {
+      throw new Error("Message not found in this session");
+    }
+
+    // Get all messages up to and including this message (by seq)
+    const allMessages = await ctx.db
+      .query("messages")
+      .withIndex("by_session_seq", (q) => q.eq("sessionId", args.sessionId))
+      .order("asc")
+      .collect();
+
+    const messagesToCopy = allMessages.filter(
+      (m) => m.seq != null && targetMsg.seq != null && m.seq <= targetMsg.seq
+    );
+
+    // Create new session
+    const now = Date.now();
+    const newSessionId = await ctx.db.insert("sessions", {
+      gatewayId: session.gatewayId,
+      agentId: session.agentId,
+      channelId: session.channelId,
+      externalUserId: session.externalUserId,
+      userId: session.userId,
+      title: `${session.title || "Session"} (branch)`,
+      status: "active",
+      messageCount: messagesToCopy.length,
+      lastMessageAt: now,
+      createdAt: now,
+      meta: { branchedFrom: args.sessionId, branchMessageId: args.messageId },
+    });
+
+    // Copy messages
+    for (let i = 0; i < messagesToCopy.length; i++) {
+      const m = messagesToCopy[i];
+      await ctx.db.insert("messages", {
+        gatewayId: m.gatewayId,
+        sessionId: newSessionId,
+        agentId: m.agentId,
+        role: m.role,
+        content: m.content,
+        seq: i + 1,
+        tokens: m.tokens,
+        cost: m.cost,
+        model: m.model,
+        latencyMs: m.latencyMs,
+        metadata: m.metadata,
+      });
+    }
+
+    return newSessionId;
+  },
+});
+
 export const updateLastMessage = internalMutation({
   args: { id: v.id("sessions") },
   handler: async (ctx, args) => {

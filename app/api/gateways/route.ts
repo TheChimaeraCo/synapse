@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthContext, GatewayError } from "@/lib/gateway-context";
+import { getAuthContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -29,11 +29,8 @@ export async function GET() {
       userId: userId as Id<"authUsers">,
     });
     return NextResponse.json({ gateways });
-  } catch (err: any) {
-    if (err instanceof GatewayError) {
-      return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError(err);
   }
 }
 
@@ -73,18 +70,16 @@ export async function POST(req: Request) {
         role: "owner",
         addedBy: userId as Id<"authUsers">,
       });
-    } catch (e: any) {
+    } catch (e) {
       // Membership might already exist if gateways.create handles it
-      if (!e.message?.includes("already a member")) {
+      const msg = e instanceof Error ? e.message : "";
+      if (!msg.includes("already a member")) {
         console.warn("Failed to create owner membership:", e);
       }
     }
 
     return NextResponse.json({ gatewayId }, { status: 201 });
-  } catch (err: any) {
-    if (err instanceof GatewayError) {
-      return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError(err);
   }
 }

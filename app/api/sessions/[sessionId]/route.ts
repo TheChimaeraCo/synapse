@@ -42,6 +42,13 @@ export async function PATCH(
       });
     }
 
+    if (body.agentId !== undefined) {
+      await convex.mutation(api.functions.sessions.switchAgent, {
+        id: sessionId as Id<"sessions">,
+        agentId: body.agentId as Id<"agents">,
+      });
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     console.error("Session update error:", err);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthContext, GatewayError } from "@/lib/gateway-context";
+import { getAuthContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -26,8 +26,7 @@ export async function DELETE(
     });
 
     return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    if (err instanceof GatewayError) return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError(err);
   }
 }

@@ -88,13 +88,16 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="convo-modal-title"
         className="relative w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-2xl border border-white/10 bg-[#0d0d1a]/95 backdrop-blur-xl shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-white/10 shrink-0">
           <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold text-zinc-100 truncate">
+            <h2 id="convo-modal-title" className="text-lg font-semibold text-zinc-100 truncate">
               {loading ? "Loading..." : convo?.title || "Untitled Conversation"}
             </h2>
             {convo && (
@@ -149,6 +152,7 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
             )}
             <button
               onClick={onClose}
+              aria-label="Close dialog"
               className="p-2 rounded-lg hover:bg-white/10 transition text-zinc-400 hover:text-zinc-200"
             >
               <X className="h-5 w-5" />

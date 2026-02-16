@@ -1,0 +1,12 @@
+# Synapse Hub - Self-hosted AI Gateway
+# This is a private application; crawling is discouraged.
+
+User-agent: *
+Disallow: /api/
+Disallow: /chat/
+Disallow: /settings/
+Disallow: /console/
+Allow: /login
+Allow: /
+
+Sitemap: /sitemap.xml

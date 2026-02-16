@@ -12,6 +12,7 @@ import { executeTools, toProviderTools } from "@/lib/toolExecutor";
 import { selectModel, DEFAULT_ROUTING } from "@/lib/modelRouter";
 import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { createHash } from "crypto";
+import { fireWebhook } from "@/lib/webhooks";
 
 // Simple request deduplication
 const recentRequests = new Map<string, number>();
@@ -273,6 +274,9 @@ async function processAIResponse(
     await convexClient.mutation(api.functions.activeRuns.complete, { id: runId });
 
     extractKnowledge(msgId, agentId, gatewayId, sessionId).catch(console.error);
+    fireWebhook(gatewayId as string, "message.created", {
+      messageId: msgId, sessionId, role: "assistant", model: modelId, latencyMs, tokens: usage,
+    }).catch(console.error);
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
     console.error("processAIResponse error:", errorMsg);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthContext, GatewayError } from "@/lib/gateway-context";
+import { getAuthContext, handleGatewayError, GatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -31,11 +31,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     });
     if (!gateway) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ gateway });
-  } catch (err: any) {
-    if (err instanceof GatewayError) {
-      return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError, GatewayError(err);
   }
 }
 
@@ -52,11 +49,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       ...body,
     });
     return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    if (err instanceof GatewayError) {
-      return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError, GatewayError(err);
   }
 }
 
@@ -71,10 +65,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       id: id as Id<"gateways">,
     });
     return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    if (err instanceof GatewayError) {
-      return NextResponse.json({ error: err.message }, { status: err.statusCode });
-    }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (err) {
+    return handleGatewayError, GatewayError(err);
   }
 }

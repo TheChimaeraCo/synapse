@@ -4,8 +4,9 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, MicOff } from "lucide-react";
+import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, MicOff, Bot, ChevronDown, Clock } from "lucide-react";
 import { toast } from "sonner";
+import { useSession } from "next-auth/react";
 import { getCommandSuggestions } from "@/lib/slashCommands";
 
 export function ChatInput({ sessionId }: { sessionId: string }) {
@@ -17,7 +18,16 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [attachedFile, setAttachedFile] = useState<{ file: File; preview?: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [showScheduler, setShowScheduler] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
   const [transcribing, setTranscribing] = useState(false);
+  const [agents, setAgents] = useState<Array<{ _id: string; name: string; slug: string; isActive: boolean }>>([]);
+  const [currentAgentId, setCurrentAgentId] = useState<string | null>(null);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const agentPickerRef = useRef<HTMLDivElement>(null);
+  const { data: authSession } = useSession();
+  const gatewayId = (authSession?.user as any)?.gatewayId;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -29,6 +39,52 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     textareaRef.current?.focus();
+  }, [sessionId]);
+
+  // Fetch agents list and current session agent
+  useEffect(() => {
+    if (!gatewayId) return;
+    (async () => {
+      try {
+        const [agentsRes, sessionRes] = await Promise.all([
+          gatewayFetch(`/api/agents?gatewayId=${gatewayId}`),
+          gatewayFetch(`/api/sessions/${sessionId}`),
+        ]);
+        if (agentsRes.ok) {
+          const data = await agentsRes.json();
+          setAgents(Array.isArray(data) ? data : data.agents || []);
+        }
+        if (sessionRes.ok) {
+          const session = await sessionRes.json();
+          if (session.agentId) setCurrentAgentId(session.agentId);
+        }
+      } catch {}
+    })();
+  }, [gatewayId, sessionId]);
+
+  // Close agent picker on outside click
+  useEffect(() => {
+    if (!showAgentPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (agentPickerRef.current && !agentPickerRef.current.contains(e.target as Node)) setShowAgentPicker(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showAgentPicker]);
+
+  const switchAgent = useCallback(async (agentId: string) => {
+    try {
+      await gatewayFetch(`/api/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentId }),
+      });
+      setCurrentAgentId(agentId);
+      setShowAgentPicker(false);
+      toast.success("Agent switched");
+    } catch {
+      toast.error("Failed to switch agent");
+    }
   }, [sessionId]);
 
   // Listen for cross-channel quote injection
@@ -97,6 +153,29 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     const res = await gatewayFetch("/api/files/upload", { method: "POST", body: formData });
     if (!res.ok) throw new Error("Upload failed");
     return await res.json();
+  };
+
+  const handleSchedule = async () => {
+    if (!content.trim() || !scheduleDate || !scheduleTime) {
+      toast.error("Enter a message, date, and time");
+      return;
+    }
+    const scheduledFor = new Date(`${scheduleDate}T${scheduleTime}`).getTime();
+    if (scheduledFor <= Date.now()) {
+      toast.error("Scheduled time must be in the future");
+      return;
+    }
+    try {
+      const res = await gatewayFetch("/api/scheduled-messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, content: content.trim(), scheduledFor }),
+      });
+      if (res.ok) {
+        toast.success(`Message scheduled for ${new Date(scheduledFor).toLocaleString()}`);
+        setContent(""); setShowScheduler(false); setScheduleDate(""); setScheduleTime("");
+      }
+    } catch { toast.error("Failed to schedule message"); }
   };
 
   const handleSend = async () => {
@@ -258,7 +337,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             )}
             <span className="text-sm text-zinc-300 truncate flex-1">{attachedFile.file.name}</span>
             <span className="text-xs text-zinc-500">{(attachedFile.file.size / 1024).toFixed(0)}KB</span>
-            <button onClick={removeAttachment} className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-zinc-300 transition shrink-0">
+            <button onClick={removeAttachment} aria-label="Remove attachment" className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-zinc-300 transition shrink-0">
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -273,6 +352,35 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           onChange={handleFileSelect}
         />
 
+        {/* Agent persona quick-switch */}
+        {agents.length > 1 && (
+          <div ref={agentPickerRef} className="relative mb-2">
+            <button
+              onClick={() => setShowAgentPicker(!showAgentPicker)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06] transition-colors"
+            >
+              <Bot className="h-3 w-3" />
+              <span>{agents.find((a) => a._id === currentAgentId)?.name || "Agent"}</span>
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {showAgentPicker && (
+              <div className="absolute bottom-full left-0 mb-1 w-48 rounded-xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-3xl shadow-lg overflow-hidden z-10">
+                {agents.filter((a) => a.isActive).map((agent) => (
+                  <button
+                    key={agent._id}
+                    onClick={() => switchAgent(agent._id)}
+                    className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.06] transition-colors ${agent._id === currentAgentId ? "text-blue-400 bg-white/[0.04]" : "text-zinc-300"}`}
+                  >
+                    <Bot className="h-3 w-3" />
+                    <span>{agent.name}</span>
+                    {agent._id === currentAgentId && <span className="ml-auto text-[10px] text-blue-400">active</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex gap-2">
           <Button
             type="button"
@@ -281,6 +389,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             className="shrink-0 self-end text-zinc-400 hover:text-zinc-200"
             onClick={() => fileInputRef.current?.click()}
             disabled={isDisabled || uploading}
+            aria-label="Attach file"
           >
             {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
           </Button>
@@ -295,10 +404,39 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             onTouchStart={startRecording}
             onTouchEnd={stopRecording}
             disabled={isDisabled || transcribing}
+            aria-label={recording ? "Stop recording" : "Hold to record voice"}
             title="Hold to record voice"
           >
             {transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> : recording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
           </Button>
+          <div className="relative shrink-0 self-end">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={`text-zinc-400 hover:text-zinc-200 ${showScheduler ? "text-blue-400" : ""}`}
+              onClick={() => setShowScheduler(!showScheduler)}
+              disabled={isDisabled}
+              aria-label="Schedule message"
+              title="Schedule message"
+            >
+              <Clock className="h-4 w-4" />
+            </Button>
+            {showScheduler && (
+              <div role="dialog" aria-label="Schedule message" className="absolute bottom-12 left-0 z-50 rounded-xl border border-white/10 bg-zinc-900/95 backdrop-blur-xl p-3 shadow-xl w-64 space-y-2">
+                <p className="text-xs font-medium text-zinc-300">Schedule Message</p>
+                <label className="sr-only" htmlFor="schedule-date">Date</label>
+                <input id="schedule-date" type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)}
+                  className="w-full rounded-lg bg-white/[0.07] border border-white/10 px-2 py-1.5 text-xs text-zinc-200" />
+                <label className="sr-only" htmlFor="schedule-time">Time</label>
+                <input id="schedule-time" type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)}
+                  className="w-full rounded-lg bg-white/[0.07] border border-white/10 px-2 py-1.5 text-xs text-zinc-200" />
+                <Button onClick={handleSchedule} size="sm" className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg text-xs">
+                  Schedule
+                </Button>
+              </div>
+            )}
+          </div>
           <Textarea
             ref={textareaRef}
             value={content}
@@ -314,6 +452,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               size="icon"
               variant="destructive"
               className="shrink-0 self-end"
+              aria-label="Stop streaming"
             >
               <Square className="h-4 w-4" />
             </Button>
@@ -323,6 +462,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               disabled={isDisabled || !content.trim()}
               size="icon"
               className="shrink-0 self-end"
+              aria-label="Send message"
             >
               <Send className="h-4 w-4" />
             </Button>

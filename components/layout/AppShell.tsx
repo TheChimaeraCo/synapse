@@ -11,13 +11,13 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
     <>
       <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[101] w-80 rounded-2xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-3xl p-6 shadow-[0_16px_64px_rgba(0,0,0,0.4)]">
+      <div role="dialog" aria-labelledby="shortcuts-title" aria-modal="true" className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[101] w-80 rounded-2xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-3xl p-6 shadow-[0_16px_64px_rgba(0,0,0,0.4)]">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Keyboard className="h-4 w-4 text-zinc-400" />
-            <h3 className="text-sm font-semibold text-zinc-200">Keyboard Shortcuts</h3>
+            <h3 id="shortcuts-title" className="text-sm font-semibold text-zinc-200">Keyboard Shortcuts</h3>
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+          <button onClick={onClose} aria-label="Close shortcuts" className="text-zinc-500 hover:text-zinc-300">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -68,13 +68,14 @@ export function AppShell({
       )}
 
       {/* Sidebar */}
-      <div
+      <aside
         className={`fixed inset-y-0 left-0 z-50 w-[280px] transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
+        aria-label="Main navigation"
       >
         <Sidebar onClose={() => setSidebarOpen(false)} />
-      </div>
+      </aside>
 
       {/* Main content */}
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -84,6 +85,7 @@ export function AppShell({
             size="icon"
             className="lg:hidden"
             onClick={() => setSidebarOpen(true)}
+            aria-label="Open sidebar"
           >
             <Menu className="h-5 w-5" />
           </Button>

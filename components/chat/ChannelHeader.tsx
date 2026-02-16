@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send as SendIcon, Globe, MessageCircle, Hash, Settings, Eye, History, Search, X, Pencil, Trash2 } from "lucide-react";
+import { Send as SendIcon, Globe, MessageCircle, Hash, Settings, Eye, History, Search, X, Pencil, Trash2, Pin, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { formatRelativeTime } from "@/lib/utils";
@@ -96,12 +96,82 @@ function SessionSearchOverlay({ onClose }: { onClose: () => void }) {
   );
 }
 
+function PinnedMessagesPanel({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+  const [pins, setPins] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await gatewayFetch(`/api/sessions/${sessionId}/pins`);
+        if (res.ok) {
+          const data = await res.json();
+          setPins(data.pins || []);
+        }
+      } catch {} finally { setLoading(false); }
+    })();
+  }, [sessionId]);
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-50" onClick={onClose} />
+      <div className="fixed top-0 right-0 h-full w-80 z-50 border-l border-white/[0.1] bg-white/[0.04] backdrop-blur-3xl shadow-[0_0_64px_rgba(0,0,0,0.3)] flex flex-col">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08]">
+          <div className="flex items-center gap-2">
+            <Pin className="h-4 w-4 text-yellow-400" />
+            <span className="text-sm font-semibold text-zinc-200">Pinned Messages</span>
+          </div>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {loading && <div className="text-xs text-zinc-500 text-center py-4">Loading...</div>}
+          {!loading && pins.length === 0 && <div className="text-xs text-zinc-500 text-center py-8">No pinned messages</div>}
+          {pins.map((pin: any) => (
+            <div key={pin._id} className="rounded-xl border border-white/[0.08] bg-white/[0.04] p-3">
+              <div className="text-[10px] text-zinc-500 mb-1">{pin.message?.role === "user" ? "You" : "Assistant"}</div>
+              <p className="text-xs text-zinc-300 line-clamp-4 whitespace-pre-wrap">{pin.message?.content}</p>
+              {pin.note && <p className="text-[10px] text-yellow-400/70 mt-1">Note: {pin.note}</p>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ExportMenu({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+  const handleExport = (format: "md" | "json") => {
+    window.open(`/api/sessions/${sessionId}/export?format=${format}`, "_blank");
+    onClose();
+  };
+
+  return (
+    <div className="absolute right-0 top-full mt-1 z-20 w-40 rounded-xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-3xl shadow-lg overflow-hidden">
+      <button onClick={() => handleExport("md")} className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-white/[0.06] transition-colors">Export as Markdown</button>
+      <button onClick={() => handleExport("json")} className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-white/[0.06] transition-colors">Export as JSON</button>
+    </div>
+  );
+}
+
 export function ChannelHeader({ channel, isReadOnly, onToggleHistory, historyOpen, sessionId, onSessionRenamed, onSessionDeleted }: ChannelHeaderProps) {
   const [showSearch, setShowSearch] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showPins, setShowPins] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const editRef = useRef<HTMLInputElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  // Close export menu on outside click
+  useEffect(() => {
+    if (!showExport) return;
+    const handler = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExport(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showExport]);
 
   useEffect(() => { if (editing) editRef.current?.focus(); }, [editing]);
 
@@ -204,6 +274,31 @@ export function ChannelHeader({ channel, isReadOnly, onToggleHistory, historyOpe
               </Button>
             </>
           )}
+          {sessionId && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-zinc-500 hover:text-yellow-400"
+              onClick={() => setShowPins(true)}
+              title="Pinned messages"
+            >
+              <Pin className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {sessionId && (
+            <div ref={exportRef} className="relative">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-zinc-500 hover:text-zinc-300"
+                onClick={() => setShowExport(!showExport)}
+                title="Export conversation"
+              >
+                <Download className="h-3.5 w-3.5" />
+              </Button>
+              {showExport && <ExportMenu sessionId={sessionId} onClose={() => setShowExport(false)} />}
+            </div>
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -228,6 +323,7 @@ export function ChannelHeader({ channel, isReadOnly, onToggleHistory, historyOpe
       </div>
 
       {showSearch && <SessionSearchOverlay onClose={() => setShowSearch(false)} />}
+      {showPins && sessionId && <PinnedMessagesPanel sessionId={sessionId} onClose={() => setShowPins(false)} />}
 
       {showDeleteConfirm && (
         <>

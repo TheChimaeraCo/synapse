@@ -449,6 +449,18 @@ export default defineSchema({
     .index("by_to", ["toGatewayId", "status"])
     .index("by_from", ["fromGatewayId"]),
 
+  // --- MESSAGE PINS ---
+  messagePins: defineTable({
+    gatewayId: v.id("gateways"),
+    sessionId: v.id("sessions"),
+    messageId: v.id("messages"),
+    userId: v.id("authUsers"),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_message", ["messageId"]),
+
   // --- SYSTEM CONFIG ---
   systemConfig: defineTable({
     key: v.string(),
@@ -717,6 +729,38 @@ export default defineSchema({
     gatewayId: v.optional(v.id("gateways")),
   }).index("by_endpoint", ["endpoint"])
     .index("by_gatewayId", ["gatewayId"]),
+
+  // --- WEBHOOKS ---
+  webhooks: defineTable({
+    gatewayId: v.id("gateways"),
+    url: v.string(),
+    events: v.array(v.string()),
+    secret: v.string(),
+    enabled: v.boolean(),
+    description: v.optional(v.string()),
+    lastTriggeredAt: v.optional(v.number()),
+    lastStatus: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_gatewayId", ["gatewayId"])
+    .index("by_gateway_enabled", ["gatewayId", "enabled"]),
+
+  // --- SCHEDULED MESSAGES ---
+  scheduledMessages: defineTable({
+    gatewayId: v.id("gateways"),
+    sessionId: v.id("sessions"),
+    userId: v.id("authUsers"),
+    content: v.string(),
+    scheduledFor: v.number(),
+    status: v.union(v.literal("pending"), v.literal("sent"), v.literal("cancelled")),
+    sentAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_gatewayId", ["gatewayId"])
+    .index("by_status_scheduled", ["status", "scheduledFor"])
+    .index("by_session", ["sessionId"])
+    .index("by_user", ["userId"]),
 
   // --- CHANNEL MESSAGES (raw audit trail) ---
   channelMessages: defineTable({

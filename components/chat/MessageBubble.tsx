@@ -8,7 +8,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { cn, formatRelativeTime, formatCost, formatTokens } from "@/lib/utils";
 import type { MessageDisplay } from "@/lib/types";
 import React, { useState, useRef, useMemo, useCallback } from "react";
-import { Check, Copy, Download, FileIcon, ImageIcon, Volume2, Loader2, RotateCcw } from "lucide-react";
+import { Check, Copy, Download, FileIcon, ImageIcon, Volume2, Loader2, RotateCcw, GitBranch, Star } from "lucide-react";
 
 function CodeBlock({ language, children }: { language?: string; children: string }) {
   const [copied, setCopied] = useState(false);
@@ -23,7 +23,7 @@ function CodeBlock({ language, children }: { language?: string; children: string
     <div className="relative group/code my-3 rounded-xl overflow-hidden border border-white/[0.08] shadow-[0_4px_16px_rgba(0,0,0,0.2)]">
       <div className="flex items-center justify-between bg-white/[0.06] px-4 py-2 text-xs text-zinc-400">
         <span>{language || "text"}</span>
-        <button onClick={copy} className="flex items-center gap-1 hover:text-white transition-colors">
+        <button onClick={copy} aria-label={copied ? "Copied to clipboard" : "Copy code"} className="flex items-center gap-1 hover:text-white transition-colors">
           {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
           {copied ? "Copied" : "Copy"}
         </button>
@@ -128,7 +128,7 @@ function ReadAloudButton({ text }: { text: string }) {
   };
 
   return (
-    <button onClick={handlePlay} className="hover:text-white transition-colors" title={playing ? "Stop" : "Read aloud"}>
+    <button onClick={handlePlay} className="hover:text-white transition-colors" aria-label={playing ? "Stop reading" : "Read aloud"} title={playing ? "Stop" : "Read aloud"}>
       {playing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Volume2 className="h-3 w-3" />}
     </button>
   );
@@ -220,7 +220,7 @@ const markdownComponents = {
 
 const remarkPlugins = [remarkGfm];
 
-export const MessageBubble = React.memo(function MessageBubble({ message, onRetry }: { message: MessageDisplay; onRetry?: (messageId: string) => void }) {
+export const MessageBubble = React.memo(function MessageBubble({ message, onRetry, onBranch, onPin, isPinned }: { message: MessageDisplay; onRetry?: (messageId: string) => void; onBranch?: (messageId: string) => void; onPin?: (messageId: string) => void; isPinned?: boolean }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isFailed = message.content?.startsWith("Error:");
@@ -253,8 +253,9 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
   }
 
   return (
-    <div
+    <article
       className={cn("group flex gap-3 animate-fade-in", isUser ? "justify-end" : "justify-start")}
+      aria-label={`${isUser ? "Your" : "Assistant"} message`}
     >
       <div
         className={cn(
@@ -323,8 +324,28 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
           {!isUser && message.content && (
             <ReadAloudButton text={message.content} />
           )}
+          {onPin && (
+            <button
+              onClick={() => onPin(message._id)}
+              className={`hover:text-white transition-colors ${isPinned ? "text-yellow-400" : ""}`}
+              aria-label={isPinned ? "Unpin message" : "Pin message"}
+              title={isPinned ? "Unpin" : "Pin message"}
+            >
+              <Star className={`h-3 w-3 ${isPinned ? "fill-yellow-400" : ""}`} />
+            </button>
+          )}
+          {onBranch && (
+            <button
+              onClick={() => onBranch(message._id)}
+              className="hover:text-white transition-colors"
+              aria-label="Branch from here"
+              title="Branch from here"
+            >
+              <GitBranch className="h-3 w-3" />
+            </button>
+          )}
         </div>
       </div>
-    </div>
+    </article>
   );
 });

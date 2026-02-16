@@ -10,6 +10,7 @@ import { useChat } from "@/hooks/useChat";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowDown } from "lucide-react";
+import { toast } from "sonner";
 
 interface ConversationBookmark {
   _id: string;
@@ -31,6 +32,62 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   const { data: session } = useSession();
   const gatewayId = (session?.user as any)?.gatewayId;
   const [conversations, setConversations] = useState<ConversationBookmark[]>([]);
+  const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<string>>(new Set());
+
+  // Fetch pinned messages
+  const fetchPins = useCallback(async () => {
+    try {
+      const res = await gatewayFetch(`/api/sessions/${sessionId}/pins`);
+      if (res.ok) {
+        const data = await res.json();
+        const ids = new Set<string>((data.pins || []).map((p: any) => p.messageId));
+        setPinnedMessageIds(ids);
+      }
+    } catch {}
+  }, [sessionId]);
+
+  useEffect(() => { fetchPins(); }, [fetchPins]);
+
+  const handleBranch = useCallback(async (messageId: string) => {
+    try {
+      const res = await gatewayFetch(`/api/sessions/${sessionId}/branch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId }),
+      });
+      if (!res.ok) throw new Error("Branch failed");
+      const data = await res.json();
+      toast.success("Branched! Redirecting...");
+      window.location.href = `/chat/${data.sessionId}`;
+    } catch (err: any) {
+      toast.error(err.message || "Failed to branch");
+    }
+  }, [sessionId]);
+
+  const handlePin = useCallback(async (messageId: string) => {
+    const isPinned = pinnedMessageIds.has(messageId);
+    try {
+      if (isPinned) {
+        await gatewayFetch(`/api/sessions/${sessionId}/pins`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageId }),
+        });
+        setPinnedMessageIds((prev) => { const next = new Set(prev); next.delete(messageId); return next; });
+        toast.success("Unpinned");
+      } else {
+        await gatewayFetch(`/api/sessions/${sessionId}/pins`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageId }),
+        });
+        setPinnedMessageIds((prev) => new Set(prev).add(messageId));
+        toast.success("Pinned!");
+      }
+    } catch {
+      toast.error("Failed to update pin");
+    }
+  }, [sessionId, pinnedMessageIds]);
 
   // Fetch conversation bookmarks
   const fetchConversations = useCallback(async () => {
@@ -156,7 +213,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
                 <ConversationSavedDivider conversationId={closedConvo._id} />
               )}
               <div id={msg.seq ? `msg-seq-${msg.seq}` : undefined}>
-                <MessageBubble message={msg} onRetry={() => retryLastMessage()} />
+                <MessageBubble message={msg} onRetry={() => retryLastMessage()} onBranch={handleBranch} onPin={handlePin} isPinned={pinnedMessageIds.has(msg._id)} />
               </div>
             </div>
           );
@@ -194,6 +251,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
       {showScrollBtn && (
         <button
           onClick={scrollToBottom}
+          aria-label="Scroll to bottom - new messages"
           className="sticky bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.1] border border-white/[0.15] backdrop-blur-xl text-xs text-zinc-300 hover:bg-white/[0.15] hover:text-white transition-all shadow-lg"
         >
           <ArrowDown className="h-3.5 w-3.5" />

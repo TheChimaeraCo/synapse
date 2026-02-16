@@ -216,3 +216,15 @@ export const clearSession = mutation({
     return msgs.length;
   },
 });
+
+export const listByGateway = query({
+  args: { gatewayId: v.id("gateways"), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 5000;
+    return await ctx.db
+      .query("messages")
+      .withIndex("by_gatewayId", (q) => q.eq("gatewayId", args.gatewayId))
+      .order("desc")
+      .take(limit);
+  },
+});

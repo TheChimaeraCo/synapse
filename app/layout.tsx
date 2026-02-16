@@ -8,8 +8,16 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-geist-sans" });
 
 export const metadata: Metadata = {
-  title: "Synapse Hub",
-  description: "AI Gateway Management Hub",
+  title: "Synapse Hub - AI Gateway Management",
+  description: "Self-hosted AI gateway for managing conversations, models, and channels across multiple platforms.",
+  openGraph: {
+    title: "Synapse Hub - AI Gateway Management",
+    description: "Self-hosted AI gateway for managing conversations, models, and channels across multiple platforms.",
+    siteName: "Synapse Hub",
+    type: "website",
+    images: [{ url: "/icon-512.png", width: 512, height: 512, alt: "Synapse Hub" }],
+  },
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({
