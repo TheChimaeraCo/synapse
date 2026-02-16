@@ -4,7 +4,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { classifyTopic } from "@/lib/topicClassifier";
 import { summarizeConversation } from "@/lib/conversationSummarizer";
 
-const CONVERSATION_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours - safety net only, AI handles topic shifts via new_conversation tool
+const CONVERSATION_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours - only timeout after a long absence, AI classifier handles topic shifts
 const CLASSIFY_EVERY_N_MESSAGES = 6; // Run AI topic classification after N messages (conservative)
 
 /**
