@@ -32,7 +32,7 @@ export function Header({
     : user?.email?.[0]?.toUpperCase() || "?";
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] px-4 md:px-6 bg-white/[0.02] backdrop-blur-2xl">
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] px-4 md:px-6 bg-white/[0.02] backdrop-blur-2xl">
       <div className="flex items-center gap-3">
         {children}
         {title && <h1 className="text-lg font-semibold text-zinc-100 tracking-tight">{title}</h1>}
