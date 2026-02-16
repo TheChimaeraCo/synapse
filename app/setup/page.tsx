@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { PROVIDERS, type AnthropicAuthMethod } from "@/lib/providers";
+import { InfoTooltip } from "@/components/ui/Tooltip";
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -474,12 +475,12 @@ export default function SetupPage() {
           <p className="text-sm text-zinc-400 mb-6">A gateway is an isolated workspace for your AI agent.</p>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-zinc-400 mb-1 block">Gateway Name *</label>
+              <label className="text-sm text-zinc-400 mb-1 block">Gateway Name *<InfoTooltip text="A friendly name for this gateway. Each gateway is an isolated workspace with its own agent, config, and data." /></label>
               <Input value={gatewayName} onChange={(e) => handleGatewayNameChange(e.target.value)} placeholder='e.g. "Personal", "My Company"'
                 className="bg-white/[0.04] border-white/10 text-zinc-200 placeholder-zinc-600 rounded-xl" autoFocus />
             </div>
             <div>
-              <label className="text-sm text-zinc-400 mb-1 block">Slug</label>
+              <label className="text-sm text-zinc-400 mb-1 block">Slug<InfoTooltip text="URL-safe identifier used in paths and APIs. Auto-generated from the name. Only lowercase letters, numbers, and hyphens." /></label>
               <Input value={gatewaySlug}
                 onChange={(e) => { setGatewaySlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, "")); setSlugEdited(true); }}
                 placeholder="my-gateway"
@@ -498,7 +499,7 @@ export default function SetupPage() {
               </div>
             </div>
             <div>
-              <label className="text-sm text-zinc-400 mb-1 block">Workspace Path</label>
+              <label className="text-sm text-zinc-400 mb-1 block">Workspace Path<InfoTooltip text="Filesystem directory where this gateway stores files. Tools like file browser and shell operate within this path. Must be an absolute path on the server." /></label>
               <Input value={gatewayWorkspace} onChange={(e) => setGatewayWorkspace(e.target.value)}
                 placeholder="/root/clawd/gateways/my-gateway/"
                 className="bg-white/[0.04] border-white/10 text-zinc-200 placeholder-zinc-600 rounded-xl font-mono text-xs" />
@@ -514,7 +515,7 @@ export default function SetupPage() {
       {/* Step 3: AI Provider */}
       {step === 3 && providerPhase === "select" && (
         <div className="w-full max-w-md bg-white/[0.07] backdrop-blur-xl border border-white/10 rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-zinc-200 mb-1">AI Provider</h2>
+          <h2 className="text-lg font-semibold text-zinc-200 mb-1">AI Provider<InfoTooltip text="The AI service that powers your agent's responses. Anthropic (Claude) is recommended. You can change this later in settings." /></h2>
           <p className="text-sm text-zinc-400 mb-4">Select your AI provider to power the agent.</p>
           <div className="space-y-3">
             <div className="max-h-[50vh] overflow-y-auto space-y-1 pr-1 overscroll-contain">

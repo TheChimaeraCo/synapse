@@ -1,3 +1,7 @@
+/**
+ * Workspace path resolution for gateway file operations.
+ * Supports per-gateway paths with multi-level fallback and caching.
+ */
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";

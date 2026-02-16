@@ -174,6 +174,17 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
     abortRef.current?.abort();
   }, []);
 
+  const retryLastMessage = useCallback(async () => {
+    // Find the last user message and resend it
+    const lastUser = [...messages].reverse().find(m => m.role === "user");
+    if (!lastUser) return;
+    // Remove the failed assistant message(s) after the last user message
+    const lastUserIdx = messages.lastIndexOf(lastUser);
+    setMessages(prev => prev.slice(0, lastUserIdx));
+    // Re-send
+    await sendMessage(lastUser.content);
+  }, [messages, sendMessage]);
+
   return {
     messages,
     isStreaming,
@@ -182,6 +193,7 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
     loaded,
     sendMessage,
     stopStreaming,
+    retryLastMessage,
     refreshMessages: fetchMessages,
   };
 }

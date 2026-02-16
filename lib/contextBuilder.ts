@@ -17,6 +17,10 @@ interface ContextResult {
 // Soft total budget - we trim only if we exceed this
 const TOTAL_BUDGET = 8000;
 
+/**
+ * Rough token estimate using ~4 chars per token heuristic.
+ * Used for budget calculations - not exact, but fast.
+ */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -148,6 +152,18 @@ function getEscalationParams(level: number): { messageLimit: number; broadKnowle
   }
 }
 
+/**
+ * Build the full context for an AI chat completion request.
+ * Assembles 5 layers: identity/soul, knowledge (semantic), message history,
+ * topic context (past conversations), and project context.
+ * Trims oldest messages if total exceeds TOTAL_BUDGET.
+ *
+ * @param sessionId - Active chat session
+ * @param agentId - Agent whose personality/knowledge to use
+ * @param userMessage - Current user message (used for knowledge relevance scoring)
+ * @param tokenBudget - Soft token limit (default 5000, actual cap is TOTAL_BUDGET)
+ * @param _conversationId - Optional conversation for scoping (currently unused)
+ */
 export async function buildContext(
   sessionId: Id<"sessions">,
   agentId: Id<"agents">,

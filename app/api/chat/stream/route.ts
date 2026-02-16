@@ -14,6 +14,22 @@ import { getThinkingParams, type ThinkingLevel } from "@/lib/thinkingLevels";
 import { createHash } from "crypto";
 import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPrompt, isolateToolContext } from "@/lib/promptDefense";
 
+// Simple request deduplication: track recent request hashes to prevent double-sends
+const recentRequests = new Map<string, number>();
+const DEDUP_WINDOW_MS = 2000;
+
+function isDuplicateRequest(sessionId: string, content: string): boolean {
+  const hash = createHash("sha256").update(`${sessionId}|${content}`).digest("hex").slice(0, 16);
+  const now = Date.now();
+  // Clean old entries
+  for (const [k, v] of recentRequests) {
+    if (now - v > DEDUP_WINDOW_MS) recentRequests.delete(k);
+  }
+  if (recentRequests.has(hash)) return true;
+  recentRequests.set(hash, now);
+  return false;
+}
+
 const MODEL_COSTS: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
   "claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
   "claude-opus-4-20250514": { inputPerMillion: 15, outputPerMillion: 75 },
@@ -45,6 +61,11 @@ export async function POST(req: NextRequest) {
 
   if (!sessionId || !content?.trim()) {
     return new Response(JSON.stringify({ error: "sessionId and content are required" }), { status: 400 });
+  }
+
+  // Dedup check
+  if (isDuplicateRequest(sessionId, content.trim())) {
+    return new Response(JSON.stringify({ error: "Duplicate request" }), { status: 429 });
   }
 
   // === Prompt Defense: Input validation ===

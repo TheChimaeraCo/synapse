@@ -13,6 +13,21 @@ import { selectModel, DEFAULT_ROUTING } from "@/lib/modelRouter";
 import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { createHash } from "crypto";
 
+// Simple request deduplication
+const recentRequests = new Map<string, number>();
+const DEDUP_WINDOW_MS = 2000;
+
+function isDuplicateRequest(sessionId: string, content: string): boolean {
+  const hash = createHash("sha256").update(`${sessionId}|${content}`).digest("hex").slice(0, 16);
+  const now = Date.now();
+  for (const [k, v] of recentRequests) {
+    if (now - v > DEDUP_WINDOW_MS) recentRequests.delete(k);
+  }
+  if (recentRequests.has(hash)) return true;
+  recentRequests.set(hash, now);
+  return false;
+}
+
 const MODEL_COSTS: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
   "claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
   "claude-opus-4-20250514": { inputPerMillion: 15, outputPerMillion: 75 },
@@ -31,6 +46,10 @@ export async function POST(req: NextRequest) {
 
     if (!sessionId || !content?.trim()) {
       return NextResponse.json({ error: "sessionId and content are required" }, { status: 400 });
+    }
+
+    if (isDuplicateRequest(sessionId, content.trim())) {
+      return NextResponse.json({ error: "Duplicate request" }, { status: 429 });
     }
 
     const sessionDoc = await convexClient.query(api.functions.sessions.get, {

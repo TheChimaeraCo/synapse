@@ -7,8 +7,8 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { cn, formatRelativeTime, formatCost, formatTokens } from "@/lib/utils";
 import type { MessageDisplay } from "@/lib/types";
-import { useState, useRef } from "react";
-import { Check, Copy, Download, FileIcon, ImageIcon, Volume2, Loader2 } from "lucide-react";
+import React, { useState, useRef, useMemo, useCallback } from "react";
+import { Check, Copy, Download, FileIcon, ImageIcon, Volume2, Loader2, RotateCcw } from "lucide-react";
 
 function CodeBlock({ language, children }: { language?: string; children: string }) {
   const [copied, setCopied] = useState(false);
@@ -187,9 +187,43 @@ function TelegramAccessActions({ message }: { message: MessageDisplay }) {
   );
 }
 
-export function MessageBubble({ message }: { message: MessageDisplay }) {
+// Memoized markdown components to avoid re-creating on every render
+const markdownComponents = {
+  code({ className, children, ...props }: any) {
+    const match = /language-(\w+)/.exec(className || "");
+    const content = String(children).replace(/\n$/, "");
+    if (!match && !content.includes("\n")) {
+      return <code className={className} {...props}>{children}</code>;
+    }
+    return <CodeBlock language={match?.[1]}>{content}</CodeBlock>;
+  },
+  pre({ children }: any) {
+    return <>{children}</>;
+  },
+  table({ children }: any) {
+    return (
+      <div className="my-2 overflow-x-auto rounded-xl border border-white/[0.08]">
+        <table className="w-full border-collapse text-xs">{children}</table>
+      </div>
+    );
+  },
+  thead({ children }: any) {
+    return <thead className="bg-white/[0.06]">{children}</thead>;
+  },
+  th({ children }: any) {
+    return <th className="border border-white/[0.08] px-3 py-2 text-left font-semibold text-zinc-200">{children}</th>;
+  },
+  td({ children }: any) {
+    return <td className="border border-white/[0.08] px-3 py-2 text-zinc-300">{children}</td>;
+  },
+};
+
+const remarkPlugins = [remarkGfm];
+
+export const MessageBubble = React.memo(function MessageBubble({ message, onRetry }: { message: MessageDisplay; onRetry?: (messageId: string) => void }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
+  const isFailed = message.content?.startsWith("Error:");
 
   if (isSystem) {
     const meta = (message as any).metadata;
@@ -251,40 +285,23 @@ export function MessageBubble({ message }: { message: MessageDisplay }) {
             prose-strong:text-white
           ">
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code({ className, children, ...props }) {
-                  const match = /language-(\w+)/.exec(className || "");
-                  const content = String(children).replace(/\n$/, "");
-                  if (!match && !content.includes("\n")) {
-                    return <code className={className} {...props}>{children}</code>;
-                  }
-                  return <CodeBlock language={match?.[1]}>{content}</CodeBlock>;
-                },
-                pre({ children }) {
-                  return <>{children}</>;
-                },
-                table({ children }) {
-                  return (
-                    <div className="my-2 overflow-x-auto rounded-xl border border-white/[0.08]">
-                      <table className="w-full border-collapse text-xs">{children}</table>
-                    </div>
-                  );
-                },
-                thead({ children }) {
-                  return <thead className="bg-white/[0.06]">{children}</thead>;
-                },
-                th({ children }) {
-                  return <th className="border border-white/[0.08] px-3 py-2 text-left font-semibold text-zinc-200">{children}</th>;
-                },
-                td({ children }) {
-                  return <td className="border border-white/[0.08] px-3 py-2 text-zinc-300">{children}</td>;
-                },
-              }}
+              remarkPlugins={remarkPlugins}
+              components={markdownComponents}
             >
               {stripFileRefs(message.content)}
             </ReactMarkdown>
           </div>
+        )}
+
+        {/* Retry button for failed messages */}
+        {isFailed && !isUser && onRetry && (
+          <button
+            onClick={() => onRetry(message._id)}
+            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Retry
+          </button>
         )}
 
         {/* Metadata on hover */}
@@ -310,4 +327,4 @@ export function MessageBubble({ message }: { message: MessageDisplay }) {
       </div>
     </div>
   );
-}
+});

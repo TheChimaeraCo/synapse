@@ -24,6 +24,7 @@ export interface AuthContext {
   userId: string;
 }
 
+/** HTTP-aware error for gateway auth failures. Caught by handleGatewayError(). */
 export class GatewayError extends Error {
   constructor(public statusCode: number, message: string) {
     super(message);

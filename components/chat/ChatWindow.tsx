@@ -59,14 +59,15 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     loaded,
     sendMessage,
     stopStreaming,
+    retryLastMessage,
     refreshMessages,
   } = useChat({ sessionId, gatewayId: gatewayId || "" });
 
   // Expose sendMessage to parent via window (ChatInput needs it)
   useEffect(() => {
-    (window as any).__synapse_chat = { sendMessage, stopStreaming, isStreaming, gatewayId };
+    (window as any).__synapse_chat = { sendMessage, stopStreaming, retryLastMessage, isStreaming, gatewayId };
     return () => { delete (window as any).__synapse_chat; };
-  }, [sendMessage, stopStreaming, isStreaming, gatewayId]);
+  }, [sendMessage, stopStreaming, retryLastMessage, isStreaming, gatewayId]);
 
   // Scroll to seq when user clicks a conversation bookmark
   useEffect(() => {
@@ -155,7 +156,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
                 <ConversationSavedDivider conversationId={closedConvo._id} />
               )}
               <div id={msg.seq ? `msg-seq-${msg.seq}` : undefined}>
-                <MessageBubble message={msg} />
+                <MessageBubble message={msg} onRetry={() => retryLastMessage()} />
               </div>
             </div>
           );

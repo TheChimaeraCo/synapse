@@ -6,15 +6,22 @@ import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
+/**
+ * A built-in tool that agents can invoke during chat.
+ * Tools are registered by category and can require human approval before execution.
+ */
 export interface BuiltinTool {
   name: string;
   description: string;
   category: string;
+  /** If true, tool execution pauses for user confirmation */
   requiresApproval: boolean;
+  /** JSON Schema (TypeBox) describing the tool's input parameters */
   parameters: TSchema;
   handler: (args: Record<string, any>, context: ToolContext) => Promise<string>;
 }
 
+/** Runtime context passed to every tool handler */
 export interface ToolContext {
   gatewayId: string;
   agentId: string;

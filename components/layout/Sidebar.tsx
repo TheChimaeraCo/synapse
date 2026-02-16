@@ -13,6 +13,7 @@ import {
   Bot,
   Brain,
   CheckCircle2,
+  FileText,
   FolderKanban,
   FolderOpen,
   Globe,
@@ -100,6 +101,7 @@ const navLinks = [
   { href: "/knowledge", label: "Knowledge", icon: Brain },
   { href: "/files", label: "Files", icon: FolderOpen },
   { href: "/projects", label: "Projects", icon: FolderKanban },
+  { href: "/docs", label: "API Docs", icon: FileText },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

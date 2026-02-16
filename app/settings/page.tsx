@@ -29,10 +29,11 @@ import { NotificationsTab } from "@/components/settings/NotificationsTab";
 import { MembersTab } from "@/components/settings/MembersTab";
 import { SchedulerTab } from "@/components/settings/SchedulerTab";
 import { PM2Tab } from "@/components/settings/PM2Tab";
+import { ChangelogTab } from "@/components/settings/ChangelogTab";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Settings, Cpu, MessageSquare, BarChart3, User, Info, Wrench, Shield, Puzzle,
-  Layers, Mic, Zap, Server, Terminal, FileText, Variable, Package, Globe, Clock, Monitor, Bell, Users, Sparkles
+  Layers, Mic, Zap, Server, Terminal, FileText, Variable, Package, Globe, Clock, Monitor, Bell, Users, Sparkles, Tag
 } from "lucide-react";
 
 const tabs = [
@@ -62,6 +63,7 @@ const tabs = [
   { id: "license", label: "License", icon: Shield },
   { id: "security", label: "Security", icon: Shield },
   { id: "account", label: "Account", icon: User },
+  { id: "changelog", label: "Changelog", icon: Tag },
   { id: "about", label: "About", icon: Info },
 ] as const;
 
@@ -136,6 +138,7 @@ export default function SettingsPage() {
           {activeTab === "license" && <LicenseTab />}
           {activeTab === "security" && <SecurityTab />}
           {activeTab === "account" && <AccountTab />}
+          {activeTab === "changelog" && <ChangelogTab />}
           {activeTab === "about" && <AboutTab />}
         </div>
       </div>
