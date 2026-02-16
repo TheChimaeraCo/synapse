@@ -3,10 +3,11 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
 const SUMMARY_PROMPT = `Analyze this conversation and provide a JSON response with:
-- "title": A short title (under 60 chars)
-- "summary": A 2-3 sentence summary of what was discussed
+- "title": A short, natural title (under 60 chars) - like how you'd describe this chat to a friend
+- "summary": A 2-3 sentence summary focused on: what the user wanted, what was discussed, and what the outcome was. Write it as if you're reminding yourself what happened - e.g. "User asked about X. We worked through Y and decided Z." NOT a formal abstract.
 - "topics": Array of topic keywords (3-7 items)
 - "decisions": Array of decisions made, each with "what" (the decision) and optional "reasoning"
+- "userFacts": Array of facts learned about the user during this conversation (e.g. "prefers dark mode", "works on a Next.js project", "lives in Austin"). Only include things explicitly stated or clearly implied. Empty array if nothing new learned.
 
 Respond ONLY with valid JSON, no markdown.`;
 
@@ -110,6 +111,33 @@ export async function summarizeConversation(
       topics: Array.isArray(parsed.topics) ? parsed.topics : undefined,
       decisions: Array.isArray(parsed.decisions) ? parsed.decisions : undefined,
     });
+
+    // Store any learned user facts as knowledge entries
+    if (Array.isArray(parsed.userFacts) && parsed.userFacts.length > 0 && convo.gatewayId) {
+      try {
+        // Look up the agent for this gateway
+        const agents = await convexClient.query(api.functions.agents.list, { gatewayId: convo.gatewayId });
+        const agent = agents?.[0];
+        if (agent) {
+          for (const fact of parsed.userFacts.slice(0, 5)) { // cap at 5 facts per conversation
+            if (typeof fact === "string" && fact.trim()) {
+              await convexClient.mutation(api.functions.knowledge.upsert, {
+                agentId: agent._id,
+                userId: convo.userId || undefined,
+                category: "learned",
+                key: fact.trim().slice(0, 100),
+                value: fact.trim(),
+                source: "conversation",
+                confidence: 0.7,
+              });
+            }
+          }
+          console.log(`[conversationSummarizer] Stored ${Math.min(parsed.userFacts.length, 5)} user facts as knowledge`);
+        }
+      } catch (err) {
+        console.error("[conversationSummarizer] Failed to store user facts:", err);
+      }
+    }
   } catch (err) {
     console.error("[conversationSummarizer] Error:", err);
   }
