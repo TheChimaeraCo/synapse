@@ -24,6 +24,9 @@
     "dev:full": "node scripts/convex-env.js pull --silent && node scripts/dev.js",
     "stop": "node scripts/stop.js",
     "restart": "node scripts/init.js --skip-install --skip-build",
+    "verify:deploy": "node scripts/deploy.js --verify-only",
+    "deploy:convex": "node scripts/deploy.js",
+    "deploy:convex:dry-run": "node scripts/deploy.js --dry-run",
     "test": "vitest run",
     "test:watch": "vitest"
   },

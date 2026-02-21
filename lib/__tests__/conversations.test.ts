@@ -76,34 +76,28 @@ describe("checkTopicRelation", () => {
 });
 
 describe("classification threshold logic", () => {
-  // The logic: shouldClassify = nextCount >= 6 && (nextCount - 6) % 3 === 0
-  // So it fires at messages 6, 9, 12, 15, ...
+  // The logic: shouldClassify = nextCount >= 3
+  // So classification starts at message 3 and runs on every message after.
 
   function shouldClassify(messageCount: number): boolean {
     const nextCount = messageCount + 1;
-    return nextCount >= 6 && (nextCount - 6) % 3 === 0;
+    return nextCount >= 3;
   }
 
-  it("does not classify before message 6", () => {
-    for (let i = 0; i < 5; i++) {
+  it("does not classify before message 3", () => {
+    for (let i = 0; i < 2; i++) {
       expect(shouldClassify(i)).toBe(false);
     }
   });
 
-  it("classifies at message 6 (nextCount=6)", () => {
-    expect(shouldClassify(5)).toBe(true);
+  it("classifies at message 3 (nextCount=3)", () => {
+    expect(shouldClassify(2)).toBe(true);
   });
 
-  it("classifies every 3rd message after 6", () => {
-    expect(shouldClassify(8)).toBe(true);   // nextCount=9
-    expect(shouldClassify(11)).toBe(true);  // nextCount=12
-    expect(shouldClassify(14)).toBe(true);  // nextCount=15
-  });
-
-  it("does not classify between intervals", () => {
-    expect(shouldClassify(6)).toBe(false);  // nextCount=7
-    expect(shouldClassify(7)).toBe(false);  // nextCount=8
-    expect(shouldClassify(9)).toBe(false);  // nextCount=10
-    expect(shouldClassify(10)).toBe(false); // nextCount=11
+  it("classifies every message from message 3 onward", () => {
+    expect(shouldClassify(2)).toBe(true); // nextCount=3
+    expect(shouldClassify(3)).toBe(true); // nextCount=4
+    expect(shouldClassify(4)).toBe(true); // nextCount=5
+    expect(shouldClassify(9)).toBe(true); // nextCount=10
   });
 });

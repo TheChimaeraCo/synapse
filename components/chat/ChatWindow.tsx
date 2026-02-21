@@ -26,6 +26,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(0);
   const prevStreamRef = useRef("");
+  const lastAssistantIdRef = useRef<string | null>(null);
   const initialScrollDone = useRef(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const userScrolledUp = useRef(false);
@@ -174,6 +175,34 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     prevCountRef.current = newCount;
     prevStreamRef.current = newStream;
   }, [messages.length, streamingContent]);
+
+  // Emit assistant message events for voice-mode orchestration.
+  // Initialize once from loaded history without dispatching.
+  useEffect(() => {
+    if (!loaded || messages.length === 0) return;
+    const latestAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant" && m.content?.trim());
+    if (!latestAssistant) return;
+
+    if (lastAssistantIdRef.current == null) {
+      lastAssistantIdRef.current = latestAssistant._id;
+      return;
+    }
+
+    if (latestAssistant._id !== lastAssistantIdRef.current) {
+      lastAssistantIdRef.current = latestAssistant._id;
+      window.dispatchEvent(
+        new CustomEvent("synapse:assistant_message", {
+          detail: {
+            messageId: latestAssistant._id,
+            content: latestAssistant.content,
+            sessionId,
+          },
+        })
+      );
+    }
+  }, [loaded, messages, sessionId]);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

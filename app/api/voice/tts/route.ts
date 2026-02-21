@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { textToSpeech, getVoiceConfigFromDb } from "@/lib/voice";
+import type { Id } from "@/convex/_generated/dataModel";
 
 export async function POST(req: NextRequest) {
   try {
-    await getGatewayContext(req);
+    const { gatewayId } = await getGatewayContext(req);
     const body = await req.json();
     const { text, voice } = body;
 
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing 'text' field" }, { status: 400 });
     }
 
-    const config = await getVoiceConfigFromDb();
+    const config = await getVoiceConfigFromDb(gatewayId as Id<"gateways">);
     if (config.ttsProvider === "none") {
       return NextResponse.json({ error: "TTS is not configured" }, { status: 400 });
     }

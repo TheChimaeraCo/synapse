@@ -4,7 +4,7 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, MicOff, Bot, ChevronDown, Clock } from "lucide-react";
+import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, MicOff, Bot, ChevronDown, Clock, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { useSession } from "next-auth/react";
 import { getCommandSuggestions } from "@/lib/slashCommands";
@@ -22,6 +22,8 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
   const [transcribing, setTranscribing] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [voiceAwaitingReply, setVoiceAwaitingReply] = useState(false);
   const [agents, setAgents] = useState<Array<{ _id: string; name: string; slug: string; isActive: boolean }>>([]);
   const [currentAgentId, setCurrentAgentId] = useState<string | null>(null);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
@@ -32,10 +34,21 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceModeRef = useRef(false);
+  const voiceAwaitingReplyRef = useRef(false);
 
   const chatState = typeof window !== "undefined" ? (window as any).__synapse_chat : null;
   const isStreaming = chatState?.isStreaming || false;
   const isDisabled = sending || isStreaming;
+
+  useEffect(() => {
+    voiceModeRef.current = voiceMode;
+  }, [voiceMode]);
+
+  useEffect(() => {
+    voiceAwaitingReplyRef.current = voiceAwaitingReply;
+  }, [voiceAwaitingReply]);
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -243,10 +256,55 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     (window as any).__synapse_chat?.stopStreaming?.();
   };
 
-  const startRecording = async () => {
+  const sendTextDirect = useCallback(async (text: string) => {
+    const sendMessage = (window as any).__synapse_chat?.sendMessage;
+    if (!sendMessage) throw new Error("Chat not initialized");
+    await sendMessage(text);
+  }, []);
+
+  const playTts = useCallback(async (text: string) => {
+    const response = await gatewayFetch("/api/voice/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.slice(0, 5000) }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "TTS failed");
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    await new Promise<void>((resolve, reject) => {
+      const audio = new Audio(url);
+      activeAudioRef.current = audio;
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        activeAudioRef.current = null;
+        resolve();
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        activeAudioRef.current = null;
+        reject(new Error("Audio playback failed"));
+      };
+      audio.play().catch(reject);
+    });
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && recording) {
+      mediaRecorderRef.current.stop();
+      setRecording(false);
+    }
+  }, [recording]);
+
+  const startRecording = useCallback(async (autoSend = false) => {
+    if (recording || transcribing || isDisabled) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -256,19 +314,34 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const blobType = mediaRecorder.mimeType || "audio/webm";
+        const ext = blobType.includes("ogg") ? "ogg" : blobType.includes("wav") ? "wav" : "webm";
+        const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
         if (audioBlob.size < 100) return;
 
         setTranscribing(true);
         try {
           const formData = new FormData();
-          formData.append("audio", audioBlob, "recording.webm");
+          formData.append("audio", audioBlob, `recording.${ext}`);
           const res = await gatewayFetch("/api/voice/stt", { method: "POST", body: formData });
-          if (!res.ok) throw new Error("Transcription failed");
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || "Transcription failed");
+          }
           const { text } = await res.json();
-          if (text) setContent((prev) => (prev ? prev + " " + text : text));
+          const transcript = (text || "").trim();
+          if (!transcript) return;
+
+          if (autoSend) {
+            if (!voiceModeRef.current) return;
+            setVoiceAwaitingReply(true);
+            await sendTextDirect(transcript);
+          } else {
+            setContent((prev) => (prev ? `${prev} ${transcript}` : transcript));
+          }
         } catch (err: any) {
-          toast.error("Voice transcription failed: " + err.message);
+          toast.error("Voice transcription failed: " + (err.message || "unknown error"));
+          if (autoSend) setVoiceAwaitingReply(false);
         } finally {
           setTranscribing(false);
         }
@@ -276,17 +349,68 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
       mediaRecorder.start();
       setRecording(true);
-    } catch (err: any) {
+    } catch {
       toast.error("Microphone access denied");
     }
-  };
+  }, [isDisabled, recording, sendTextDirect, transcribing]);
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && recording) {
-      mediaRecorderRef.current.stop();
-      setRecording(false);
+  const toggleVoiceMode = useCallback(async () => {
+    if (voiceModeRef.current) {
+      setVoiceMode(false);
+      setVoiceAwaitingReply(false);
+      stopRecording();
+      if (activeAudioRef.current) {
+        activeAudioRef.current.pause();
+        activeAudioRef.current = null;
+      }
+      toast.success("Voice mode off");
+      return;
     }
-  };
+
+    setVoiceMode(true);
+    setVoiceAwaitingReply(false);
+    toast.success("Voice mode on");
+
+    if (!isDisabled && !recording && !transcribing) {
+      await startRecording(true);
+    }
+  }, [isDisabled, recording, startRecording, stopRecording, transcribing]);
+
+  // Voice mode turn-taking: when a new assistant message arrives, speak it then listen again.
+  useEffect(() => {
+    const handler = async (event: Event) => {
+      const detail = (event as CustomEvent).detail as { content?: string; sessionId?: string } | undefined;
+      if (!detail?.content) return;
+      if (detail.sessionId && detail.sessionId !== sessionId) return;
+      if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
+
+      setVoiceAwaitingReply(false);
+      try {
+        await playTts(detail.content);
+      } catch (err: any) {
+        toast.error("Voice playback failed: " + (err.message || "unknown error"));
+      }
+
+      if (voiceModeRef.current && !isDisabled) {
+        await startRecording(true);
+      }
+    };
+
+    window.addEventListener("synapse:assistant_message", handler);
+    return () => window.removeEventListener("synapse:assistant_message", handler);
+  }, [isDisabled, playTts, sessionId, startRecording]);
+
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+      if (activeAudioRef.current) {
+        activeAudioRef.current.pause();
+        activeAudioRef.current = null;
+      }
+    };
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showSuggestions) {
@@ -410,11 +534,23 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             type="button"
             variant="ghost"
             size="icon"
+            className={`shrink-0 self-end min-w-[44px] min-h-[44px] ${voiceMode ? "text-emerald-400" : "text-zinc-400 hover:text-zinc-200"}`}
+            onClick={toggleVoiceMode}
+            disabled={transcribing || uploading}
+            aria-label={voiceMode ? "Disable voice conversation mode" : "Enable voice conversation mode"}
+            title={voiceMode ? "Voice conversation: on" : "Voice conversation: off"}
+          >
+            {voiceMode ? <Volume2 className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
             className={`shrink-0 self-end min-w-[44px] min-h-[44px] hidden sm:inline-flex ${recording ? "text-red-400 animate-pulse" : "text-zinc-400 hover:text-zinc-200"}`}
-            onMouseDown={startRecording}
+            onMouseDown={() => { void startRecording(false); }}
             onMouseUp={stopRecording}
             onMouseLeave={() => recording && stopRecording()}
-            onTouchStart={startRecording}
+            onTouchStart={() => { void startRecording(false); }}
             onTouchEnd={stopRecording}
             disabled={isDisabled || transcribing}
             aria-label={recording ? "Stop recording" : "Hold to record voice"}

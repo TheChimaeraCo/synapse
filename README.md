@@ -113,6 +113,22 @@ npm run env:pull
 npm run env:push
 ```
 
+Strict deploy pipeline:
+
+```bash
+# Verify codegen -> typecheck -> test -> build
+npm run verify:deploy
+
+# Full deploy: verify pipeline + convex deploy
+npm run deploy:convex
+```
+
+GitHub Actions now runs the same strict verify pipeline via `.github/workflows/ci.yml`.
+To enable automatic Convex deploys on `main`, set one of:
+- `CONVEX_DEPLOY_KEY` (recommended)
+- `CONVEX_DEPLOYMENT`
+- `CONVEX_SELF_HOSTED_URL` (and `CONVEX_SELF_HOSTED_ADMIN_KEY` for self-hosted auth)
+
 ### Manual Setup
 
 ```bash
