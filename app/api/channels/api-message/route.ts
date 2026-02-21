@@ -98,11 +98,10 @@ async function getAIConfig(gatewayId: Id<"gateways">, agentId: Id<"agents">) {
   ]);
 
   const provider = providerSlug || "anthropic";
-  const key = apiKeyVal || process.env.ANTHROPIC_API_KEY || "";
+  const { getProviderApiKey, hydrateProviderEnv } = await import("@/lib/providerSecrets");
+  const key = apiKeyVal || getProviderApiKey(provider) || "";
   if (!key) throw new Error("No API key configured");
-
-  const envMap: Record<string, string> = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY" };
-  if (envMap[provider]) process.env[envMap[provider]] = key;
+  hydrateProviderEnv(provider, key);
 
   const agent = await convexClient.query(api.functions.agents.get, { id: agentId });
   if (!agent) throw new Error("Agent not found");

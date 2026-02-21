@@ -18,9 +18,8 @@ export async function proxy(req: NextRequest) {
     const setupComplete = req.cookies.get("synapse-setup-complete")?.value;
     if (!setupComplete && !pathname.startsWith("/api/")) {
       try {
-        const setupRes = await fetch(new URL("/api/config/setup-complete", req.url), {
-          headers: { cookie: req.headers.get("cookie") || "" },
-        });
+        const internalBase = process.env.INTERNAL_URL || `http://127.0.0.1:${process.env.PORT || 3000}`;
+        const setupRes = await fetch(new URL("/api/config/setup-complete", internalBase));
         const setupData = await setupRes.json();
         if (!setupData.complete) {
           return NextResponse.redirect(new URL("/setup", req.url));

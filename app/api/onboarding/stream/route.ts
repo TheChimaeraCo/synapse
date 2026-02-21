@@ -3,6 +3,7 @@ import { getGatewayContext, GatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { getProviderApiKey } from "@/lib/providerSecrets";
 
 const ONBOARDING_SYSTEM_PROMPT = `You are being born. You don't have a name, personality, or purpose yet. You're talking to your person for the first time.
 
@@ -68,14 +69,13 @@ export async function POST(req: NextRequest) {
       return new Response("No onboarding state", { status: 400 });
     }
 
-    const [providerSlug, apiKey, configModel] = await Promise.all([
+    const [providerSlug, configModel] = await Promise.all([
       getGwConfig(gatewayId, "ai_provider"),
-      getGwConfig(gatewayId, "ai_api_key"),
       getGwConfig(gatewayId, "ai_model"),
     ]);
 
     const provider = providerSlug || "anthropic";
-    const key = apiKey || "";
+    const key = getProviderApiKey(provider) || "";
     if (!key) {
       return new Response("No API key configured", { status: 500 });
     }

@@ -222,15 +222,10 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     if (!configModel) configModel = await getConfig("ai_model");
 
     const provider = providerSlug || "anthropic";
-    const key = apiKey || "";
+    const { getProviderApiKey, hydrateProviderEnv } = await import("../providerSecrets");
+    const key = apiKey || getProviderApiKey(provider) || "";
     if (!key) throw new Error("No API key configured");
-
-    const envMap: Record<string, string> = {
-      anthropic: "ANTHROPIC_API_KEY",
-      openai: "OPENAI_API_KEY",
-      google: "GEMINI_API_KEY",
-    };
-    if (envMap[provider]) process.env[envMap[provider]] = key;
+    hydrateProviderEnv(provider, key);
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();

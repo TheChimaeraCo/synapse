@@ -161,15 +161,10 @@ async function processAIResponse(
     ]);
 
     const provider = providerSlug || "anthropic";
-    const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
+    const { getProviderApiKey, hydrateProviderEnv } = await import("@/lib/providerSecrets");
+    const key = apiKey || getProviderApiKey(provider) || "";
     if (!key) throw new Error("No API key configured");
-
-    const envMap: Record<string, string> = {
-      anthropic: "ANTHROPIC_API_KEY",
-      openai: "OPENAI_API_KEY",
-      google: "GEMINI_API_KEY",
-    };
-    if (envMap[provider]) process.env[envMap[provider]] = key;
+    hydrateProviderEnv(provider, key);
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();

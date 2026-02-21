@@ -49,20 +49,13 @@ export async function classifyTopic(
     ]);
 
     const provider = providerSlug || "anthropic";
-    const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
+    const { getProviderApiKey, hydrateProviderEnv } = await import("./providerSecrets");
+    const key = apiKey || getProviderApiKey(provider) || "";
     if (!key) {
       console.warn("[TopicClassifier] No API key, defaulting to sameTopic=true");
       return { sameTopic: true };
     }
-
-    // Set env so pi-ai can find the key
-    const envMap: Record<string, string> = {
-      anthropic: "ANTHROPIC_API_KEY",
-      openai: "OPENAI_API_KEY",
-      google: "GEMINI_API_KEY",
-      openrouter: "OPENROUTER_API_KEY",
-    };
-    if (envMap[provider]) process.env[envMap[provider]] = key;
+    hydrateProviderEnv(provider, key);
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();

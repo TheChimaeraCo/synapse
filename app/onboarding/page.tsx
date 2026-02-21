@@ -30,6 +30,10 @@ export default function OnboardingPage() {
   const [readyToLive, setReadyToLive] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [started, setStarted] = useState(false);
+  const [telegramStep, setTelegramStep] = useState<"hidden" | "checking" | "prompt" | "waiting" | "done" | "skipped">("hidden");
+  const [telegramBot, setTelegramBot] = useState<{ username: string; firstName: string } | null>(null);
+  const [telegramPending, setTelegramPending] = useState<Array<{ telegramId: string; displayName: string; username?: string }>>([]);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -195,6 +199,19 @@ export default function OnboardingPage() {
       });
       const data = await res.json();
       if (data.ok) {
+        // Ensure gateway is selected before navigating
+        const gwId = localStorage.getItem("synapse-active-gateway");
+        if (!gwId) {
+          try {
+            const gwRes = await gatewayFetch("/api/gateways");
+            const gwData = await gwRes.json();
+            if (gwData.gateways?.length > 0) {
+              const id = gwData.gateways[0]._id;
+              localStorage.setItem("synapse-active-gateway", id);
+              document.cookie = `synapse-active-gateway=${id}; path=/; max-age=31536000; samesite=lax`;
+            }
+          } catch {}
+        }
         // Brief pause for dramatic effect
         await new Promise((r) => setTimeout(r, 1500));
         router.push("/chat");
@@ -206,6 +223,75 @@ export default function OnboardingPage() {
       setCompleting(false);
       setMessages((prev) => [...prev, { role: "assistant", content: "Something went wrong during birth. Try again." }]);
     }
+  };
+
+  // When readyToLive triggers, check Telegram and inject into conversation
+  useEffect(() => {
+    if (readyToLive && telegramStep === "hidden") {
+      checkTelegram();
+    }
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [readyToLive]);
+
+  const checkTelegram = async () => {
+    setTelegramStep("checking");
+    try {
+      const res = await gatewayFetch("/api/onboarding/telegram-test");
+      const data = await res.json();
+      if (data.configured && data.valid) {
+        setTelegramBot(data.bot);
+        if (data.allowed?.length > 0) {
+          // Already whitelisted
+          setTelegramStep("done");
+        } else {
+          // Inject a conversational message about Telegram
+          setTelegramStep("prompt");
+          setMessages((prev) => [...prev, {
+            role: "assistant",
+            content: `Oh nice, I see you set up a Telegram bot for me! 📱 Go ahead and send a message to @${data.bot.username} so I can validate your account. I'll wait here!`,
+          }]);
+          // Start polling immediately
+          startTelegramPoll();
+        }
+      } else {
+        setTelegramStep("skipped");
+      }
+    } catch {
+      setTelegramStep("skipped");
+    }
+  };
+
+  const startTelegramPoll = () => {
+    setTelegramStep("waiting");
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await gatewayFetch("/api/onboarding/telegram-test");
+        const data = await res.json();
+        if (data.pending?.length > 0) {
+          // Auto-approve the first pending user (the owner doing onboarding)
+          const user = data.pending[0];
+          try {
+            await gatewayFetch("/api/onboarding/telegram-test", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "approve", telegramId: user.telegramId }),
+            });
+          } catch {}
+          if (pollRef.current) clearInterval(pollRef.current);
+          setTelegramStep("done");
+          setMessages((prev) => [...prev, {
+            role: "assistant",
+            content: `Got it! ✅ I received your message${user.username ? ` from @${user.username}` : ""} and whitelisted your account. You're all set to chat with me on Telegram anytime!\n\nNow let's make this official...`,
+          }]);
+        }
+        if (data.allowed?.length > 0) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          if (telegramStep !== "done") {
+            setTelegramStep("done");
+          }
+        }
+      } catch {}
+    }, 3000);
   };
 
   const soulFields = Object.entries(soulData).filter(([_, v]) => v && (Array.isArray(v) ? v.length > 0 : true));
@@ -306,14 +392,26 @@ export default function OnboardingPage() {
         </div>
       )}
 
-      {/* Come Alive button */}
-      {readyToLive && !completing && (
+      {/* Come Alive button - shows after telegram is done/skipped, or if no telegram */}
+      {readyToLive && !completing && (telegramStep === "done" || telegramStep === "skipped" || telegramStep === "hidden") && (
         <div className="relative z-10 flex justify-center pb-2">
           <button
             onClick={handleComeAlive}
             className="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-medium rounded-full shadow-lg shadow-blue-900/30 transition-all hover:scale-105 animate-pulse"
           >
             ✦ Come Alive
+          </button>
+        </div>
+      )}
+
+      {/* Waiting for telegram - show subtle skip option */}
+      {readyToLive && !completing && (telegramStep === "prompt" || telegramStep === "waiting") && (
+        <div className="relative z-10 flex justify-center pb-2">
+          <button
+            onClick={() => { setTelegramStep("skipped"); if (pollRef.current) clearInterval(pollRef.current); }}
+            className="text-zinc-500 hover:text-zinc-400 text-xs transition-colors"
+          >
+            Skip Telegram and come alive →
           </button>
         </div>
       )}

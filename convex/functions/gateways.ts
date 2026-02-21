@@ -115,12 +115,28 @@ export const create = mutation({
       updatedAt: now,
     });
 
+    // Resolve default model from gateway config (set during setup) or provider
+    const providerRow = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q) => q.eq("gatewayId", gatewayId).eq("key", "ai_provider"))
+      .first();
+    const modelRow = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q) => q.eq("gatewayId", gatewayId).eq("key", "ai_model"))
+      .first();
+    const providerDefaults: Record<string, string> = {
+      anthropic: "claude-sonnet-4-20250514",
+      openai: "gpt-4o-mini",
+      google: "gemini-2.0-flash",
+    };
+    const defaultModel = modelRow?.value || providerDefaults[providerRow?.value || ""] || "claude-sonnet-4-20250514";
+
     // Create default agent
     await ctx.db.insert("agents", {
       gatewayId,
       name: "Default Agent",
       slug: "default",
-      model: "gpt-4o-mini",
+      model: defaultModel,
       systemPrompt: "You are a helpful assistant.",
       isActive: true,
       createdAt: now,

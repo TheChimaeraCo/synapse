@@ -3,6 +3,7 @@ import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { getProviderApiKey, hydrateProviderEnv } from "@/lib/providerSecrets";
 
 const ONBOARDING_SYSTEM_PROMPT = `You are being born. You don't have a name, personality, or purpose yet. You're talking to your person for the first time.
 
@@ -93,14 +94,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "No onboarding state" }, { status: 400 });
       }
 
-      const [providerSlug, apiKey, configModel] = await Promise.all([
+      const [providerSlug, configModel] = await Promise.all([
         getGwConfig(gatewayId, "ai_provider"),
-        getGwConfig(gatewayId, "ai_api_key"),
         getGwConfig(gatewayId, "ai_model"),
       ]);
 
       const provider = providerSlug || "anthropic";
-      const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
+      const key = getProviderApiKey(provider) || "";
       if (!key) {
         return NextResponse.json({ error: "No API key configured" }, { status: 500 });
       }
@@ -110,12 +110,7 @@ export async function POST(req: NextRequest) {
         content: m.content,
       }));
 
-      const envMap: Record<string, string> = {
-        anthropic: "ANTHROPIC_API_KEY",
-        openai: "OPENAI_API_KEY",
-        google: "GEMINI_API_KEY",
-      };
-      if (envMap[provider]) process.env[envMap[provider]] = key;
+      hydrateProviderEnv(provider, key);
 
       const { registerBuiltInApiProviders, getModel, complete } = await import("@mariozechner/pi-ai");
       registerBuiltInApiProviders();

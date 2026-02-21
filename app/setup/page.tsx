@@ -145,7 +145,7 @@ export default function SetupPage() {
     if (!slugEdited) {
       const slug = val.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       setGatewaySlug(slug);
-      setGatewayWorkspace(`/root/clawd/gateways/${slug}/`);
+      setGatewayWorkspace(`/root/synapse/gateways/${slug}/`);
     }
   };
 
@@ -242,14 +242,15 @@ export default function SetupPage() {
 
   const saveGatewayConfig = async (key: string, value: string) => {
     if (!createdGatewayId) return;
-    await gatewayFetch("/api/config", {
+    const res = await gatewayFetch("/api/setup/save-config", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Gateway-Id": createdGatewayId,
-      },
-      body: JSON.stringify({ key, value }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gatewayId: createdGatewayId, key, value }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      console.error(`Failed to save config "${key}":`, data);
+    }
   };
 
   const handleTestProvider = async () => {
@@ -390,6 +391,24 @@ export default function SetupPage() {
         }
       }
 
+      // Verify gateway exists before completing
+      if (createdGatewayId) {
+        try {
+          const verifyRes = await gatewayFetch("/api/gateways", {
+            headers: { "X-Gateway-Id": createdGatewayId },
+          });
+          const verifyData = await verifyRes.json();
+          const found = verifyData.gateways?.some((g: any) => g._id === createdGatewayId);
+          if (!found) {
+            toast.error("Gateway not found. Please try creating it again.");
+            setStep(2);
+            return;
+          }
+        } catch (e) {
+          console.warn("Gateway verify failed, continuing anyway:", e);
+        }
+      }
+
       await gatewayFetch("/api/config/global", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -400,7 +419,7 @@ export default function SetupPage() {
       document.cookie = "synapse-setup-complete=true; path=/; max-age=86400; samesite=lax";
 
       clearCache();
-      router.push("/chat");
+      router.push("/onboarding");
     } catch {
       toast.error("Failed to complete setup");
     } finally {
@@ -501,7 +520,7 @@ export default function SetupPage() {
             <div>
               <label className="text-sm text-zinc-400 mb-1 block">Workspace Path<InfoTooltip text="Filesystem directory where this gateway stores files. Tools like file browser and shell operate within this path. Must be an absolute path on the server." /></label>
               <Input value={gatewayWorkspace} onChange={(e) => setGatewayWorkspace(e.target.value)}
-                placeholder="/root/clawd/gateways/my-gateway/"
+                placeholder="/root/synapse/gateways/my-gateway/"
                 className="bg-white/[0.04] border-white/10 text-zinc-200 placeholder-zinc-600 rounded-xl font-mono text-xs" />
               <p className="text-zinc-600 text-xs mt-1">Directory for this gateway's files and config.</p>
             </div>

@@ -63,6 +63,7 @@ import type * as functions_watchdogHelpers from "../functions/watchdogHelpers.js
 import type * as functions_webhooks from "../functions/webhooks.js";
 import type * as functions_workerAgents from "../functions/workerAgents.js";
 import type * as http from "../http.js";
+import type * as lib_configCrypto from "../lib/configCrypto.js";
 import type * as lib_costCalculator from "../lib/costCalculator.js";
 import type * as lib_gatewayAuth from "../lib/gatewayAuth.js";
 import type * as lib_validators from "../lib/validators.js";
@@ -129,6 +130,7 @@ declare const fullApi: ApiFromModules<{
   "functions/webhooks": typeof functions_webhooks;
   "functions/workerAgents": typeof functions_workerAgents;
   http: typeof http;
+  "lib/configCrypto": typeof lib_configCrypto;
   "lib/costCalculator": typeof lib_costCalculator;
   "lib/gatewayAuth": typeof lib_gatewayAuth;
   "lib/validators": typeof lib_validators;

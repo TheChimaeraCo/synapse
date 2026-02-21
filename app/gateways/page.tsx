@@ -31,7 +31,7 @@ function CreateGatewayForm({ onCreated, onCancel }: { onCreated: (gatewayId: str
     if (!slug || slug === name.toLowerCase().replace(/[^a-z0-9]+/g, "-")) {
       const newSlug = val.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       setSlug(newSlug);
-      setWorkspacePath(`/root/clawd/gateways/${newSlug}/`);
+      setWorkspacePath(`/root/synapse/gateways/${newSlug}/`);
     }
   };
 
@@ -99,7 +99,7 @@ function CreateGatewayForm({ onCreated, onCancel }: { onCreated: (gatewayId: str
         </div>
         <div>
           <label className="text-sm text-zinc-400 mb-1 block">Workspace Path</label>
-          <input value={workspacePath} onChange={(e) => setWorkspacePath(e.target.value)} placeholder="/root/clawd/gateways/slug/"
+          <input value={workspacePath} onChange={(e) => setWorkspacePath(e.target.value)} placeholder="/root/synapse/gateways/slug/"
             className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-blue-500/50 font-mono text-xs" />
           <p className="text-zinc-600 text-xs mt-1">Directory for this gateway's workspace files.</p>
         </div>
