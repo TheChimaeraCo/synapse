@@ -90,6 +90,7 @@ export default function SetupPage() {
   // Step 3 - Provider
   const [selectedProvider, setSelectedProvider] = useState<string>(cached?.selectedProvider || "anthropic");
   const [providerPhase, setProviderPhase] = useState<"select" | "auth">(cached?.providerPhase || "select");
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const [anthropicAuthMethod, setAnthropicAuthMethod] = useState<AnthropicAuthMethod>(cached?.anthropicAuthMethod || "api_key");
   const [authValues, setAuthValues] = useState<Record<string, string>>(cached?.authValues || {});
   const [showFields, setShowFields] = useState<Record<string, boolean>>({});
@@ -318,14 +319,11 @@ export default function SetupPage() {
         saves.push(["ai_auth_method", anthropicAuthMethod]);
         saves.push(["anthropic_api_key", effectiveKey]);
       }
-      // Save default model based on provider
-      const defaultModels: Record<string, string> = {
-        anthropic: "claude-sonnet-4-20250514",
-        openai: "gpt-4o-mini",
-        google: "gemini-2.0-flash",
-      };
-      if (defaultModels[selectedProvider]) {
-        saves.push(["ai_model", defaultModels[selectedProvider]]);
+      // Save selected model (or provider default)
+      const provider = PROVIDERS.find((p) => p.slug === selectedProvider);
+      const model = selectedModel || provider?.defaultModel || "";
+      if (model) {
+        saves.push(["ai_model", model]);
       }
       if (authValues["base_url"]) saves.push(["ai_base_url", authValues["base_url"]]);
       if (authValues["account_id"]) saves.push(["ai_account_id", authValues["account_id"]]);
@@ -586,7 +584,7 @@ export default function SetupPage() {
             </div>
             <Button onClick={() => {
               if (selectedProvider === "skip") { handleSaveProvider(); }
-              else { setAuthValues({}); setShowFields({}); setApiKeyValid(null); setTestUnverified(false); setProviderPhase("auth"); }
+              else { setAuthValues({}); setShowFields({}); setApiKeyValid(null); setTestUnverified(false); setSelectedModel(""); setProviderPhase("auth"); }
             }} className="w-full">
               {selectedProvider === "skip" ? "Skip" : "Next"}
             </Button>
@@ -650,6 +648,20 @@ export default function SetupPage() {
                   {field.helpText && <p className="text-zinc-600 text-xs mt-1">{field.helpText}</p>}
                 </div>
               ))}
+              {provider.models.length > 1 && (
+                <div>
+                  <label className="text-sm text-zinc-400 mb-1 block">Default Model</label>
+                  <select
+                    value={selectedModel || provider.defaultModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="w-full bg-white/[0.04] border border-white/10 text-zinc-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  >
+                    {provider.models.map((m) => (
+                      <option key={m} value={m} className="bg-zinc-900">{m}{m === provider.defaultModel ? " (recommended)" : ""}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="flex gap-2 items-center">
                 <Button variant="outline" onClick={handleTestProvider}
                   disabled={loading || !(authValues["api_key"] || authValues["setup_token"])}
