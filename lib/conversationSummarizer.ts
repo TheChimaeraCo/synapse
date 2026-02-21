@@ -1,6 +1,7 @@
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { reflectOnConversation } from "@/lib/soulReflection";
 
 const SUMMARY_MODELS: Record<string, string> = {
   anthropic: "claude-3-haiku-20240307",
@@ -182,6 +183,11 @@ export async function summarizeConversation(
         console.error("[conversationSummarizer] Failed to store user facts:", err);
       }
     }
+
+    // Fire-and-forget soul reflection
+    reflectOnConversation(conversationId, convo.gatewayId).catch((err) =>
+      console.error("[conversationSummarizer] Soul reflection failed:", err)
+    );
   } catch (err) {
     console.error("[conversationSummarizer] Error:", err);
   }

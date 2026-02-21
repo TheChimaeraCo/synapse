@@ -285,8 +285,23 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
     }
   } catch {}
 
+  // --- Soul Evolution insights ---
+  let soulEvolutionSection = "";
+  try {
+    const soulInsights = await convexClient.query(api.functions.soulEvolution.getForPrompt, {
+      agentId,
+      limit: 20,
+    });
+    if (soulInsights && soulInsights.length > 0) {
+      const insightLines = soulInsights.map((i: any) => `- ${i.insight}`).join("\n");
+      soulEvolutionSection = `\n\n## Evolved Understanding\nThese are patterns and dynamics you've learned over time through conversations:\n${insightLines}`;
+    }
+  } catch (err) {
+    console.error("[Context] Failed to load soul evolution:", err);
+  }
+
   const basePrompt = useTemplateBase ? buildDefaultSystemPrompt() : agent.systemPrompt;
-  let identitySection = basePrompt + soulSection + styleSection + onboardingPrompt;
+  let identitySection = basePrompt + soulSection + soulEvolutionSection + styleSection + onboardingPrompt;
   console.log(`[Context] Layer 1 (Identity): ${estimateTokens(identitySection)} tokens`);
 
   // --- Layer 2: Knowledge (semantic search when available) ---

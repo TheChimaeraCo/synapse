@@ -834,6 +834,22 @@ export default defineSchema({
     .index("by_message", ["messageId"])
     .index("by_user_message", ["userId", "messageId"]),
 
+  // --- SOUL EVOLUTION ---
+  soulEvolution: defineTable({
+    agentId: v.id("agents"),
+    gatewayId: v.id("gateways"),
+    category: v.string(),
+    insight: v.string(),
+    confidence: v.number(),
+    sourceConversationId: v.optional(v.id("conversations")),
+    reinforcementCount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_agent", ["agentId", "createdAt"])
+    .index("by_agent_category", ["agentId", "category", "createdAt"])
+    .index("by_gateway", ["gatewayId", "createdAt"]),
+
   // --- CHANNEL MESSAGES (raw audit trail) ---
   channelMessages: defineTable({
     gatewayId: v.id("gateways"),

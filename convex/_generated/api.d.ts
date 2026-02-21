@@ -51,6 +51,7 @@ import type * as functions_scheduledMessages from "../functions/scheduledMessage
 import type * as functions_scheduler from "../functions/scheduler.js";
 import type * as functions_sessions from "../functions/sessions.js";
 import type * as functions_skills from "../functions/skills.js";
+import type * as functions_soulEvolution from "../functions/soulEvolution.js";
 import type * as functions_systemAlerts from "../functions/systemAlerts.js";
 import type * as functions_tasks from "../functions/tasks.js";
 import type * as functions_telegramAuth from "../functions/telegramAuth.js";
@@ -118,6 +119,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduler": typeof functions_scheduler;
   "functions/sessions": typeof functions_sessions;
   "functions/skills": typeof functions_skills;
+  "functions/soulEvolution": typeof functions_soulEvolution;
   "functions/systemAlerts": typeof functions_systemAlerts;
   "functions/tasks": typeof functions_tasks;
   "functions/telegramAuth": typeof functions_telegramAuth;
