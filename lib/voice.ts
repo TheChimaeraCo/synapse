@@ -117,6 +117,9 @@ export async function textToSpeech(text: string, config: VoiceConfig): Promise<B
 
     if (!res.ok) {
       const err = await res.text();
+      if (res.status === 402) {
+        throw new Error("ElevenLabs requires a paid plan to use library voices via the API. Please upgrade your subscription at elevenlabs.io or switch to a different TTS provider.");
+      }
       throw new Error(`ElevenLabs TTS failed (${res.status}): ${err}`);
     }
 
