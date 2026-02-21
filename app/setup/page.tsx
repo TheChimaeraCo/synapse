@@ -318,6 +318,15 @@ export default function SetupPage() {
         saves.push(["ai_auth_method", anthropicAuthMethod]);
         saves.push(["anthropic_api_key", effectiveKey]);
       }
+      // Save default model based on provider
+      const defaultModels: Record<string, string> = {
+        anthropic: "claude-sonnet-4-20250514",
+        openai: "gpt-4o-mini",
+        google: "gemini-2.0-flash",
+      };
+      if (defaultModels[selectedProvider]) {
+        saves.push(["ai_model", defaultModels[selectedProvider]]);
+      }
       if (authValues["base_url"]) saves.push(["ai_base_url", authValues["base_url"]]);
       if (authValues["account_id"]) saves.push(["ai_account_id", authValues["account_id"]]);
 

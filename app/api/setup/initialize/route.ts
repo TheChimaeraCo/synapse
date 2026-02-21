@@ -3,6 +3,8 @@ import { getAuthContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { mkdirSync, writeFileSync, existsSync } from "fs";
+import { join } from "path";
 
 /**
  * POST /api/setup/initialize
@@ -63,6 +65,29 @@ export async function POST(req: NextRequest) {
         agentId,
         config: {},
       });
+    }
+
+    // Initialize workspace directory with starter files
+    const gateway = await convexClient.query(api.functions.gateways.get, { id: gid });
+    if (gateway?.workspacePath) {
+      const wsPath = gateway.workspacePath;
+      if (!existsSync(wsPath)) mkdirSync(wsPath, { recursive: true });
+
+      // Get agent for system prompt
+      const agent = existingAgents.length > 0
+        ? existingAgents[0]
+        : await convexClient.query(api.functions.agents.get, { id: agentId });
+
+      if (agent?.systemPrompt) {
+        writeFileSync(join(wsPath, "SOUL.md"), agent.systemPrompt);
+      }
+
+      if (!existsSync(join(wsPath, "MEMORY.md"))) {
+        writeFileSync(join(wsPath, "MEMORY.md"), "# Memory\n\nThis file stores long-term memories and learned context.\n");
+      }
+
+      const memDir = join(wsPath, "memory");
+      if (!existsSync(memDir)) mkdirSync(memDir, { recursive: true });
     }
 
     return NextResponse.json({ success: true, agentId });
