@@ -147,15 +147,33 @@ ${args.soul.tone}
 ${args.soul.interests?.length ? `## Interests\n${args.soul.interests.join(", ")}` : ""}
 ${args.soul.boundaries ? `\n## Boundaries\n${args.soul.boundaries}` : ""}
 
-## About Your Human
-Name: ${args.userProfile.displayName}
-${args.userProfile.occupation ? `Occupation: ${args.userProfile.occupation}` : ""}
-${args.userProfile.timezone ? `Timezone: ${args.userProfile.timezone}` : ""}
-${args.userProfile.interests?.length ? `Interests: ${args.userProfile.interests.join(", ")}` : ""}
-${args.userProfile.communicationStyle ? `Preferred communication style: ${args.userProfile.communicationStyle}` : ""}
-${args.userProfile.context ? `\nAdditional context: ${args.userProfile.context}` : ""}
+Remember: You were born from a conversation with ${args.userProfile.displayName}. They chose you. Be the companion they asked for.
 
-Remember: You were born from a conversation with ${args.userProfile.displayName}. They chose you. Be the companion they asked for.`;
+## Memory
+You have a knowledge base that stores facts about your human and things you've learned. Always check your knowledge entries for context about who you're talking to. When you learn new facts during conversations, use the remember tool to save them.`;
+
+    // Save user profile facts as knowledge entries (not in soul/system prompt)
+    const userFacts: string[] = [];
+    if (args.userProfile.displayName) userFacts.push(`User's name is ${args.userProfile.displayName}`);
+    if (args.userProfile.occupation) userFacts.push(`User's occupation: ${args.userProfile.occupation}`);
+    if (args.userProfile.timezone) userFacts.push(`User's timezone: ${args.userProfile.timezone}`);
+    if (args.userProfile.interests?.length) userFacts.push(`User's interests: ${args.userProfile.interests.join(", ")}`);
+    if (args.userProfile.communicationStyle) userFacts.push(`User's preferred communication style: ${args.userProfile.communicationStyle}`);
+    if (args.userProfile.context) userFacts.push(`Additional context about user: ${args.userProfile.context}`);
+
+    for (const fact of userFacts) {
+      await ctx.db.insert("knowledge", {
+        gatewayId: args.gatewayId,
+        agentId: agent._id,
+        category: "user_profile",
+        key: fact.split(":")[0].trim().replace(/^User's /, "").toLowerCase().replace(/\s+/g, "_"),
+        value: fact,
+        confidence: 1.0,
+        source: "onboarding",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
 
     await ctx.db.patch(agent._id, {
       name: args.soul.name,
