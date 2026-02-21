@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery } from "../_generated/server";
-import { action, internalAction } from "../_generated/server";
+import { action } from "../_generated/server";
+import { decodeConfigForRead, encodeConfigForStorage } from "../lib/configCrypto";
 
 export const get = query({
   args: { key: v.string() },
@@ -9,7 +10,8 @@ export const get = query({
       .query("systemConfig")
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .first();
-    return row?.value ?? null;
+    if (!row) return null;
+    return await decodeConfigForRead(args.key, row.value);
   },
 });
 
@@ -20,26 +22,28 @@ export const getInternal = internalQuery({
       .query("systemConfig")
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .first();
-    return row?.value ?? null;
+    if (!row) return null;
+    return await decodeConfigForRead(args.key, row.value);
   },
 });
 
 export const set = mutation({
   args: { key: v.string(), value: v.string() },
   handler: async (ctx, args) => {
+    const encodedValue = await encodeConfigForStorage(args.key, args.value);
     const existing = await ctx.db
       .query("systemConfig")
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .first();
     if (existing) {
       await ctx.db.patch(existing._id, {
-        value: args.value,
+        value: encodedValue,
         updatedAt: Date.now(),
       });
     } else {
       await ctx.db.insert("systemConfig", {
         key: args.key,
-        value: args.value,
+        value: encodedValue,
         updatedAt: Date.now(),
       });
     }
@@ -55,7 +59,7 @@ export const getMultiple = query({
         .query("systemConfig")
         .withIndex("by_key", (q) => q.eq("key", key))
         .first();
-      if (row) result[key] = row.value;
+      if (row) result[key] = await decodeConfigForRead(key, row.value);
     }
     return result;
   },
@@ -67,7 +71,7 @@ export const getAll = query({
     const rows = await ctx.db.query("systemConfig").collect();
     const result: Record<string, string> = {};
     for (const row of rows) {
-      result[row.key] = row.value;
+      result[row.key] = await decodeConfigForRead(row.key, row.value);
     }
     return result;
   },
@@ -80,7 +84,7 @@ export const getByPrefix = query({
     const result: Record<string, string> = {};
     for (const row of all) {
       if (row.key.startsWith(args.prefix)) {
-        result[row.key] = row.value;
+        result[row.key] = await decodeConfigForRead(row.key, row.value);
       }
     }
     return result;
@@ -94,7 +98,9 @@ export const isSetupComplete = query({
       .query("systemConfig")
       .withIndex("by_key", (q) => q.eq("key", "setup_complete"))
       .first();
-    return row?.value === "true";
+    if (!row) return false;
+    const value = await decodeConfigForRead("setup_complete", row.value);
+    return value === "true";
   },
 });
 

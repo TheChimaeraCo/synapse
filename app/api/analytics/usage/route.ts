@@ -10,11 +10,6 @@ export async function GET(req: NextRequest) {
     const convex = getConvexClient();
 
     // Get message counts
-    const now = Date.now();
-    const dayAgo = now - 24 * 60 * 60 * 1000;
-    const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
-
-    // Fetch recent messages for counting
     let messagesDay = 0;
     let messagesMonth = 0;
     let sessionsCreated = 0;
@@ -23,8 +18,8 @@ export async function GET(req: NextRequest) {
       const stats = await convex.query(api.functions.dashboard.getStats, {
         gatewayId: gatewayId as Id<"gateways">,
       });
-      messagesDay = stats?.messagesToday ?? 0;
-      messagesMonth = stats?.messagesTotal ?? 0;
+      messagesDay = stats?.todayMessages ?? 0;
+      messagesMonth = stats?.totalMessages ?? 0;
       sessionsCreated = stats?.activeSessions ?? 0;
     } catch (e) {
       // Dashboard stats may not exist

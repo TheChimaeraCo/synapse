@@ -5,7 +5,7 @@ import { classifyTopic } from "@/lib/topicClassifier";
 import { summarizeConversation } from "@/lib/conversationSummarizer";
 
 const CONVERSATION_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours - only timeout after a long absence, AI classifier handles topic shifts
-const CLASSIFY_EVERY_N_MESSAGES = 6; // Run AI topic classification after N messages (conservative)
+const CLASSIFY_AFTER_N_MESSAGES = 3; // Start classifying early so topic shifts are detected promptly
 
 /**
  * Resolve the current conversation for a message.
@@ -32,17 +32,19 @@ export async function resolveConversation(
 
   // Check time gap
   const gap = Date.now() - activeConvo.lastMessageAt;
+  const isLongGap = gap >= CONVERSATION_TIMEOUT_MS;
 
   // Check if user explicitly wants a new conversation
   const wantsNew = detectNewConversationIntent(newMessage);
 
   // Determine if we should run AI topic classification
   let topicShifted = false;
+  let resumeRelated = false;
   let classificationResult: { sameTopic: boolean; suggestedTitle?: string; newTags?: string[] } | null = null;
   const nextCount = activeConvo.messageCount + 1;
-  const shouldClassify = nextCount >= CLASSIFY_EVERY_N_MESSAGES && (nextCount - CLASSIFY_EVERY_N_MESSAGES) % 3 === 0;
+  const shouldClassify = nextCount >= CLASSIFY_AFTER_N_MESSAGES;
   console.log(`[ConvoSegmentation] Message ${nextCount} in conversation, shouldClassify: ${shouldClassify}`);
-  if (!wantsNew && gap < CONVERSATION_TIMEOUT_MS && shouldClassify) {
+  if (!wantsNew && !isLongGap && shouldClassify) {
     try {
       // Get recent messages for classification + include the new incoming message
       const recentMsgs = await convexClient.query(api.functions.messages.listByConversation, {
@@ -80,15 +82,40 @@ export async function resolveConversation(
     }
   }
 
+  // If the user returns after a long gap, decide whether this is a continuation chain.
+  // We still start a new conversation segment, but can link it to preserve continuity.
+  if (!wantsNew && isLongGap) {
+    try {
+      if (activeConvo.summary && checkTopicRelation(activeConvo.summary, newMessage)) {
+        resumeRelated = true;
+      } else {
+        const resumeClassification = await classifyTopic(
+          [
+            ...(activeConvo.summary ? [{ role: "assistant", content: activeConvo.summary }] : []),
+            { role: "user", content: newMessage },
+          ],
+          { title: activeConvo.title, tags: activeConvo.tags, summary: activeConvo.summary },
+          gatewayId as string
+        );
+        resumeRelated = !!resumeClassification.sameTopic;
+      }
+      if (resumeRelated) {
+        console.log("[ConvoSegmentation] Long-gap message appears to continue previous topic; chaining new segment.");
+      }
+    } catch (err) {
+      console.error("[ConvoSegmentation] Long-gap relation check failed:", err);
+    }
+  }
+
   // Under timeout AND no explicit intent AND no topic shift - same conversation
-  if (gap < CONVERSATION_TIMEOUT_MS && !wantsNew && !topicShifted) {
+  if (!isLongGap && !wantsNew && !topicShifted) {
     await convexClient.mutation(api.functions.conversations.updateMessageCount, { id: activeConvo._id });
     return activeConvo._id;
   }
 
-  // Topic shift, timeout, or explicit intent - close and create new conversation
-  // Always chain conversations in the same session (they share context history)
-  const isRelated = gap < CONVERSATION_TIMEOUT_MS;
+  // Topic shift, timeout, or explicit intent - close and create new conversation.
+  // Chain only when this is a true continuation of the same topic.
+  const isRelated = !wantsNew && !topicShifted && (resumeRelated || !isLongGap);
 
   // Close the old conversation
   await convexClient.mutation(api.functions.conversations.close, {

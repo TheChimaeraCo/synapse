@@ -7,10 +7,12 @@ import type { Id } from "@/convex/_generated/dataModel";
 
 export async function GET(req: NextRequest) {
   try {
-    const ctx = await getGatewayContext(req);
+    const { gatewayId } = await getGatewayContext(req);
+    const gid = gatewayId as Id<"gateways">;
     
     // Get the first session for this gateway to preview context
     const sessions = await convexClient.query(api.functions.sessions.list, {
+      gatewayId: gid,
       limit: 1,
     });
     
@@ -18,7 +20,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ systemPrompt: "No sessions available for preview." });
     }
 
-    const agents = await convexClient.query(api.functions.agents.list, {});
+    const agents = await convexClient.query(api.functions.agents.list, { gatewayId: gid });
     const agent = agents?.[0];
     if (!agent) {
       return NextResponse.json({ systemPrompt: "No agent configured." });

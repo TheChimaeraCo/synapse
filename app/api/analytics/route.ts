@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
     // Sessions per day
     const sessionsByDay: Record<string, number> = {};
     for (const s of sessions) {
-      const ts = s.createdAt || s._creationTime || 0;
+      const ts = s.lastMessageAt || 0;
       if (ts < thirtyDaysAgo) continue;
       const day = new Date(ts).toISOString().slice(0, 10);
       sessionsByDay[day] = (sessionsByDay[day] || 0) + 1;

@@ -121,7 +121,7 @@ export const getRecentByUser = query({
     // Get this user's sessions
     const sessions = await ctx.db
       .query("sessions")
-      .withIndex("by_gateway", (q) => q.eq("gatewayId", args.gatewayId))
+      .withIndex("by_gatewayId", (q) => q.eq("gatewayId", args.gatewayId))
       .collect();
     const userSessionIds = new Set(
       sessions.filter((s) => s.userId === args.userId).map((s) => s._id)

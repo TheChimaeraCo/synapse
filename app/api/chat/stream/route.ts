@@ -9,7 +9,6 @@ import { executeTools, toProviderTools } from "@/lib/toolExecutor";
 import { selectModel, DEFAULT_ROUTING } from "@/lib/modelRouter";
 import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { parseSlashCommand } from "@/lib/slashCommands";
-import { postResponseHook } from "@/lib/postResponseHook";
 import { getThinkingParams, type ThinkingLevel } from "@/lib/thinkingLevels";
 import { resolveConversation } from "@/lib/conversationManager";
 import { createHash } from "crypto";
@@ -192,10 +191,11 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       try {
         controller.enqueue(encoder.encode(sseEvent({ type: "typing", status: true })));
+        let responseConversationId = conversationId;
 
         // Build context
         const { systemPrompt: rawSystemPrompt, messages: claudeMessages } = await buildContext(
-          sessionId, sessionDoc.agentId, sanitizedContent, 5000, conversationId
+          sessionId, sessionDoc.agentId, sanitizedContent, 5000, responseConversationId
         );
 
         // Layer 4: Embed canary token in system prompt
@@ -318,7 +318,7 @@ export async function POST(req: NextRequest) {
             const msgId = await convexClient.mutation(api.functions.messages.create, {
               gatewayId: gatewayId as Id<"gateways">, sessionId: sessionId as Id<"sessions">, agentId: sessionDoc.agentId,
               role: "assistant", content: cached.response, tokens: cached.tokens, cost: cached.cost, model: cached.model, latencyMs: 0,
-              
+              conversationId: responseConversationId,
             });
             controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId })));
             controller.close();
@@ -330,6 +330,7 @@ export async function POST(req: NextRequest) {
         let fullContent = "";
         let usage = { input: 0, output: 0 };
         let streamedTokenEstimate = 0;
+        let movedUserMessageToNewConversation = false;
         const MAX_TOOL_ROUNDS = 5;
 
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -386,8 +387,27 @@ export async function POST(req: NextRequest) {
             gatewayId: gatewayId as string,
             agentId: sessionDoc.agentId as string,
             sessionId: sessionId as string,
+            userId: userId as string,
+            userRole: ctx.role,
           };
           const toolResults = await executeTools(toolCalls, toolContext, enabledTools as any);
+          const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
+          if (switchedConvoId) {
+            responseConversationId = switchedConvoId;
+            delete (toolContext as any).__newConversationId;
+            console.log(`[ConvoSegmentation] Tool requested conversation switch -> ${responseConversationId}`);
+            if (!movedUserMessageToNewConversation) {
+              try {
+                await convexClient.mutation(api.functions.messages.updateConversationId, {
+                  id: messageId as Id<"messages">,
+                  conversationId: responseConversationId,
+                });
+                movedUserMessageToNewConversation = true;
+              } catch (err) {
+                console.error("[ConvoSegmentation] Failed to move triggering user message:", err);
+              }
+            }
+          }
 
           // Complete worker agents
           for (let i = 0; i < toolResults.length; i++) {
@@ -415,7 +435,7 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          // Topic classification handled async by postResponseHook
+          // Topic segmentation is handled before message insert via resolveConversation.
         }
 
         const latencyMs = Date.now() - startMs;
@@ -443,7 +463,7 @@ export async function POST(req: NextRequest) {
           cost,
           model: modelId,
           latencyMs,
-          conversationId,
+          conversationId: responseConversationId,
         });
 
         await convexClient.mutation(api.functions.usage.record, {
@@ -467,10 +487,6 @@ export async function POST(req: NextRequest) {
 
         extractKnowledge(msgId, sessionDoc.agentId, gatewayId as Id<"gateways">, sessionId as Id<"sessions">).catch(console.error);
 
-        // Fire async topic classification (non-blocking)
-        postResponseHook(sessionId as string, gatewayId as string).catch((err) =>
-          console.error("[PostResponseHook] Error:", err)
-        );
       } catch (err: any) {
         console.error("SSE stream error:", err);
         controller.enqueue(encoder.encode(sseEvent({ type: "error", message: err.message || "Stream error" })));

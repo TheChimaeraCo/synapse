@@ -157,7 +157,7 @@ export const deleteSession = mutation({
     // Delete all messages in this session
     const messages = await ctx.db
       .query("messages")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.id))
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.id))
       .collect();
     for (const msg of messages) {
       await ctx.db.delete(msg._id);
@@ -165,7 +165,7 @@ export const deleteSession = mutation({
     // Delete conversations
     const convos = await ctx.db
       .query("conversations")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.id))
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.id))
       .collect();
     for (const c of convos) {
       await ctx.db.delete(c._id);

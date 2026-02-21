@@ -7,6 +7,12 @@ export async function register() {
     // Validate environment variables
     const { validateEnv } = await import("./lib/env");
     validateEnv();
+    try {
+      const { initLicenseValidation } = await import("./lib/license");
+      initLicenseValidation();
+    } catch (err) {
+      console.error("[instrumentation] Failed to start license validation:", err);
+    }
     // Delay slightly to let Convex backend fully initialize
     setTimeout(async () => {
       try {
@@ -28,6 +34,12 @@ export async function register() {
         console.log("[instrumentation] Telegram bot stopped");
       } catch (err) {
         console.error("[instrumentation] Error stopping Telegram bot:", err);
+      }
+      try {
+        const { stopLicenseValidation } = await import("./lib/license");
+        stopLicenseValidation();
+      } catch (err) {
+        console.error("[instrumentation] Error stopping license validation:", err);
       }
       console.log("[instrumentation] Shutdown complete");
       process.exit(0);

@@ -4,7 +4,7 @@ All the configuration options available in Synapse.
 
 ## Environment Variables
 
-These are set in `.env.local` (never committed to version control).
+These are managed via Convex env vars. For local/runtime compatibility, they are also mirrored in `.env.local` (never committed to version control). Runtime commands (`npm run dev`, `npm run build`, `npm run start`) auto-pull from Convex before boot.
 
 ### Convex (Required)
 
@@ -24,6 +24,7 @@ These are set in `.env.local` (never committed to version control).
 | `AUTH_URL` | Public URL where Synapse is hosted |
 | `NEXTAUTH_URL` | Same as AUTH_URL (legacy compatibility) |
 | `AUTH_TRUST_HOST` | Set to `true` when behind a reverse proxy |
+| `ENCRYPTION_SECRET` | Optional key for encrypting sensitive config values at rest. Defaults to `AUTH_SECRET` if unset. |
 
 ### Search (Optional)
 

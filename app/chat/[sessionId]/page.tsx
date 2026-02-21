@@ -1,9 +1,7 @@
 "use client";
 
-import { use, useState, useCallback, useEffect } from "react";
+import { use, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { gatewayFetch } from "@/lib/gatewayFetch";
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { ChatInput } from "@/components/chat/ChatInput";
@@ -19,45 +17,13 @@ export default function ChatSessionPage({
   params: Promise<{ sessionId: string }>;
 }) {
   const { sessionId } = use(params);
-  const router = useRouter();
   const { data: session } = useSession();
   const gatewayId = (session?.user as any)?.gatewayId;
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [scrollToSeq, setScrollToSeq] = useState<number | null>(null);
 
-  // Load active conversation for this session
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(`/api/conversations?sessionId=${sessionId}&limit=1`);
-        if (res.ok) {
-          const data = await res.json();
-          const convos = data.conversations || [];
-          if (convos.length > 0 && convos[0].status === "active") {
-            setConversationId(convos[0]._id);
-          }
-        }
-      } catch {}
-    })();
-  }, [sessionId]);
-
-  const handleNewChat = useCallback(async () => {
-    if (!sessionId) return;
-    try {
-      const res = await gatewayFetch("/api/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setConversationId(data.conversationId);
-      }
-    } catch {}
-  }, [sessionId]);
-
-  const handleSelectConversation = useCallback((id: string) => {
-    setConversationId(id);
+  const handleSelectConversation = useCallback((_id: string, startSeq?: number) => {
+    setScrollToSeq(startSeq ?? null);
   }, []);
 
   return (
@@ -76,13 +42,11 @@ export default function ChatSessionPage({
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           sessionId={sessionId}
-          activeConversationId={conversationId}
           onSelectConversation={handleSelectConversation}
-          onNewChat={handleNewChat}
         />
 
         <DropZone sessionId={sessionId}>
-          <ChatWindow sessionId={sessionId} conversationId={conversationId} />
+          <ChatWindow sessionId={sessionId} scrollToSeq={scrollToSeq} />
           {gatewayId && <LiveAgentsPanel sessionId={sessionId} gatewayId={gatewayId} />}
           <ChatInput sessionId={sessionId} />
         </DropZone>

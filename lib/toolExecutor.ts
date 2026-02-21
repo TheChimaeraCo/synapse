@@ -12,6 +12,18 @@ const TOOL_CACHE_TTLS: Record<string, number> = {
   code_execute: 5 * 60 * 1000,      // 5 minutes
 };
 
+const PRIVILEGED_TOOL_ROLES = new Set(["owner", "admin"]);
+const DANGEROUS_TOOLS = new Set([
+  "shell_exec",
+  "convex_deploy",
+  "create_tool",
+  "spawn_agent",
+  "pm2_start",
+  "pm2_stop",
+  "pm2_restart",
+  "pm2_delete",
+]);
+
 function getToolCacheKey(toolName: string, args: Record<string, any>): string | null {
   if (!TOOL_CACHE_TTLS[toolName]) return null;
   const inputHash = createHash("sha256").update(JSON.stringify(args)).digest("hex").slice(0, 16);
@@ -49,6 +61,84 @@ export interface ToolResult {
   toolName: string;
   content: string;
   isError: boolean;
+}
+
+interface ApprovalRow {
+  _id: string;
+  toolName: string;
+  toolArgs: Record<string, any>;
+  status: "pending" | "approved" | "denied";
+}
+
+interface SessionApprovalState {
+  pending: ApprovalRow[];
+  approved: ApprovalRow[];
+  denied: ApprovalRow[];
+}
+
+function canBypassApproval(context: ToolContext): boolean {
+  if (process.env.SYNAPSE_AUTO_APPROVE_TOOLS === "true") return true;
+  const role = (context.userRole || "").toLowerCase();
+  return PRIVILEGED_TOOL_ROLES.has(role);
+}
+
+async function createApprovalRequest(
+  context: ToolContext,
+  toolName: string,
+  toolArgs: Record<string, any>,
+): Promise<string | null> {
+  try {
+    const { convexClient } = await import("@/lib/convex");
+    const { api } = await import("@/convex/_generated/api");
+    const id = await convexClient.mutation(api.functions.approvals.create, {
+      gatewayId: context.gatewayId as any,
+      sessionId: context.sessionId as any,
+      toolName,
+      toolArgs,
+    });
+    return String(id);
+  } catch {
+    return null;
+  }
+}
+
+function stableStringify(value: any): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
+
+function isSameToolRequest(aName: string, aArgs: Record<string, any>, row: ApprovalRow): boolean {
+  if (aName !== row.toolName) return false;
+  return stableStringify(aArgs || {}) === stableStringify(row.toolArgs || {});
+}
+
+async function getSessionApprovalState(context: ToolContext): Promise<SessionApprovalState | null> {
+  if (!context.sessionId) return null;
+  try {
+    const { convexClient } = await import("@/lib/convex");
+    const { api } = await import("@/convex/_generated/api");
+    const sessionId = context.sessionId as any;
+
+    const [pending, approved, denied] = await Promise.all([
+      convexClient.query(api.functions.approvals.getBySessionStatus, { sessionId, status: "pending" }),
+      convexClient.query(api.functions.approvals.getBySessionStatus, { sessionId, status: "approved" }),
+      convexClient.query(api.functions.approvals.getBySessionStatus, { sessionId, status: "denied" }),
+    ]);
+
+    return {
+      pending: pending as any[],
+      approved: approved as any[],
+      denied: denied as any[],
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -117,19 +207,81 @@ export async function executeDynamicTool(
 export async function executeTools(
   toolCalls: ToolCall[],
   context: ToolContext,
-  dbTools?: Array<{ name: string; handlerCode?: string }>,
+  dbTools?: Array<{ name: string; handlerCode?: string; requiresApproval?: boolean }>,
 ): Promise<ToolResult[]> {
   const results: ToolResult[] = [];
+  const approvalState = await getSessionApprovalState(context);
 
-  // Build a map of DB tools with handler code
-  const dbToolMap = new Map<string, string>();
+  // Build a map of DB tools by name
+  const dbToolMap = new Map<string, { handlerCode?: string; requiresApproval?: boolean }>();
   if (dbTools) {
     for (const t of dbTools) {
-      if (t.handlerCode) dbToolMap.set(t.name, t.handlerCode);
+      dbToolMap.set(t.name, {
+        handlerCode: t.handlerCode,
+        requiresApproval: t.requiresApproval,
+      });
     }
   }
 
   for (const call of toolCalls) {
+    const handler = TOOL_REGISTRY.get(call.name);
+    const dbTool = dbToolMap.get(call.name);
+    const requiresApproval = Boolean(handler?.requiresApproval || dbTool?.requiresApproval)
+      || DANGEROUS_TOOLS.has(call.name);
+
+    if (requiresApproval && !canBypassApproval(context)) {
+      const denied = approvalState?.denied.find((row) =>
+        isSameToolRequest(call.name, call.arguments, row)
+      );
+      if (denied) {
+        results.push({
+          toolCallId: call.id,
+          toolName: call.name,
+          content: `Tool "${call.name}" was denied by owner/admin.`,
+          isError: true,
+        });
+        continue;
+      }
+
+      const approved = approvalState?.approved.find((row) =>
+        isSameToolRequest(call.name, call.arguments, row)
+      );
+      if (!approved) {
+        const existingPending = approvalState?.pending.find((row) =>
+          isSameToolRequest(call.name, call.arguments, row)
+        );
+
+        if (existingPending) {
+          results.push({
+            toolCallId: call.id,
+            toolName: call.name,
+            content: `Tool "${call.name}" is waiting for owner/admin approval. Request: ${existingPending._id}.`,
+            isError: true,
+          });
+          continue;
+        }
+
+      const approvalId = await createApprovalRequest(context, call.name, call.arguments);
+        if (approvalId && approvalState) {
+          approvalState.pending.push({
+            _id: approvalId,
+            toolName: call.name,
+            toolArgs: call.arguments,
+            status: "pending",
+          });
+        }
+      results.push({
+        toolCallId: call.id,
+        toolName: call.name,
+        content: approvalId
+          ? `Tool "${call.name}" requires owner/admin approval. Approval request created: ${approvalId}.`
+          : `Tool "${call.name}" requires owner/admin approval.`,
+        isError: true,
+      });
+      continue;
+      }
+    }
+
     // Check tool cache first
     const cacheKey = getToolCacheKey(call.name, call.arguments);
     if (cacheKey) {
@@ -141,7 +293,6 @@ export async function executeTools(
     }
 
     // 1. Check builtin registry first
-    const handler = TOOL_REGISTRY.get(call.name);
     if (handler) {
       try {
         const output = await handler.handler(call.arguments, context);
@@ -155,7 +306,7 @@ export async function executeTools(
     }
 
     // 2. Check DB tools with handlerCode
-    const handlerCode = dbToolMap.get(call.name);
+    const handlerCode = dbTool?.handlerCode;
     if (handlerCode) {
       try {
         const output = await executeDynamicTool(handlerCode, call.arguments, context);

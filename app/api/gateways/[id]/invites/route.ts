@@ -28,7 +28,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     });
     return NextResponse.json({ invites });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }
 
@@ -49,6 +49,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     return NextResponse.json({ inviteId }, { status: 201 });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }

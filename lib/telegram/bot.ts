@@ -6,6 +6,8 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { sendMessage, sendMessageWithButtons, sendTypingAction } from "./send";
+import { executeTools, toProviderTools } from "../toolExecutor";
+import { BUILTIN_TOOLS } from "../builtinTools";
 
 // --- Deduplication ---
 const DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -199,7 +201,7 @@ export function createBot(config: BotConfig): Bot {
       }
 
       // Store user message
-      await convex.mutation(api.functions.messages.create, {
+      const userMessageId = await convex.mutation(api.functions.messages.create, {
         gatewayId,
         sessionId,
         agentId,
@@ -270,12 +272,27 @@ export function createBot(config: BotConfig): Bot {
         const model = getModel(provider as any, modelId as any);
         if (!model) throw new Error(`Model "${modelId}" not found`);
 
+        const enabledTools = await convex.query(api.functions.tools.getEnabled, { gatewayId });
+        const builtinToolDefs = BUILTIN_TOOLS.map((t) => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters,
+        }));
+        const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
+        const allToolDefs = [
+          ...builtinToolDefs.filter((t) => !dbToolNames.has(t.name)),
+          ...enabledTools,
+        ];
+        const providerTools = toProviderTools(allToolDefs as any);
+
         // Build full context (soul, knowledge, memory, messages - same as web chat)
         let systemPrompt: string;
         let claudeMessages: Array<{ role: "user" | "assistant"; content: string }>;
+        let responseConversationId = conversationId;
+        let movedUserMessageToNewConversation = false;
         try {
           const { buildContext } = await import("../contextBuilder");
-          const ctx = await buildContext(sessionId, agentId, text, 5000, conversationId);
+          const ctx = await buildContext(sessionId, agentId, text, 5000, responseConversationId);
           systemPrompt = ctx.systemPrompt;
           claudeMessages = ctx.messages;
         } catch (e) {
@@ -299,6 +316,7 @@ export function createBot(config: BotConfig): Bot {
               ? { role: "user" as const, content: m.content, timestamp: Date.now() }
               : { role: "assistant" as const, content: [{ type: "text" as const, text: m.content }], timestamp: Date.now() }
           ),
+          ...(providerTools ? { tools: providerTools } : {}),
         };
 
         const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
@@ -318,15 +336,61 @@ export function createBot(config: BotConfig): Bot {
         const startMs = Date.now();
         let fullContent = "";
         let usage = { input: 0, output: 0 };
+        const MAX_TOOL_ROUNDS = 5;
 
         try {
-          const stream = streamSimple(model, context, options);
-          for await (const event of stream) {
-            if (event.type === "text_delta") {
-              fullContent += event.delta;
-            } else if (event.type === "done") {
-              usage.input += event.message.usage.input;
-              usage.output += event.message.usage.output;
+          for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+            const toolCalls: any[] = [];
+            let roundText = "";
+            const stream = streamSimple(model, context, options);
+            for await (const event of stream) {
+              if (event.type === "text_delta") {
+                roundText += event.delta;
+              } else if (event.type === "toolcall_end") {
+                toolCalls.push(event.toolCall);
+              } else if (event.type === "done") {
+                usage.input += event.message.usage.input;
+                usage.output += event.message.usage.output;
+                context.messages.push(event.message);
+              }
+            }
+            fullContent += roundText;
+            if (toolCalls.length === 0) break;
+
+            const toolContext = {
+              gatewayId: gatewayId as string,
+              agentId: agentId as string,
+              sessionId: sessionId as string,
+              userRole: "viewer",
+            };
+            const toolResults = await executeTools(toolCalls, toolContext, allToolDefs as any);
+            const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
+            if (switchedConvoId) {
+              responseConversationId = switchedConvoId;
+              delete (toolContext as any).__newConversationId;
+              console.log(`[telegram] Tool requested conversation switch -> ${responseConversationId}`);
+              if (!movedUserMessageToNewConversation) {
+                try {
+                  await convex.mutation(api.functions.messages.updateConversationId, {
+                    id: userMessageId as Id<"messages">,
+                    conversationId: responseConversationId,
+                  });
+                  movedUserMessageToNewConversation = true;
+                } catch (err) {
+                  console.error("[telegram] Failed to move triggering user message:", err);
+                }
+              }
+            }
+
+            for (const result of toolResults) {
+              context.messages.push({
+                role: "toolResult" as const,
+                toolCallId: result.toolCallId,
+                toolName: result.toolName,
+                content: [{ type: "text" as const, text: result.content }],
+                isError: result.isError,
+                timestamp: Date.now(),
+              });
             }
           }
         } finally {
@@ -354,7 +418,7 @@ export function createBot(config: BotConfig): Bot {
           cost,
           model: modelId,
           latencyMs,
-          conversationId,
+          conversationId: responseConversationId,
         });
 
         // Record usage

@@ -18,8 +18,8 @@ import { EmptyKnowledgeIllustration } from "@/components/ui/EmptyStates";
 
 interface KnowledgeEntry {
   _id: string;
-  gatewayId: string;
-  agentId: string;
+  gatewayId?: string;
+  agentId?: string;
   key: string;
   value: string;
   category?: string;

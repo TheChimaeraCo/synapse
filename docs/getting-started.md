@@ -32,7 +32,21 @@ Run the interactive setup wizard:
 npm run init
 ```
 
-This walks you through Convex configuration, environment variables, and initial deployment. Skip to [First Run](#first-run) after completing it.
+This wizard asks whether you want **self-hosted Convex** or **Convex Cloud**, runs the matching flow, and syncs setup environment variables into Convex env vars (with `.env.local` retained for runtime compatibility). Skip to [First Run](#first-run) after completing it.
+
+You can also force a mode from CLI:
+
+```bash
+npm run init -- --cloud
+npm run init -- --self-hosted
+```
+
+Manual env sync helpers:
+
+```bash
+npm run env:pull
+npm run env:push
+```
 
 ### 4. Manual Setup
 

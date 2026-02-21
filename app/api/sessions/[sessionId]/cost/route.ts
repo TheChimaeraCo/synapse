@@ -8,7 +8,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sess
   try {
     await getGatewayContext(req);
     const { sessionId } = await params;
-    const messages = await convexClient.query(api.functions.messages.listBySession, {
+    const messages = await convexClient.query(api.functions.messages.getRecent, {
       sessionId: sessionId as Id<"sessions">,
       limit: 10000,
     });

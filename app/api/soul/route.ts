@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGatewayContext, GatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 
 export async function GET(req: NextRequest) {
   try {
     const ctx = await getGatewayContext(req);
+    const gatewayId = ctx.gatewayId as Id<"gateways">;
     const soul = await convexClient.query(api.functions.onboarding.getSoul, {
-      gatewayId: ctx.gatewayId,
+      gatewayId,
     });
     return NextResponse.json({ soul: soul || null });
   } catch (err) {
@@ -19,6 +21,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const ctx = await getGatewayContext(req);
+    const gatewayId = ctx.gatewayId as Id<"gateways">;
     const { soul } = await req.json();
     
     if (!soul) {
@@ -26,7 +29,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Get agent for this gateway
-    const agents = await convexClient.query(api.functions.agents.list, {});
+    const agents = await convexClient.query(api.functions.agents.list, { gatewayId });
     const agent = agents?.[0];
     if (!agent) {
       return NextResponse.json({ error: "No agent found" }, { status: 404 });
@@ -34,7 +37,7 @@ export async function POST(req: NextRequest) {
 
     // Check if soul exists
     const existing = await convexClient.query(api.functions.onboarding.getSoul, {
-      gatewayId: ctx.gatewayId,
+      gatewayId,
     });
 
     if (existing) {
@@ -44,7 +47,7 @@ export async function POST(req: NextRequest) {
         if (soul[field]) {
           await convexClient.mutation(api.functions.knowledge.upsert, {
             agentId: agent._id,
-            gatewayId: ctx.gatewayId,
+            gatewayId,
             category: "identity",
             key: field,
             value: soul[field],
@@ -56,7 +59,7 @@ export async function POST(req: NextRequest) {
     } else {
       // Create new soul
       await convexClient.mutation(api.functions.onboarding.completeSoul, {
-        gatewayId: ctx.gatewayId,
+        gatewayId,
         userId: undefined as any,
         soul: {
           name: soul.name || "Agent",

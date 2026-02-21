@@ -39,7 +39,7 @@ export async function PATCH(
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }
 
@@ -59,6 +59,6 @@ export async function DELETE(
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }

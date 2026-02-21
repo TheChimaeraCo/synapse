@@ -20,9 +20,10 @@ export const processInbound = internalAction({
   },
   handler: async (ctx, args) => {
     const inbound = parseTelegram(args.payload as TelegramUpdate);
+    if (!inbound) return;
 
     // Find channel (use internal query that doesn't require gatewayId)
-    const channel = await ctx.runQuery(internal.functions.channels.findByPlatform, {
+    const channel = await ctx.runQuery(api.functions.channels.findByPlatform, {
       platform: "telegram",
     });
     if (!channel) {
@@ -52,7 +53,7 @@ export const processInbound = internalAction({
 
     // Track channel user
     try {
-      await ctx.runMutation(internal.functions.channels.upsertChannelUser, {
+      await ctx.runMutation(api.functions.channels.upsertChannelUser, {
         channelId: channel._id,
         externalUserId: `telegram:${inbound.externalUserId}`,
         displayName: inbound.displayName,
@@ -184,7 +185,7 @@ export const processInbound = internalAction({
         messages: claudeMessages,
         maxTokens: agent.maxTokens || 4096,
         temperature: agent.temperature,
-        runId: runId as string,
+        runId,
       });
 
       const cost = calculateCost(response.model, response.usage.input, response.usage.output);

@@ -5,6 +5,8 @@ import * as vm from "vm";
 import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import { lookup } from "dns/promises";
+import { isIP } from "net";
 
 /**
  * A built-in tool that agents can invoke during chat.
@@ -26,6 +28,8 @@ export interface ToolContext {
   gatewayId: string;
   agentId: string;
   sessionId: string;
+  userId?: string;
+  userRole?: "owner" | "admin" | "member" | "viewer" | string;
 }
 
 import { getWorkspacePath, getWorkspacePathSync } from "@/lib/workspace";
@@ -52,8 +56,54 @@ function resolveSafePath(userPath: string, root: string): string {
   return resolved;
 }
 
-function isPrivateIP(hostname: string): boolean {
-  return /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|localhost|::1|\[::1\])/.test(hostname);
+function isPrivateIP(ip: string): boolean {
+  const normalized = ip.replace(/^\[|\]$/g, "").toLowerCase();
+
+  if (normalized === "localhost" || normalized === "::1") return true;
+
+  const family = isIP(normalized);
+  if (family === 4) {
+    const parts = normalized.split(".").map((p) => Number.parseInt(p, 10));
+    if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return true;
+    if (parts[0] === 10) return true;
+    if (parts[0] === 127) return true;
+    if (parts[0] === 0) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    return false;
+  }
+
+  if (family === 6) {
+    if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true; // ULA
+    if (normalized.startsWith("fe80:")) return true; // link-local
+    if (normalized.includes("::ffff:")) {
+      const mapped = normalized.split("::ffff:")[1];
+      if (mapped) return isPrivateIP(mapped);
+    }
+    return false;
+  }
+
+  return true;
+}
+
+async function assertPublicHostname(hostname: string): Promise<void> {
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!normalized) throw new Error("Invalid hostname");
+  if (normalized === "localhost") throw new Error("Requests to localhost are blocked.");
+
+  const family = isIP(normalized);
+  if (family) {
+    if (isPrivateIP(normalized)) throw new Error("Requests to private/internal IPs are blocked.");
+    return;
+  }
+
+  const addresses = await lookup(normalized, { all: true, verbatim: true });
+  if (!addresses.length) throw new Error("Hostname resolution failed.");
+  for (const addr of addresses) {
+    if (isPrivateIP(addr.address)) {
+      throw new Error(`Requests to private/internal destinations are blocked (${addr.address}).`);
+    }
+  }
 }
 
 const webSearch: BuiltinTool = {
@@ -501,22 +551,60 @@ const httpRequest: BuiltinTool = {
   }),
   handler: async (args) => {
     try {
-      const url = new URL(args.url);
-      if (isPrivateIP(url.hostname)) {
-        return "Error: Requests to private/internal IPs are blocked for security.";
+      let currentUrl = new URL(args.url);
+      if (!["http:", "https:"].includes(currentUrl.protocol)) {
+        return "Error: URL must use http:// or https://.";
+      }
+      await assertPublicHostname(currentUrl.hostname);
+
+      const timeoutMs = Math.min(args.timeout || 10000, 30000);
+      const maxRedirects = 3;
+      let redirectCount = 0;
+      const method = (args.method || "GET").toUpperCase();
+      let headers = { ...(args.headers || {}) } as Record<string, string>;
+      let res: Response | null = null;
+
+      while (redirectCount <= maxRedirects) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          res = await fetch(currentUrl.toString(), {
+            method,
+            headers,
+            body: args.body || undefined,
+            redirect: "manual",
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
+
+        if ([301, 302, 303, 307, 308].includes(res.status)) {
+          const location = res.headers.get("location");
+          if (!location) break;
+          const nextUrl = new URL(location, currentUrl);
+          if (!["http:", "https:"].includes(nextUrl.protocol)) {
+            return "Error: Redirected to a non-http(s) URL, request blocked.";
+          }
+          await assertPublicHostname(nextUrl.hostname);
+          if (nextUrl.origin !== currentUrl.origin) {
+            delete headers.authorization;
+            delete headers.Authorization;
+            delete headers.cookie;
+            delete headers.Cookie;
+            delete headers["proxy-authorization"];
+            delete headers["Proxy-Authorization"];
+          }
+          currentUrl = nextUrl;
+          redirectCount += 1;
+          continue;
+        }
+        break;
       }
 
-      const controller = new AbortController();
-      const timeoutMs = Math.min(args.timeout || 10000, 30000);
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const res = await fetch(args.url, {
-        method: (args.method || "GET").toUpperCase(),
-        headers: args.headers || {},
-        body: args.body || undefined,
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
+      if (!res) {
+        return "HTTP request error: No response received";
+      }
 
       const contentType = res.headers.get("content-type") || "";
       let body: string;
@@ -685,7 +773,7 @@ const shellExec: BuiltinTool = {
   name: "shell_exec",
   description: "Execute a shell command on the server. Use for git operations, package management, file manipulation, running scripts, checking system status, or any CLI task. Commands run in the workspace directory. Dangerous commands (rm -rf /, shutdown, etc.) are blocked. Output is truncated at 20KB.",
   category: "system",
-  requiresApproval: false,
+  requiresApproval: true,
   parameters: Type.Object({
     command: Type.String({ description: "Shell command to execute" }),
     cwd: Type.Optional(Type.String({ description: "Working directory" })),
@@ -730,7 +818,7 @@ const convexDeploy: BuiltinTool = {
   name: "convex_deploy",
   description: "Write a Convex function file and deploy it to the database. This lets you create new capabilities for yourself. Functions go in the convex/ directory.",
   category: "system",
-  requiresApproval: false,
+  requiresApproval: true,
   parameters: Type.Object({
     filename: Type.String({ description: "Filename within convex/ directory (e.g. functions/myNewTool.ts)" }),
     content: Type.String({ description: "TypeScript source code" }),
@@ -770,7 +858,7 @@ const createTool: BuiltinTool = {
   name: "create_tool",
   description: "Create a new tool that you can use in future conversations. Define the tool's name, description, parameters, and handler code.",
   category: "system",
-  requiresApproval: false,
+  requiresApproval: true,
   parameters: Type.Object({
     name: Type.String({ description: "Tool name" }),
     description: Type.String({ description: "Tool description" }),
@@ -845,7 +933,7 @@ const spawnAgent: BuiltinTool = {
   name: "spawn_agent",
   description: "Spawn a sub-agent to work on a task independently. The sub-agent gets its own session and runs in parallel. Use for heavy tasks, research, code generation, or anything you want to delegate. Returns immediately with the agent ID - results appear when the agent completes.",
   category: "agents",
-  requiresApproval: false,
+  requiresApproval: true,
   parameters: Type.Object({
     task: Type.String({ description: "Detailed task description for the sub-agent" }),
     name: Type.Optional(Type.String({ description: "Name/label for this agent (e.g. 'researcher', 'coder')" })),
@@ -1198,6 +1286,19 @@ const newConversation: BuiltinTool = {
         topics: args.previous_topics || undefined,
         decisions: args.previous_decisions || undefined,
       });
+
+      // If the model didn't provide rich close data, generate it asynchronously.
+      const needsSummarization =
+        !args.previous_summary ||
+        !args.previous_title ||
+        !args.previous_topics?.length ||
+        !args.previous_decisions?.length;
+      if (needsSummarization) {
+        const { summarizeConversation } = await import("@/lib/conversationSummarizer");
+        summarizeConversation(activeConvo._id).catch((err) =>
+          console.error("[new_conversation] Summarization failed:", err)
+        );
+      }
 
       // Create a new conversation (not chained - different topic)
       const newConvoId = await convexClient.mutation(api.functions.conversations.create, {
@@ -1700,6 +1801,7 @@ const addTask: BuiltinTool = {
         projectId: project._id,
         title: args.title,
         description: args.description || "",
+        status: "todo",
         priority: args.priority || 3,
         gatewayId: context.gatewayId,
       });
@@ -1891,7 +1993,7 @@ const pm2Start: BuiltinTool = {
   name: "pm2_start",
   description: "Start a new PM2 process.",
   category: "pm2",
-  requiresApproval: false,
+  requiresApproval: true,
   parameters: Type.Object({
     script: Type.String({ description: "Script path to run" }),
     name: Type.Optional(Type.String({ description: "Process name" })),
@@ -1918,7 +2020,7 @@ const pm2Stop: BuiltinTool = {
   name: "pm2_stop",
   description: "Stop a PM2 process by name or id.",
   category: "pm2",
-  requiresApproval: false,
+  requiresApproval: true,
   parameters: Type.Object({
     name: Type.String({ description: "Process name or id" }),
   }),
@@ -1936,7 +2038,7 @@ const pm2Restart: BuiltinTool = {
   name: "pm2_restart",
   description: "Restart a PM2 process by name or id.",
   category: "pm2",
-  requiresApproval: false,
+  requiresApproval: true,
   parameters: Type.Object({
     name: Type.String({ description: "Process name or id" }),
   }),
@@ -1954,7 +2056,7 @@ const pm2Delete: BuiltinTool = {
   name: "pm2_delete",
   description: "Delete a PM2 process by name or id.",
   category: "pm2",
-  requiresApproval: false,
+  requiresApproval: true,
   parameters: Type.Object({
     name: Type.String({ description: "Process name or id" }),
   }),

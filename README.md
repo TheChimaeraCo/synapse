@@ -94,7 +94,24 @@ npm install
 npm run init
 ```
 
-The init script handles Convex setup, environment configuration, and first-user creation.
+The init script now prompts for `self-hosted` vs `cloud`, runs the matching setup flow, and syncs environment variables into Convex env vars (while keeping `.env.local` for runtime compatibility).
+
+Force a specific mode with:
+
+```bash
+npm run init -- --cloud
+npm run init -- --self-hosted
+```
+
+You can manually sync env vars:
+
+```bash
+# Pull Convex env vars into local compatibility env
+npm run env:pull
+
+# Push local compatibility env vars to Convex
+npm run env:push
+```
 
 ### Manual Setup
 
@@ -147,7 +164,7 @@ See the API channel settings page for full endpoint documentation.
 
 ## Configuration
 
-Core settings live in `.env.local`. See `.env.example` for all available options. Most configuration happens through the web UI:
+Core settings are managed through Convex env vars and mirrored in `.env.local` for local runtime compatibility. `dev`, `build`, and `start` automatically pull from Convex before boot. See `.env.example` for available options. Most configuration happens through the web UI:
 
 - **Gateway settings** - Model, temperature, tools, system prompt, knowledge
 - **Channel settings** - Platform-specific configuration per channel

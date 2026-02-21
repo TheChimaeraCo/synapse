@@ -1,13 +1,19 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
 import { Providers } from "./providers";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-geist-sans" });
+const metadataBase = (() => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000");
+  } catch {
+    return new URL("http://localhost:3000");
+  }
+})();
 
 export const metadata: Metadata = {
+  metadataBase,
   title: "Synapse Hub - AI Gateway Management",
   description: "Self-hosted AI gateway for managing conversations, models, and channels across multiple platforms.",
   openGraph: {
@@ -34,7 +40,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
-      <body className={`${inter.variable} font-sans antialiased overscroll-none overflow-hidden bg-gradient-to-br from-[#0a0a12] via-[#0d0d1a] to-[#0a0f18]`}>
+      <body className="font-sans antialiased overscroll-none overflow-hidden bg-gradient-to-br from-[#0a0a12] via-[#0d0d1a] to-[#0a0f18]">
         <Providers>
           <ErrorBoundary>
             {children}

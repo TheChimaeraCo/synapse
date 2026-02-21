@@ -8,6 +8,7 @@ import { selectModel } from "@/lib/modelRouter";
 import { resolveConversation } from "@/lib/conversationManager";
 import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { BUILTIN_TOOLS } from "@/lib/builtinTools";
+import { extractBearerToken, safeEqualSecret } from "@/lib/security";
 
 // --- Rate Limiting ---
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
@@ -41,9 +42,8 @@ function checkRateLimit(channelId: string): { allowed: boolean; retryAfter?: num
 }
 
 async function validateAndSetup(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) throw { status: 401, message: "Missing Bearer token" };
-  const apiKey = authHeader.slice(7);
+  const apiKey = extractBearerToken(req.headers.get("authorization"));
+  if (!apiKey) throw { status: 401, message: "Missing Bearer token" };
 
   const body = await req.json();
   const { channelId, message, externalUserId, stream, metadata } = body;
@@ -52,7 +52,9 @@ async function validateAndSetup(req: NextRequest) {
   const channel = await convexClient.query(api.functions.channels.get, { id: channelId as Id<"channels"> });
   if (!channel || channel.platform !== "api") throw { status: 404, message: "Invalid API channel" };
   const channelApiKey = (channel as any).apiKey || (channel as any).config?.apiKey;
-  if (!channelApiKey || channelApiKey !== apiKey) throw { status: 403, message: "Invalid API key" };
+  if (!channelApiKey || !safeEqualSecret(apiKey, channelApiKey)) {
+    throw { status: 403, message: "Invalid API key" };
+  }
 
   const gatewayId = channel.gatewayId as Id<"gateways">;
   const agentId = channel.agentId as Id<"agents">;
@@ -76,11 +78,11 @@ async function validateAndSetup(req: NextRequest) {
     console.error("[API Channel] Failed to resolve conversation:", err);
   }
 
-  await convexClient.mutation(api.functions.messages.create, {
+  const userMessageId = await convexClient.mutation(api.functions.messages.create, {
     gatewayId, sessionId, agentId, role: "user", content: message, metadata: metadata || undefined, conversationId,
   });
 
-  return { apiKey, message, stream, gatewayId, agentId, sessionId, conversationId };
+  return { apiKey, message, stream, gatewayId, agentId, sessionId, conversationId, userMessageId };
 }
 
 async function getAIConfig(gatewayId: Id<"gateways">, agentId: Id<"agents">) {
@@ -146,6 +148,8 @@ export async function POST(req: NextRequest) {
 
     const ctx = await validateAndSetup(req);
     const config = await getAIConfig(ctx.gatewayId, ctx.agentId);
+    let responseConversationId = ctx.conversationId;
+    let movedUserMessageToNewConversation = false;
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
@@ -156,7 +160,11 @@ export async function POST(req: NextRequest) {
     if (!model) throw new Error(`Model "${modelId}" not found`);
 
     const { systemPrompt, messages: ctxMessages } = await buildContext(
-      ctx.sessionId as string, ctx.agentId as string, "", 5000, ctx.conversationId
+      ctx.sessionId as Id<"sessions">,
+      ctx.agentId as Id<"agents">,
+      "",
+      5000,
+      responseConversationId,
     );
 
     const providerTools = toProviderTools(config.allToolDefs);
@@ -208,9 +216,30 @@ export async function POST(req: NextRequest) {
 
               controller.enqueue(encoder.encode(sseEvent({ type: "tool_use", tools: toolCalls.map((t: any) => t.name) })));
 
-              const toolResults = await executeTools(toolCalls, {
-                gatewayId: ctx.gatewayId as string, agentId: ctx.agentId as string, sessionId: ctx.sessionId as string,
-              });
+              const toolContext = {
+                gatewayId: ctx.gatewayId as string,
+                agentId: ctx.agentId as string,
+                sessionId: ctx.sessionId as string,
+                userRole: "viewer",
+              };
+              const toolResults = await executeTools(toolCalls, toolContext, config.allToolDefs as any);
+              const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
+              if (switchedConvoId) {
+                responseConversationId = switchedConvoId;
+                delete (toolContext as any).__newConversationId;
+                console.log(`[API Channel] Tool requested conversation switch -> ${responseConversationId}`);
+                if (!movedUserMessageToNewConversation) {
+                  try {
+                    await convexClient.mutation(api.functions.messages.updateConversationId, {
+                      id: ctx.userMessageId as Id<"messages">,
+                      conversationId: responseConversationId,
+                    });
+                    movedUserMessageToNewConversation = true;
+                  } catch (err) {
+                    console.error("[API Channel] Failed to move triggering user message:", err);
+                  }
+                }
+              }
               for (const result of toolResults) {
                 aiContext.messages.push({
                   role: "toolResult", toolCallId: result.toolCallId, toolName: result.toolName,
@@ -222,7 +251,7 @@ export async function POST(req: NextRequest) {
             // Store response
             await convexClient.mutation(api.functions.messages.create, {
               gatewayId: ctx.gatewayId, sessionId: ctx.sessionId, agentId: ctx.agentId,
-              role: "assistant", content: fullContent, tokens: usage, model: modelId, conversationId: ctx.conversationId,
+              role: "assistant", content: fullContent, tokens: usage, model: modelId, conversationId: responseConversationId,
             });
 
             controller.enqueue(encoder.encode(sseEvent({ type: "done", sessionId: ctx.sessionId, model: modelId, tokens: usage })));
@@ -262,9 +291,30 @@ export async function POST(req: NextRequest) {
       fullContent += roundText;
       if (toolCalls.length === 0) break;
 
-      const toolResults = await executeTools(toolCalls, {
-        gatewayId: ctx.gatewayId as string, agentId: ctx.agentId as string, sessionId: ctx.sessionId as string,
-      });
+      const toolContext = {
+        gatewayId: ctx.gatewayId as string,
+        agentId: ctx.agentId as string,
+        sessionId: ctx.sessionId as string,
+        userRole: "viewer",
+      };
+      const toolResults = await executeTools(toolCalls, toolContext, config.allToolDefs as any);
+      const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
+      if (switchedConvoId) {
+        responseConversationId = switchedConvoId;
+        delete (toolContext as any).__newConversationId;
+        console.log(`[API Channel] Tool requested conversation switch -> ${responseConversationId}`);
+        if (!movedUserMessageToNewConversation) {
+          try {
+            await convexClient.mutation(api.functions.messages.updateConversationId, {
+              id: ctx.userMessageId as Id<"messages">,
+              conversationId: responseConversationId,
+            });
+            movedUserMessageToNewConversation = true;
+          } catch (err) {
+            console.error("[API Channel] Failed to move triggering user message:", err);
+          }
+        }
+      }
       for (const result of toolResults) {
         aiContext.messages.push({
           role: "toolResult", toolCallId: result.toolCallId, toolName: result.toolName,
@@ -277,7 +327,7 @@ export async function POST(req: NextRequest) {
 
     await convexClient.mutation(api.functions.messages.create, {
       gatewayId: ctx.gatewayId, sessionId: ctx.sessionId, agentId: ctx.agentId,
-      role: "assistant", content: fullContent, tokens: usage, model: modelId, latencyMs, conversationId: ctx.conversationId,
+      role: "assistant", content: fullContent, tokens: usage, model: modelId, latencyMs, conversationId: responseConversationId,
     });
 
     return NextResponse.json({

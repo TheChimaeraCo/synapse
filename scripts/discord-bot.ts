@@ -2,20 +2,28 @@
 // scripts/discord-bot.ts - Standalone Discord bot runner
 // Run with: npx tsx scripts/discord-bot.ts
 
-// Load .env.local BEFORE anything else
-import { readFileSync } from "node:fs";
+import convexEnv from "./convex-env.js";
+
+// Load from Convex env first, then local .env.local compatibility fallback.
 try {
-  const content = readFileSync("/root/clawd/projects/chimera-gateway/synapse/.env.local", "utf-8");
-  for (const line of content.split("\n")) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const i = t.indexOf("=");
-    if (i === -1) continue;
-    const k = t.slice(0, i), v = t.slice(i + 1);
-    if (!process.env[k]) process.env[k] = v;
+  const pulled = (convexEnv as any).loadProcessEnvFromConvex({ silent: true, writeFile: true }) as Record<string, string>;
+  const count = Object.keys(pulled || {}).length;
+  if (count > 0) {
+    console.log(`[discord-bot] Loaded ${count} env vars from Convex`);
   }
-  console.log("[discord-bot] Loaded .env.local");
-} catch (e) { console.error("[discord-bot] Failed to load .env.local:", e); }
+} catch (e) {
+  console.error("[discord-bot] Convex env pull failed:", e);
+}
+
+try {
+  const local = (convexEnv as any).readEnvFile?.() || {};
+  for (const [k, v] of Object.entries(local)) {
+    if (!process.env[k]) process.env[k] = String(v);
+  }
+  console.log("[discord-bot] Loaded local compatibility env");
+} catch (e) {
+  console.error("[discord-bot] Failed to load local compatibility env:", e);
+}
 
 async function main() {
   const { startDiscordBot, stopDiscordBot } = await import("../lib/discord/startup");

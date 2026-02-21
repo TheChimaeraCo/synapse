@@ -14,6 +14,15 @@ interface ToolRecord {
   requiresApproval: boolean;
 }
 
+interface ApprovalRecord {
+  _id: string;
+  sessionId: string;
+  toolName: string;
+  toolArgs: Record<string, any>;
+  requestedAt: number;
+  status: "pending" | "approved" | "denied";
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   search: "bg-blue-500/20 text-blue-400",
   system: "bg-green-500/20 text-green-400",
@@ -24,9 +33,34 @@ const CATEGORY_COLORS: Record<string, string> = {
 export function ToolsTab() {
   const { data: session } = useSession();
   const [tools, setTools] = useState<ToolRecord[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingApprovals, setLoadingApprovals] = useState(true);
+  const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const gatewayId = (session?.user as any)?.gatewayId;
+
+  async function fetchApprovals() {
+    try {
+      const res = await gatewayFetch(`/api/approvals?gatewayId=${gatewayId}`);
+      if (!res.ok) {
+        if (res.status === 403) {
+          setApprovals([]);
+          setApprovalError("Only owner/admin can manage tool approvals.");
+          return;
+        }
+        throw new Error("Failed to fetch approvals");
+      }
+      const data = await res.json();
+      setApprovals(data.approvals || []);
+      setApprovalError(null);
+    } catch (err: any) {
+      setApprovalError(err?.message || "Failed to fetch approvals");
+    } finally {
+      setLoadingApprovals(false);
+    }
+  }
 
   useEffect(() => {
     if (!gatewayId) return;
@@ -35,6 +69,12 @@ export function ToolsTab() {
       .then((d) => setTools(d.tools || []))
       .catch(console.error)
       .finally(() => setLoading(false));
+
+    fetchApprovals();
+    const interval = setInterval(() => {
+      fetchApprovals().catch(() => {});
+    }, 10000);
+    return () => clearInterval(interval);
   }, [gatewayId]);
 
   async function toggleEnabled(tool: ToolRecord) {
@@ -49,6 +89,26 @@ export function ToolsTab() {
     });
   }
 
+  async function resolveApproval(approvalId: string, status: "approved" | "denied") {
+    setResolvingApprovalId(approvalId);
+    try {
+      const res = await gatewayFetch(`/api/approvals/${approvalId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Failed to resolve approval");
+      }
+      setApprovals((prev) => prev.filter((a) => a._id !== approvalId));
+    } catch (err: any) {
+      alert(err?.message || "Failed to resolve approval");
+    } finally {
+      setResolvingApprovalId(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -59,6 +119,70 @@ export function ToolsTab() {
 
   return (
     <div className="space-y-6">
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Pending Tool Approvals</h3>
+            <p className="text-xs text-zinc-400 mt-1">
+              High-risk tools pause here until owner/admin approval.
+            </p>
+          </div>
+          <button
+            onClick={() => fetchApprovals()}
+            className="px-2.5 py-1 text-xs rounded-md bg-white/[0.06] border border-white/[0.08] text-zinc-300 hover:bg-white/[0.1]"
+          >
+            Refresh
+          </button>
+        </div>
+
+        {approvalError && (
+          <p className="mt-3 text-xs text-amber-300">{approvalError}</p>
+        )}
+
+        {loadingApprovals ? (
+          <div className="mt-3 text-sm text-zinc-400">Loading approvals...</div>
+        ) : approvals.length === 0 ? (
+          <div className="mt-3 text-sm text-zinc-500">No pending approvals.</div>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {approvals.map((approval) => (
+              <div
+                key={approval._id}
+                className="rounded-lg border border-white/[0.08] bg-white/[0.04] p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm text-white font-medium">{approval.toolName}</div>
+                    <div className="text-xs text-zinc-400 mt-1">
+                      {new Date(approval.requestedAt).toLocaleString()}
+                    </div>
+                    <pre className="mt-2 text-xs text-zinc-300 bg-black/30 rounded p-2 overflow-auto">
+                      {JSON.stringify(approval.toolArgs || {}, null, 2)}
+                    </pre>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => resolveApproval(approval._id, "approved")}
+                      disabled={resolvingApprovalId === approval._id}
+                      className="px-2.5 py-1 text-xs rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 disabled:opacity-60"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => resolveApproval(approval._id, "denied")}
+                      disabled={resolvingApprovalId === approval._id}
+                      className="px-2.5 py-1 text-xs rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 disabled:opacity-60"
+                    >
+                      Deny
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-white">Tools<HelpTooltip title="Tools" content="Tools extend your AI with abilities like web search, code execution, and file access. Enable or disable tools per channel." /></h2>

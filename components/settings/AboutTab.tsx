@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useFetch } from "@/lib/hooks";
+import { gatewayFetch } from "@/lib/gatewayFetch";
 import { ExternalLink, Loader2, Database } from "lucide-react";
 import { toast } from "sonner";
 

@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation } from "../_generated/server";
+import { decodeConfigForRead, encodeConfigForStorage } from "../lib/configCrypto";
 
 export const get = query({
   args: { gatewayId: v.id("gateways"), key: v.string() },
@@ -8,24 +9,26 @@ export const get = query({
       .query("gatewayConfig")
       .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", args.key))
       .first();
-    return row?.value ?? null;
+    if (!row) return null;
+    return await decodeConfigForRead(args.key, row.value);
   },
 });
 
 export const set = mutation({
   args: { gatewayId: v.id("gateways"), key: v.string(), value: v.string() },
   handler: async (ctx, args) => {
+    const encodedValue = await encodeConfigForStorage(args.key, args.value);
     const existing = await ctx.db
       .query("gatewayConfig")
       .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", args.key))
       .first();
     if (existing) {
-      await ctx.db.patch(existing._id, { value: args.value, updatedAt: Date.now() });
+      await ctx.db.patch(existing._id, { value: encodedValue, updatedAt: Date.now() });
     } else {
       await ctx.db.insert("gatewayConfig", {
         gatewayId: args.gatewayId,
         key: args.key,
-        value: args.value,
+        value: encodedValue,
         updatedAt: Date.now(),
       });
     }
@@ -41,7 +44,7 @@ export const getMultiple = query({
         .query("gatewayConfig")
         .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", key))
         .first();
-      if (row) result[key] = row.value;
+      if (row) result[key] = await decodeConfigForRead(key, row.value);
     }
     return result;
   },
@@ -56,7 +59,7 @@ export const getAll = query({
       .collect();
     const result: Record<string, string> = {};
     for (const row of rows) {
-      result[row.key] = row.value;
+      result[row.key] = await decodeConfigForRead(row.key, row.value);
     }
     return result;
   },
@@ -81,7 +84,12 @@ export const getWithInheritance = query({
       .query("gatewayConfig")
       .withIndex("by_gateway_key", (q) => q.eq("gatewayId", args.gatewayId).eq("key", args.key))
       .first();
-    if (row) return { value: row.value, inherited: false };
+    if (row) {
+      return {
+        value: await decodeConfigForRead(args.key, row.value),
+        inherited: false,
+      };
+    }
 
     // Fall back to master gateway
     const allGateways = await ctx.db.query("gateways").collect();
@@ -92,7 +100,12 @@ export const getWithInheritance = query({
       .query("gatewayConfig")
       .withIndex("by_gateway_key", (q) => q.eq("gatewayId", master._id).eq("key", args.key))
       .first();
-    if (masterRow) return { value: masterRow.value, inherited: true };
+    if (masterRow) {
+      return {
+        value: await decodeConfigForRead(args.key, masterRow.value),
+        inherited: true,
+      };
+    }
     return null;
   },
 });

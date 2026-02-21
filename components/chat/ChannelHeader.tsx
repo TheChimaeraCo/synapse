@@ -30,13 +30,13 @@ function SessionSearchOverlay({ onClose }: { onClose: () => void }) {
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<NodeJS.Timeout>();
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
   useEffect(() => {
     if (!query.trim()) { setResults([]); return; }
-    clearTimeout(debounceRef.current);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
       try {
@@ -47,7 +47,9 @@ function SessionSearchOverlay({ onClose }: { onClose: () => void }) {
         }
       } catch {} finally { setSearching(false); }
     }, 300);
-    return () => clearTimeout(debounceRef.current);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [query]);
 
   return (

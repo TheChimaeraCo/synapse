@@ -230,7 +230,8 @@ export const chatWithTools = internalAction({
         gatewayId: args.gatewayId,
         agentId: args.agentId,
         sessionId: args.sessionId,
-      });
+        userRole: "viewer",
+      }, args.tools as any);
 
       for (const result of toolResults) {
         context.messages.push({

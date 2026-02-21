@@ -50,11 +50,14 @@ export const listByConversation = query({
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 100;
-    const msgs = await ctx.db
+    // Pull newest N then reverse so callers get chronological order.
+    // This is important for topic classification and summarization.
+    const desc = await ctx.db
       .query("messages")
       .withIndex("by_conversationId", (q) => q.eq("conversationId", args.conversationId))
-      .order("asc")
+      .order("desc")
       .take(limit);
+    const msgs = desc.reverse();
     return msgs.map((m) => ({
       _id: m._id,
       role: m.role,

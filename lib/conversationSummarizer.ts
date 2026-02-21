@@ -2,6 +2,13 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
+const SUMMARY_MODELS: Record<string, string> = {
+  anthropic: "claude-3-haiku-20240307",
+  openrouter: "anthropic/claude-3-haiku",
+  openai: "gpt-4o-mini",
+  google: "gemini-2.0-flash",
+};
+
 const SUMMARY_PROMPT = `Analyze this conversation and provide a JSON response with:
 - "title": A short, natural title (under 60 chars) - like how you'd describe this chat to a friend
 - "summary": A 2-3 sentence summary focused on: what the user wanted, what was discussed, and what the outcome was. Write it as if you're reminding yourself what happened - e.g. "User asked about X. We worked through Y and decided Z." NOT a formal abstract.
@@ -23,12 +30,36 @@ export async function summarizeConversation(
     if (!convo || convo.status !== "closed") return;
     if (convo.summary) return; // Already summarized
 
-    // Get messages for this conversation
-    // Since messages may not all have conversationId yet, get recent from session
-    const messages = await convexClient.query(api.functions.messages.getRecent, {
-      sessionId: convo.sessionId,
-      limit: Math.min(convo.messageCount + 5, 30),
-    });
+    // Get messages for this exact conversation segment.
+    // Prefer seq range because it's stable even for old rows missing conversationId.
+    let messages: Array<{ role: string; content: string; seq?: number; conversationId?: Id<"conversations"> }> = [];
+    if (
+      typeof convo.startSeq === "number" &&
+      typeof convo.endSeq === "number" &&
+      convo.endSeq >= convo.startSeq
+    ) {
+      messages = await convexClient.query(api.functions.messages.getBySeqRange, {
+        sessionId: convo.sessionId,
+        startSeq: convo.startSeq,
+        endSeq: convo.endSeq,
+      });
+    } else {
+      messages = await convexClient.query(api.functions.messages.listByConversation, {
+        conversationId,
+        limit: 200,
+      }) as any;
+
+      if (messages.length === 0) {
+        // Last-resort fallback for legacy rows
+        const recent = await convexClient.query(api.functions.messages.getRecent, {
+          sessionId: convo.sessionId,
+          limit: 80,
+        });
+        messages = recent.filter((m: any) => m.conversationId === conversationId);
+      }
+    }
+
+    messages = messages.filter((m) => m.role === "user" || m.role === "assistant");
 
     if (messages.length < 2) {
       // Too few messages, just set a basic title
@@ -58,9 +89,10 @@ export async function summarizeConversation(
       return await convexClient.query(api.functions.config.get, { key: k });
     };
 
-    const [providerSlug, apiKey] = await Promise.all([
+    const [providerSlug, apiKey, configuredModel] = await Promise.all([
       getConfig("ai_provider"),
       getConfig("ai_api_key"),
+      getConfig("ai_model"),
     ]);
     const provider = providerSlug || "anthropic";
     const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
@@ -74,11 +106,18 @@ export async function summarizeConversation(
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
-    const model = getModel(provider as any, "claude-3-haiku-20240307" as any);
+    const preferredModelId = SUMMARY_MODELS[provider] || SUMMARY_MODELS.anthropic;
+    let resolvedModelId = preferredModelId;
+    let model = getModel(provider as any, preferredModelId as any);
+    if (!model && configuredModel) {
+      model = getModel(provider as any, configuredModel as any);
+      if (model) resolvedModelId = configuredModel;
+    }
     if (!model) {
-      console.error("[conversationSummarizer] Model not found");
+      console.error(`[conversationSummarizer] No summary model found (tried "${preferredModelId}"${configuredModel ? `, "${configuredModel}"` : ""})`);
       return;
     }
+    console.log(`[conversationSummarizer] Using ${provider}:${resolvedModelId}`);
 
     let text = "";
     const aiStream = streamSimple(model, {
@@ -104,11 +143,16 @@ export async function summarizeConversation(
       }
     }
 
+    const topics = Array.isArray(parsed.topics)
+      ? parsed.topics.filter((t: any) => typeof t === "string" && t.trim()).map((t: string) => t.trim()).slice(0, 10)
+      : undefined;
+
     await convexClient.mutation(api.functions.conversations.close, {
       id: conversationId,
       title: parsed.title || undefined,
       summary: parsed.summary || undefined,
-      topics: Array.isArray(parsed.topics) ? parsed.topics : undefined,
+      topics,
+      tags: topics?.slice(0, 7),
       decisions: Array.isArray(parsed.decisions) ? parsed.decisions : undefined,
     });
 
@@ -123,7 +167,8 @@ export async function summarizeConversation(
             if (typeof fact === "string" && fact.trim()) {
               await convexClient.mutation(api.functions.knowledge.upsert, {
                 agentId: agent._id,
-                userId: convo.userId || undefined,
+                gatewayId: convo.gatewayId,
+                userId: convo.userId ? String(convo.userId) : undefined,
                 category: "learned",
                 key: fact.trim().slice(0, 100),
                 value: fact.trim(),

@@ -9,6 +9,7 @@ interface EnvVar {
 
 const ENV_VARS: EnvVar[] = [
   { name: "AUTH_SECRET", required: true, description: "NextAuth secret key" },
+  { name: "ENCRYPTION_SECRET", required: false, description: "Optional override key for config secret encryption at rest (falls back to AUTH_SECRET)" },
   { name: "AUTH_URL", required: true, description: "NextAuth base URL" },
   { name: "NEXT_PUBLIC_CONVEX_URL", required: true, description: "Convex deployment URL" },
   { name: "CONVEX_SELF_HOSTED_URL", required: false, description: "Convex self-hosted API URL" },

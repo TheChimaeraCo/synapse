@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const readline = require('readline');
+const convexEnv = require('./convex-env');
 
 // ── ANSI Colors ──────────────────────────────────────────────
 const c = {
@@ -29,14 +31,19 @@ const step = (n, total, msg) => console.log(`\n  ${c.bold}[${n}/${total}]${c.res
 // ── CLI Argument Parsing ─────────────────────────────────────
 function parseArgs() {
   const args = process.argv.slice(2);
-  const opts = { port: 3000, dev: false, skipBuild: false, skipInstall: false, cloud: false };
+  const opts = { port: 3000, dev: false, skipBuild: false, skipInstall: false, mode: null };
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case '--port': opts.port = parseInt(args[++i], 10) || 3000; break;
       case '--dev': opts.dev = true; break;
       case '--skip-build': opts.skipBuild = true; break;
       case '--skip-install': opts.skipInstall = true; break;
-      case '--cloud': opts.cloud = true; break;
+      case '--cloud': opts.mode = 'cloud'; break;
+      case '--self-hosted':
+      case '--selfhosted':
+      case '--local':
+        opts.mode = 'self-hosted';
+        break;
     }
   }
   return opts;
@@ -97,6 +104,34 @@ async function waitForHealthy(url, timeoutSecs = 60) {
   return false;
 }
 
+function ask(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
+async function resolveMode(opts) {
+  if (opts.mode === 'cloud') return true;
+  if (opts.mode === 'self-hosted') return false;
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    warn('No interactive terminal detected. Defaulting to self-hosted mode (use --cloud to override).');
+    return false;
+  }
+
+  console.log(`
+  ${c.bold}Select deployment mode:${c.reset}
+    ${c.cyan}1${c.reset}) Self-hosted Convex (Docker, local data)
+    ${c.cyan}2${c.reset}) Convex Cloud (managed backend)
+`);
+  const answer = String(await ask('  Choose 1 or 2 [default: 1]: ')).trim().toLowerCase();
+  return answer === '2' || answer === 'cloud' || answer === 'c';
+}
+
 // ── Banner ───────────────────────────────────────────────────
 function banner(cloud) {
   const mode = cloud ? 'Cloud' : 'Self-Hosted';
@@ -112,8 +147,7 @@ function banner(cloud) {
 
 // ── Steps ────────────────────────────────────────────────────
 
-function checkDeps(cloud) {
-  const total = cloud ? 6 : 7;
+function checkDeps(cloud, total) {
   step(1, total, 'Checking dependencies...');
 
   // Node.js version
@@ -154,8 +188,8 @@ function checkDeps(cloud) {
   }
 }
 
-async function startConvexBackend() {
-  step(2, 7, 'Starting Convex backend...');
+async function startConvexBackend(total) {
+  step(2, total, 'Starting Convex backend...');
 
   if (!fs.existsSync(COMPOSE)) {
     fail(`docker-compose.yml not found at ${COMPOSE}`);
@@ -216,8 +250,8 @@ async function startConvexBackend() {
   return adminKey;
 }
 
-function installPackages(skip, total) {
-  step(3, total, 'Installing packages...');
+function installPackages(skip, total, cloud) {
+  step(cloud ? 2 : 3, total, 'Installing packages...');
   if (skip) { warn('Skipped (--skip-install)'); return; }
 
   const nmPath = path.join(ROOT, 'node_modules');
@@ -265,10 +299,10 @@ function setupConvexCloud(total) {
   step(3, total, 'Setting up Convex (cloud)...');
 
   const env = readEnvFile();
-  const hasConvex = !!env['NEXT_PUBLIC_CONVEX_URL'];
+  const hasConvex = !!env['NEXT_PUBLIC_CONVEX_URL'] && !!env['CONVEX_DEPLOYMENT'];
 
   if (!hasConvex) {
-    info('No Convex URL found - initializing project...');
+    info('No Convex cloud deployment found - initializing project...');
     try {
       run('npx convex init');
       ok('Convex project initialized');
@@ -279,6 +313,22 @@ function setupConvexCloud(total) {
     }
   } else {
     ok('Convex project already configured');
+  }
+
+  // Remove self-hosted vars when using cloud to avoid endpoint conflicts
+  const refreshedEnv = readEnvFile();
+  let changed = false;
+  if (refreshedEnv['CONVEX_SELF_HOSTED_URL']) {
+    delete refreshedEnv['CONVEX_SELF_HOSTED_URL'];
+    changed = true;
+  }
+  if (refreshedEnv['CONVEX_SELF_HOSTED_ADMIN_KEY']) {
+    delete refreshedEnv['CONVEX_SELF_HOSTED_ADMIN_KEY'];
+    changed = true;
+  }
+  if (changed) {
+    writeEnvFile(refreshedEnv);
+    ok('Removed self-hosted Convex variables from .env.local');
   }
 
   // Deploy schema and functions
@@ -294,8 +344,8 @@ function setupConvexCloud(total) {
   }
 }
 
-function configureAuth(port, total) {
-  const stepNum = total === 7 ? 5 : 4;
+function configureAuth(port, total, cloud) {
+  const stepNum = cloud ? 4 : 5;
   step(stepNum, total, 'Configuring authentication...');
 
   const env = readEnvFile();
@@ -308,18 +358,63 @@ function configureAuth(port, total) {
   }
 
   if (!env['AUTH_URL']) {
-    env['AUTH_URL'] = `http://0.0.0.0:${port}`;
-    ok(`AUTH_URL set to http://0.0.0.0:${port}`);
+    env['AUTH_URL'] = `http://localhost:${port}`;
+    ok(`AUTH_URL set to http://localhost:${port}`);
   } else {
     ok(`AUTH_URL: ${env['AUTH_URL']}`);
+  }
+
+  if (!env['NEXTAUTH_SECRET']) {
+    env['NEXTAUTH_SECRET'] = env['AUTH_SECRET'];
+    ok('NEXTAUTH_SECRET synchronized with AUTH_SECRET');
+  }
+
+  if (!env['NEXTAUTH_URL']) {
+    env['NEXTAUTH_URL'] = env['AUTH_URL'];
+    ok('NEXTAUTH_URL synchronized with AUTH_URL');
+  }
+
+  if (!env['ENCRYPTION_SECRET']) {
+    env['ENCRYPTION_SECRET'] = env['AUTH_SECRET'];
+    ok('ENCRYPTION_SECRET initialized from AUTH_SECRET');
+  }
+
+  if (!env['AUTH_TRUST_HOST']) {
+    env['AUTH_TRUST_HOST'] = 'true';
+    ok('AUTH_TRUST_HOST set to true');
   }
 
   writeEnvFile(env);
   ok('.env.local written');
 }
 
-function buildFrontend(skip, total) {
-  const stepNum = total === 7 ? 6 : 5;
+function syncEnvToConvex(total, cloud) {
+  const stepNum = cloud ? 5 : 6;
+  step(stepNum, total, 'Syncing environment variables to Convex...');
+
+  const env = readEnvFile();
+  if (Object.keys(env).length === 0) {
+    warn('No environment variables found in .env.local to sync');
+    return;
+  }
+
+  try {
+    const result = convexEnv.syncEnvFileToConvex({
+      vars: env,
+      contextEnv: env,
+      timeoutMs: 20000,
+      silent: true,
+    });
+    ok(`${result.count} variables synced to Convex env`);
+  } catch (e) {
+    fail('Failed to sync environment variables to Convex');
+    console.log(`  ${c.dim}${e.stderr || e.message}${c.reset}\n`);
+    process.exit(1);
+  }
+}
+
+function buildFrontend(skip, total, cloud) {
+  const stepNum = cloud ? 6 : 7;
   step(stepNum, total, 'Building frontend...');
   if (skip) { warn('Skipped (--skip-build)'); return; }
 
@@ -382,25 +477,28 @@ function startHub(port, dev, total, cloud) {
 // ── Main ─────────────────────────────────────────────────────
 async function main() {
   const opts = parseArgs();
-  const total = opts.cloud ? 6 : 7;
-  banner(opts.cloud);
+  const cloud = await resolveMode(opts);
+  const total = cloud ? 7 : 8;
+  banner(cloud);
 
-  checkDeps(opts.cloud);
+  checkDeps(cloud, total);
 
-  if (opts.cloud) {
-    // Cloud flow: 6 steps
-    installPackages(opts.skipInstall, total);
+  if (cloud) {
+    // Cloud flow: 7 steps
+    installPackages(opts.skipInstall, total, true);
     setupConvexCloud(total);
-    configureAuth(opts.port, total);
-    buildFrontend(opts.skipBuild, total);
+    configureAuth(opts.port, total, true);
+    syncEnvToConvex(total, true);
+    buildFrontend(opts.skipBuild, total, true);
     startHub(opts.port, opts.dev, total, true);
   } else {
-    // Self-hosted flow: 7 steps
-    const adminKey = await startConvexBackend();
-    installPackages(opts.skipInstall, total);
+    // Self-hosted flow: 8 steps
+    const adminKey = await startConvexBackend(total);
+    installPackages(opts.skipInstall, total, false);
     setupConvexSelfHosted(adminKey, total);
-    configureAuth(opts.port, total);
-    buildFrontend(opts.skipBuild, total);
+    configureAuth(opts.port, total, false);
+    syncEnvToConvex(total, false);
+    buildFrontend(opts.skipBuild, total, false);
     startHub(opts.port, opts.dev, total, false);
   }
 }

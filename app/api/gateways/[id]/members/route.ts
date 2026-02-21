@@ -30,7 +30,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     });
     return NextResponse.json({ members });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }
 
@@ -63,6 +63,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     return NextResponse.json({ memberId }, { status: 201 });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }

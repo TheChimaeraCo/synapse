@@ -32,7 +32,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!gateway) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ gateway });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }
 
@@ -50,7 +50,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     });
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }
 
@@ -66,6 +66,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     });
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return handleGatewayError, GatewayError(err);
+    return handleGatewayError(err);
   }
 }

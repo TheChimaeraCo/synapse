@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
 
 export const getActive = query({
   args: { sessionId: v.id("sessions") },
@@ -162,7 +163,7 @@ export const getChain = query({
   handler: async (ctx, args) => {
     const maxDepth = args.maxDepth ?? 5;
     const chain: Array<{
-      _id: string;
+      _id: Id<"conversations">;
       title?: string;
       summary?: string;
       tags?: string[];
@@ -176,9 +177,9 @@ export const getChain = query({
       lastMessageAt: number;
     }> = [];
 
-    let currentId: any = args.conversationId;
+    let currentId: Id<"conversations"> | undefined = args.conversationId;
     for (let i = 0; i < maxDepth && currentId; i++) {
-      const convo = await ctx.db.get(currentId);
+      const convo: any = await ctx.db.get(currentId);
       if (!convo) break;
       chain.push({
         _id: convo._id,
@@ -270,13 +271,21 @@ export const findRelated = query({
       .order("desc")
       .take(100);
 
+    const now = Date.now();
     const scored = all.map((c) => {
       const text = [c.summary, c.title, ...(c.topics || []), ...(c.tags || [])].filter(Boolean).join(" ").toLowerCase();
-      const score = words.filter((w) => text.includes(w)).length;
-      return { convo: c, score };
+      const keywordScore = words.filter((w) => text.includes(w)).length;
+      const ageMs = Math.max(0, now - (c.lastMessageAt || c.firstMessageAt || now));
+      const ageDays = ageMs / (24 * 60 * 60 * 1000);
+      const recencyBonus = Math.max(0, 1 - Math.min(ageDays, 30) / 30); // 0..1 over 30 days
+      const totalScore = keywordScore + recencyBonus;
+      return { convo: c, score: totalScore, keywordScore };
     }).filter((s) => s.score > 0);
 
-    scored.sort((a, b) => b.score - a.score);
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return (b.convo.lastMessageAt || 0) - (a.convo.lastMessageAt || 0);
+    });
     return scored.slice(0, limit).map((s) => s.convo);
   },
 });

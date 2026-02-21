@@ -5,6 +5,10 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { sendTextMessage, markAsRead } from "./send";
 import { getWhatsAppConfig, type WhatsAppConfig } from "./config";
+import { safeEqualSecret } from "../security";
+import { executeTools, toProviderTools } from "../toolExecutor";
+import { BUILTIN_TOOLS } from "../builtinTools";
+import { resolveConversation } from "../conversationManager";
 
 const CONVEX_URL = process.env.CONVEX_URL || process.env.CONVEX_SELF_HOSTED_URL || process.env.NEXT_PUBLIC_CONVEX_URL || "http://127.0.0.1:3220";
 
@@ -30,7 +34,7 @@ function dedupCheck(messageId: string): boolean {
  */
 export function verifySignature(body: string, signature: string, appSecret: string): boolean {
   const expected = createHmac("sha256", appSecret).update(body).digest("hex");
-  return signature === `sha256=${expected}`;
+  return safeEqualSecret(signature, `sha256=${expected}`);
 }
 
 /**
@@ -42,7 +46,7 @@ export function handleVerification(
   challenge: string | null,
   verifyToken: string
 ): { status: number; body: string } {
-  if (mode === "subscribe" && token === verifyToken) {
+  if (mode === "subscribe" && safeEqualSecret(token, verifyToken)) {
     console.log("[whatsapp] Webhook verified");
     return { status: 200, body: challenge || "" };
   }
@@ -119,7 +123,7 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
   // Convex client
   const convex = new ConvexHttpClient(CONVEX_URL);
   const adminKey = process.env.CONVEX_ADMIN_KEY || process.env.CONVEX_SELF_HOSTED_ADMIN_KEY;
-  if (adminKey) convex.setAdminAuth(adminKey);
+  if (adminKey) (convex as any).setAdminAuth(adminKey);
 
   // Find whatsapp channel
   const channelDoc = await convex.query(api.functions.channels.findByPlatform, {
@@ -156,14 +160,29 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     externalUserId: `whatsapp:${userId}`,
   });
 
+  // Resolve conversation before storing the user message
+  let conversationId: Id<"conversations"> | undefined;
+  try {
+    conversationId = await resolveConversation(
+      sessionId as Id<"sessions">,
+      gatewayId as Id<"gateways">,
+      undefined,
+      text
+    );
+    console.log(`[whatsapp] Resolved conversation: ${conversationId}`);
+  } catch (err) {
+    console.error("[whatsapp] Failed to resolve conversation:", err);
+  }
+
   // Store user message
-  await convex.mutation(api.functions.messages.create, {
+  const userMessageId = await convex.mutation(api.functions.messages.create, {
     gatewayId,
     sessionId,
     agentId,
     role: "user",
     content: text,
     channelMessageId: msg.id,
+    conversationId,
   });
 
   // Check budget
@@ -220,12 +239,27 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     const model = getModel(provider as any, modelId as any);
     if (!model) throw new Error(`Model "${modelId}" not found`);
 
+    const enabledTools = await convex.query(api.functions.tools.getEnabled, { gatewayId });
+    const builtinToolDefs = BUILTIN_TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    }));
+    const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
+    const allToolDefs = [
+      ...builtinToolDefs.filter((t) => !dbToolNames.has(t.name)),
+      ...enabledTools,
+    ];
+    const providerTools = toProviderTools(allToolDefs as any);
+
     // Build context
     let systemPrompt: string;
     let claudeMessages: Array<{ role: "user" | "assistant"; content: string }>;
+    let responseConversationId = conversationId;
+    let movedUserMessageToNewConversation = false;
     try {
       const { buildContext } = await import("../contextBuilder");
-      const ctx = await buildContext(sessionId, agentId, text, 5000);
+      const ctx = await buildContext(sessionId, agentId, text, 5000, responseConversationId);
       systemPrompt = ctx.systemPrompt;
       claudeMessages = ctx.messages;
     } catch (e) {
@@ -247,6 +281,7 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
           ? { role: "user" as const, content: m.content, timestamp: Date.now() }
           : { role: "assistant" as const, content: [{ type: "text" as const, text: m.content }], timestamp: Date.now() }
       ),
+      ...(providerTools ? { tools: providerTools } : {}),
     };
 
     const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
@@ -260,14 +295,59 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     const startMs = Date.now();
     let fullContent = "";
     let usage = { input: 0, output: 0 };
+    const MAX_TOOL_ROUNDS = 5;
 
-    const stream = streamSimple(model, context, options);
-    for await (const event of stream) {
-      if (event.type === "text_delta") {
-        fullContent += event.delta;
-      } else if (event.type === "done") {
-        usage.input += event.message.usage.input;
-        usage.output += event.message.usage.output;
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      const toolCalls: any[] = [];
+      let roundText = "";
+      const stream = streamSimple(model, context, options);
+      for await (const event of stream) {
+        if (event.type === "text_delta") {
+          roundText += event.delta;
+        } else if (event.type === "toolcall_end") {
+          toolCalls.push(event.toolCall);
+        } else if (event.type === "done") {
+          usage.input += event.message.usage.input;
+          usage.output += event.message.usage.output;
+          context.messages.push(event.message);
+        }
+      }
+      fullContent += roundText;
+      if (toolCalls.length === 0) break;
+
+      const toolContext = {
+        gatewayId: gatewayId as string,
+        agentId: agentId as string,
+        sessionId: sessionId as string,
+        userRole: "viewer",
+      };
+      const toolResults = await executeTools(toolCalls, toolContext, allToolDefs as any);
+      const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
+      if (switchedConvoId) {
+        responseConversationId = switchedConvoId;
+        delete (toolContext as any).__newConversationId;
+        console.log(`[whatsapp] Tool requested conversation switch -> ${responseConversationId}`);
+        if (!movedUserMessageToNewConversation) {
+          try {
+            await convex.mutation(api.functions.messages.updateConversationId, {
+              id: userMessageId as Id<"messages">,
+              conversationId: responseConversationId,
+            });
+            movedUserMessageToNewConversation = true;
+          } catch (err) {
+            console.error("[whatsapp] Failed to move triggering user message:", err);
+          }
+        }
+      }
+      for (const result of toolResults) {
+        context.messages.push({
+          role: "toolResult" as const,
+          toolCallId: result.toolCallId,
+          toolName: result.toolName,
+          content: [{ type: "text" as const, text: result.content }],
+          isError: result.isError,
+          timestamp: Date.now(),
+        });
       }
     }
 
@@ -292,6 +372,7 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
       cost,
       model: modelId,
       latencyMs,
+      conversationId: responseConversationId,
     });
 
     // Record usage

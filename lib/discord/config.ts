@@ -11,7 +11,7 @@ function getClient(): ConvexHttpClient {
     client = new ConvexHttpClient(CONVEX_URL);
     const adminKey = process.env.CONVEX_ADMIN_KEY || process.env.CONVEX_SELF_HOSTED_ADMIN_KEY;
     if (adminKey) {
-      client.setAdminAuth(adminKey);
+      (client as any).setAdminAuth(adminKey);
     }
   }
   return client;

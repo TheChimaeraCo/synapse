@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
-import { writeFileSync, unlinkSync } from "fs";
-import { execFileSync } from "child_process";
-import { join } from "path";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { extractBearerToken, safeEqualSecret } from "@/lib/security";
 
 const MODELS: Record<string, string> = {
   anthropic: "claude-sonnet-4-20250514",
@@ -51,12 +54,31 @@ async function getAiConfig(gatewayId?: string) {
 }
 
 function extractPdfText(buffer: Buffer): { text: string; numPages: number } {
-  const tmpPath = `/tmp/parse-pdf-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`;
+  const tmpPath = join(
+    tmpdir(),
+    `parse-pdf-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`,
+  );
   writeFileSync(tmpPath, buffer);
   try {
-    const scriptName = ["scripts", "extract-pdf.mjs"].join("/");
-    const scriptPath = join(process.cwd(), scriptName);
-    const result = execFileSync("node", [scriptPath, tmpPath], {
+    const extractorScript = `
+const fs = require("fs");
+const pdf = require("pdf-parse");
+(async () => {
+  try {
+    const filePath = process.argv[1];
+    const data = await pdf(fs.readFileSync(filePath));
+    process.stdout.write(JSON.stringify({
+      text: data?.text || "",
+      numPages: data?.numpages || 0
+    }));
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err?.message || String(err) }));
+    process.exitCode = 1;
+  }
+})();
+`;
+
+    const result = execFileSync(process.execPath, ["-e", extractorScript, tmpPath], {
       timeout: 30000,
       maxBuffer: 10 * 1024 * 1024,
     }).toString();
@@ -71,11 +93,20 @@ function extractPdfText(buffer: Buffer): { text: string; numPages: number } {
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
 
-  const authHeader = request.headers.get("authorization");
   const expectedKey = process.env.PARSE_API_KEY;
+  const bearer = extractBearerToken(request.headers.get("authorization"));
+
   if (expectedKey) {
-    const token = authHeader?.replace("Bearer ", "");
-    if (token !== expectedKey) {
+    const hasValidApiKey = safeEqualSecret(bearer, expectedKey);
+    if (!hasValidApiKey) {
+      const session = await auth();
+      if (!session?.user) {
+        return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+      }
+    }
+  } else {
+    const session = await auth();
+    if (!session?.user) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
   }

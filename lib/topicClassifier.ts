@@ -42,9 +42,10 @@ export async function classifyTopic(
       }
       return await convexClient.query(api.functions.config.get, { key: k });
     };
-    const [providerSlug, apiKey] = await Promise.all([
+    const [providerSlug, apiKey, configuredModel] = await Promise.all([
       getConfig("ai_provider"),
       getConfig("ai_api_key"),
+      getConfig("ai_model"),
     ]);
 
     const provider = providerSlug || "anthropic";
@@ -66,10 +67,15 @@ export async function classifyTopic(
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
 
-    const modelId = HAIKU_MODELS[provider] || HAIKU_MODELS.anthropic;
-    const model = getModel(provider as any, modelId as any);
+    const preferredModelId = HAIKU_MODELS[provider] || HAIKU_MODELS.anthropic;
+    let resolvedModelId = preferredModelId;
+    let model = getModel(provider as any, preferredModelId as any);
+    if (!model && configuredModel) {
+      model = getModel(provider as any, configuredModel as any);
+      if (model) resolvedModelId = configuredModel;
+    }
     if (!model) {
-      console.error(`[TopicClassifier] Model "${modelId}" not found for provider "${provider}"`);
+      console.error(`[TopicClassifier] No classifier model found for provider "${provider}" (tried "${preferredModelId}"${configuredModel ? `, "${configuredModel}"` : ""})`);
       return { sameTopic: true };
     }
 
@@ -110,7 +116,7 @@ Respond with JSON only, no markdown: { "sameTopic": boolean, "newTags": string[]
       }
     }
 
-    console.log(`[TopicClassifier] Provider: ${provider}, Model: ${modelId}, Result: ${result.slice(0, 200)}`);
+    console.log(`[TopicClassifier] Provider: ${provider}, Model: ${resolvedModelId}, Result: ${result.slice(0, 200)}`);
 
     // Parse JSON from response
     const jsonMatch = result.match(/\{[\s\S]*\}/);

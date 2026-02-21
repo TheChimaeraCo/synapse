@@ -43,7 +43,7 @@ function calculateCost(model: string, input: number, output: number): number {
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId, gatewayId } = await getGatewayContext(req);
+    const { userId, gatewayId, role } = await getGatewayContext(req);
     const { sessionId, content } = await req.json();
 
     if (!sessionId || !content?.trim()) {
@@ -102,7 +102,10 @@ export async function POST(req: NextRequest) {
       sessionId as Id<"sessions">,
       gatewayId as Id<"gateways">,
       sessionDoc.agentId,
+      conversationId,
+      messageId as Id<"messages">,
       budgetCheck.suggestedModel || undefined,
+      role,
     ).catch((err) => {
       console.error("AI processing error:", err);
     });
@@ -117,7 +120,10 @@ async function processAIResponse(
   sessionId: Id<"sessions">,
   gatewayId: Id<"gateways">,
   agentId: Id<"agents">,
+  initialConversationId?: Id<"conversations">,
+  userMessageId?: Id<"messages">,
   suggestedModel?: string,
+  userRole?: "owner" | "admin" | "member" | "viewer",
 ) {
   const runId = await convexClient.mutation(api.functions.activeRuns.create, {
     gatewayId,
@@ -126,8 +132,9 @@ async function processAIResponse(
   });
 
   try {
+    let responseConversationId = initialConversationId;
     const { systemPrompt, messages: claudeMessages } = await buildContext(
-      sessionId, agentId, "", 5000
+      sessionId, agentId, "", 5000, responseConversationId
     );
 
     const agent = await convexClient.query(api.functions.agents.get, { id: agentId });
@@ -215,6 +222,7 @@ async function processAIResponse(
         await convexClient.mutation(api.functions.messages.create, {
           gatewayId, sessionId, agentId,
           role: "assistant", content: cached.response, tokens: cached.tokens, cost: cached.cost, model: cached.model, latencyMs: 0,
+          conversationId: responseConversationId,
         });
         await convexClient.mutation(api.functions.activeRuns.complete, { id: runId });
         return;
@@ -224,6 +232,7 @@ async function processAIResponse(
     const startMs = Date.now();
     let fullContent = "";
     let usage = { input: 0, output: 0 };
+    let movedUserMessageToNewConversation = false;
     const MAX_TOOL_ROUNDS = 5;
 
     await convexClient.mutation(api.functions.activeRuns.updateStatus, { id: runId, status: "streaming" });
@@ -249,11 +258,30 @@ async function processAIResponse(
       fullContent += roundText;
       if (toolCalls.length === 0) break;
 
-      const toolResults = await executeTools(toolCalls, {
+      const toolContext = {
         gatewayId: gatewayId as string,
         agentId: agentId as string,
         sessionId: sessionId as string,
-      });
+        userRole,
+      };
+      const toolResults = await executeTools(toolCalls, toolContext, enabledTools as any);
+      const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
+      if (switchedConvoId) {
+        responseConversationId = switchedConvoId;
+        delete (toolContext as any).__newConversationId;
+        console.log(`[ConvoSegmentation] Tool requested conversation switch -> ${responseConversationId}`);
+        if (userMessageId && !movedUserMessageToNewConversation) {
+          try {
+            await convexClient.mutation(api.functions.messages.updateConversationId, {
+              id: userMessageId,
+              conversationId: responseConversationId,
+            });
+            movedUserMessageToNewConversation = true;
+          } catch (err) {
+            console.error("[ConvoSegmentation] Failed to move triggering user message:", err);
+          }
+        }
+      }
 
       for (const result of toolResults) {
         context.messages.push({
@@ -273,6 +301,7 @@ async function processAIResponse(
     const msgId = await convexClient.mutation(api.functions.messages.create, {
       gatewayId, sessionId, agentId,
       role: "assistant", content: fullContent, tokens: usage, cost, model: modelId, latencyMs,
+      conversationId: responseConversationId,
     });
 
     await convexClient.mutation(api.functions.usage.record, {

@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 
 const BASE = process.env.SYNAPSE_TEST_URL || "http://localhost:3020";
+const runIntegration = process.env.RUN_INTEGRATION_TESTS === "1";
+const describeIf = runIntegration ? describe : describe.skip;
 
-describe("API Routes (integration)", () => {
+describeIf("API Routes (integration)", () => {
   describe("GET /api/health", () => {
     it("returns expected shape", async () => {
       const res = await fetch(`${BASE}/api/health`);

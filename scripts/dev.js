@@ -4,6 +4,7 @@
 const { execSync, spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
+const convexEnv = require('./convex-env');
 
 const ROOT = path.resolve(__dirname, '..');
 const COMPOSE = path.join(ROOT, 'docker', 'docker-compose.yml');
@@ -78,6 +79,18 @@ async function main() {
   ${c.cyan}${c.bold}Synapse Dev Mode${c.reset}
   ${c.dim}Convex + Next.js on port ${port}${c.reset}
 `);
+
+  try {
+    const pulled = convexEnv.loadProcessEnvFromConvex({ silent: true, writeFile: true });
+    const count = Object.keys(pulled).length;
+    if (count > 0) {
+      console.log(`  ${c.green}✓${c.reset} Loaded ${count} env vars from Convex`);
+    } else {
+      console.log(`  ${c.dim}No Convex env vars pulled (using existing process/.env.local values)${c.reset}`);
+    }
+  } catch (e) {
+    console.log(`  ${c.dim}Convex env pull skipped: ${(e && e.message) || e}${c.reset}`);
+  }
 
   await ensureConvexBackend();
 

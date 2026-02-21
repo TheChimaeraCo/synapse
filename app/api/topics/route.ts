@@ -23,7 +23,6 @@ export async function POST(req: NextRequest) {
       name: body.name,
       category: body.category,
       personalWeight: body.personalWeight ?? 0.5,
-      frequencyWeight: body.frequencyWeight ?? 0.5,
       gatewayId,
       metadata: body.metadata,
     });

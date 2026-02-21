@@ -111,7 +111,7 @@ export async function speechToText(audioBuffer: Buffer, config: VoiceConfig): Pr
 
   if (config.sttProvider === "openai") {
     const formData = new FormData();
-    const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+    const blob = new Blob([new Uint8Array(audioBuffer)], { type: "audio/mpeg" });
     formData.append("file", blob, "audio.mp3");
     formData.append("model", "whisper-1");
 

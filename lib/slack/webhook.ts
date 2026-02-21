@@ -5,6 +5,9 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { sendTextMessage } from "./send";
 import { getSlackConfig, type SlackConfig } from "./config";
+import { executeTools, toProviderTools } from "../toolExecutor";
+import { BUILTIN_TOOLS } from "../builtinTools";
+import { resolveConversation } from "../conversationManager";
 
 const CONVEX_URL = process.env.CONVEX_URL || process.env.CONVEX_SELF_HOSTED_URL || process.env.NEXT_PUBLIC_CONVEX_URL || "http://127.0.0.1:3220";
 
@@ -94,11 +97,11 @@ async function processMessage(event: any): Promise<void> {
   // Convex client
   const convex = new ConvexHttpClient(CONVEX_URL);
   const adminKey = process.env.CONVEX_ADMIN_KEY || process.env.CONVEX_SELF_HOSTED_ADMIN_KEY;
-  if (adminKey) convex.setAdminAuth(adminKey);
+  if (adminKey) (convex as any).setAdminAuth(adminKey);
 
   // Find slack channel
   const channelDoc = await convex.query(api.functions.channels.findByPlatform, {
-    platform: "slack",
+    platform: "slack" as any,
   }).catch((e: any) => {
     console.error("[slack] Failed to find channel:", e);
     return null;
@@ -140,14 +143,29 @@ async function processMessage(event: any): Promise<void> {
     externalUserId: `slack:${userId}`,
   });
 
+  // Resolve conversation before storing the user message
+  let conversationId: Id<"conversations"> | undefined;
+  try {
+    conversationId = await resolveConversation(
+      sessionId as Id<"sessions">,
+      gatewayId as Id<"gateways">,
+      undefined,
+      text
+    );
+    console.log(`[slack] Resolved conversation: ${conversationId}`);
+  } catch (err) {
+    console.error("[slack] Failed to resolve conversation:", err);
+  }
+
   // Store user message
-  await convex.mutation(api.functions.messages.create, {
+  const userMessageId = await convex.mutation(api.functions.messages.create, {
     gatewayId,
     sessionId,
     agentId,
     role: "user",
     content: text,
     channelMessageId: event.ts,
+    conversationId,
   });
 
   // Check budget
@@ -204,12 +222,27 @@ async function processMessage(event: any): Promise<void> {
     const model = getModel(provider as any, modelId as any);
     if (!model) throw new Error(`Model "${modelId}" not found`);
 
+    const enabledTools = await convex.query(api.functions.tools.getEnabled, { gatewayId });
+    const builtinToolDefs = BUILTIN_TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    }));
+    const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
+    const allToolDefs = [
+      ...builtinToolDefs.filter((t) => !dbToolNames.has(t.name)),
+      ...enabledTools,
+    ];
+    const providerTools = toProviderTools(allToolDefs as any);
+
     // Build context
     let systemPrompt: string;
     let claudeMessages: Array<{ role: "user" | "assistant"; content: string }>;
+    let responseConversationId = conversationId;
+    let movedUserMessageToNewConversation = false;
     try {
       const { buildContext } = await import("../contextBuilder");
-      const ctx = await buildContext(sessionId, agentId, text, 5000);
+      const ctx = await buildContext(sessionId, agentId, text, 5000, responseConversationId);
       systemPrompt = ctx.systemPrompt;
       claudeMessages = ctx.messages;
     } catch (e) {
@@ -231,6 +264,7 @@ async function processMessage(event: any): Promise<void> {
           ? { role: "user" as const, content: m.content, timestamp: Date.now() }
           : { role: "assistant" as const, content: [{ type: "text" as const, text: m.content }], timestamp: Date.now() }
       ),
+      ...(providerTools ? { tools: providerTools } : {}),
     };
 
     const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
@@ -244,14 +278,59 @@ async function processMessage(event: any): Promise<void> {
     const startMs = Date.now();
     let fullContent = "";
     let usage = { input: 0, output: 0 };
+    const MAX_TOOL_ROUNDS = 5;
 
-    const stream = streamSimple(model, context, options);
-    for await (const ev of stream) {
-      if (ev.type === "text_delta") {
-        fullContent += ev.delta;
-      } else if (ev.type === "done") {
-        usage.input += ev.message.usage.input;
-        usage.output += ev.message.usage.output;
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      const toolCalls: any[] = [];
+      let roundText = "";
+      const stream = streamSimple(model, context, options);
+      for await (const ev of stream) {
+        if (ev.type === "text_delta") {
+          roundText += ev.delta;
+        } else if (ev.type === "toolcall_end") {
+          toolCalls.push(ev.toolCall);
+        } else if (ev.type === "done") {
+          usage.input += ev.message.usage.input;
+          usage.output += ev.message.usage.output;
+          context.messages.push(ev.message);
+        }
+      }
+      fullContent += roundText;
+      if (toolCalls.length === 0) break;
+
+      const toolContext = {
+        gatewayId: gatewayId as string,
+        agentId: agentId as string,
+        sessionId: sessionId as string,
+        userRole: "viewer",
+      };
+      const toolResults = await executeTools(toolCalls, toolContext, allToolDefs as any);
+      const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
+      if (switchedConvoId) {
+        responseConversationId = switchedConvoId;
+        delete (toolContext as any).__newConversationId;
+        console.log(`[slack] Tool requested conversation switch -> ${responseConversationId}`);
+        if (!movedUserMessageToNewConversation) {
+          try {
+            await convex.mutation(api.functions.messages.updateConversationId, {
+              id: userMessageId as Id<"messages">,
+              conversationId: responseConversationId,
+            });
+            movedUserMessageToNewConversation = true;
+          } catch (err) {
+            console.error("[slack] Failed to move triggering user message:", err);
+          }
+        }
+      }
+      for (const result of toolResults) {
+        context.messages.push({
+          role: "toolResult" as const,
+          toolCallId: result.toolCallId,
+          toolName: result.toolName,
+          content: [{ type: "text" as const, text: result.content }],
+          isError: result.isError,
+          timestamp: Date.now(),
+        });
       }
     }
 
@@ -276,6 +355,7 @@ async function processMessage(event: any): Promise<void> {
       cost,
       model: modelId,
       latencyMs,
+      conversationId: responseConversationId,
     });
 
     // Record usage

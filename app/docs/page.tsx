@@ -130,6 +130,8 @@ const categories: Category[] = [
     name: "Tools & Skills",
     endpoints: [
       { method: "GET", path: "/api/tools", auth: "gateway", description: "List available tools" },
+      { method: "GET", path: "/api/approvals", auth: "gateway", description: "List pending tool approvals (owner/admin)" },
+      { method: "POST", path: "/api/approvals/[id]", auth: "gateway", description: "Approve or deny a pending tool request", body: '{ status: "approved" | "denied" }' },
       { method: "GET", path: "/api/skills", auth: "gateway", description: "List skills" },
       { method: "POST", path: "/api/skills", auth: "gateway", description: "Create/update skill" },
     ],
