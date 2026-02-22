@@ -27,6 +27,7 @@ vi.mock("@/convex/_generated/api", () => ({
     functions: {
       conversations: {
         getActive: "conversations.getActive",
+        findRelated: "conversations.findRelated",
         create: "conversations.create",
         close: "conversations.close",
         update: "conversations.update",
@@ -55,6 +56,7 @@ type MockConversation = {
 type MockState = {
   active: MockConversation | null;
   recentMessages: Array<{ role: string; content: string }>;
+  related: Array<{ _id: string; depth: number; title?: string; summary?: string; tags?: string[]; topics?: string[] }>;
   nextId: number;
 };
 
@@ -75,6 +77,7 @@ function wireConvexMocks() {
   mocks.query.mockImplementation(async (fn: any) => {
     if (fn === (api.functions.conversations.getActive as any)) return state.active;
     if (fn === (api.functions.messages.listByConversation as any)) return state.recentMessages;
+    if (fn === (api.functions.conversations.findRelated as any)) return state.related;
     throw new Error(`Unhandled query fn: ${fn}`);
   });
 
@@ -123,6 +126,7 @@ describe("conversation segmentation e2e", () => {
     state = {
       active: null,
       recentMessages: [],
+      related: [],
       nextId: 1,
     };
 
@@ -280,6 +284,43 @@ describe("conversation segmentation e2e", () => {
       expect.objectContaining({
         previousConvoId: undefined,
         depth: 1,
+      })
+    );
+  });
+
+  it("chains topic-shifted message to an older related closed conversation", async () => {
+    state.active = newActive({ messageCount: 7, depth: 4, title: "Meal prep ideas" });
+    state.recentMessages = [
+      { role: "user", content: "Let's finish meal prep" },
+      { role: "assistant", content: "Sure, we can continue that." },
+    ];
+    state.related = [{
+      _id: "car-convo-2",
+      depth: 3,
+      title: "Car search follow-up",
+      summary: "Compared Hyundai and Audi options with payment budget constraints.",
+      tags: ["car", "budget", "audi"],
+      topics: ["cars"],
+    }];
+    mocks.classifyTopic.mockResolvedValueOnce({
+      sameTopic: false,
+      suggestedTitle: "Continue car search",
+      newTags: ["car", "search"],
+    });
+
+    const newId = await resolveConversation(
+      "session-1" as any,
+      "gateway-1" as any,
+      undefined,
+      "let's continue the audi car search"
+    );
+
+    expect(newId).toBe("convo-1");
+    expect(mocks.mutation).toHaveBeenCalledWith(
+      api.functions.conversations.create,
+      expect.objectContaining({
+        previousConvoId: "car-convo-2",
+        depth: 4,
       })
     );
   });

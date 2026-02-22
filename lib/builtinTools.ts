@@ -223,18 +223,59 @@ const knowledgeQuery: BuiltinTool = {
     try {
       const { convexClient } = await import("@/lib/convex");
       const { api } = await import("@/convex/_generated/api");
+      const q = String(args.query || "").trim().toLowerCase();
+      const words = q.split(/\s+/).filter((w: string) => w.length > 2);
       const knowledge = await convexClient.query(api.functions.knowledge.getRelevant, {
         agentId: context.agentId as any,
         userId: undefined,
-        limit: 10,
+        limit: 30,
       });
-      if (!knowledge || knowledge.length === 0) return "No knowledge stored yet.";
-      return knowledge.map((k: any) => `[${k.category}] ${k.key}: ${k.value}`).join("\n");
+      const filteredKnowledge = (knowledge || []).filter((k: any) => {
+        if (args.category && k.category !== args.category) return false;
+        if (!q) return true;
+        const text = `${k.key} ${k.value}`.toLowerCase();
+        return words.length === 0 ? text.includes(q) : words.every((w: string) => text.includes(w));
+      }).slice(0, 12);
+
+      const relatedConversations = await convexClient.query(api.functions.conversations.findRelated, {
+        gatewayId: context.gatewayId as any,
+        queryText: args.query,
+        limit: 5,
+      }).catch(() => []);
+
+      const sections: string[] = [];
+      if (filteredKnowledge.length > 0) {
+        sections.push("## Knowledge");
+        sections.push(...filteredKnowledge.map((k: any) => `[${k.category}] ${k.key}: ${k.value}`));
+      }
+      if (relatedConversations.length > 0) {
+        sections.push("\n## Related Conversation Summaries");
+        for (const convo of relatedConversations) {
+          const title = convo.title || "Untitled";
+          const summary = convo.summary || "(No summary yet)";
+          const tags = (convo.tags || convo.topics || []).slice(0, 4).join(", ");
+          sections.push(`- ${title}: ${summary}${tags ? ` [${tags}]` : ""}`);
+        }
+      }
+
+      if (sections.length === 0) return `No memory found for "${args.query}".`;
+      return sections.join("\n");
     } catch (e: any) {
       return `Knowledge query error: ${e.message}`;
     }
   },
 };
+
+function hasSensitiveMemoryPayload(text: string): boolean {
+  const value = text.trim();
+  if (!value) return false;
+  if (/(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|secret|password|bearer|private[_ -]?key)/i.test(value)) return true;
+  if (/sk-[A-Za-z0-9._-]{16,}/.test(value)) return true;
+  if (/AIza[0-9A-Za-z\-_]{20,}/.test(value)) return true;
+  if (/ghp_[A-Za-z0-9]{20,}/.test(value)) return true;
+  if (/eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}/.test(value)) return true;
+  return value.length > 64 && !/\s/.test(value) && /[A-Za-z]/.test(value) && /[0-9]/.test(value);
+}
 
 const memoryStore: BuiltinTool = {
   name: "memory_store",
@@ -250,6 +291,16 @@ const memoryStore: BuiltinTool = {
     try {
       const { convexClient } = await import("@/lib/convex");
       const { api } = await import("@/convex/_generated/api");
+      const enabled = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+        gatewayId: context.gatewayId as any,
+        key: "memory.tool_writes_enabled",
+      }).catch(() => null);
+      if (enabled?.value !== "true") {
+        return "Memory writes are disabled in this workspace. Conversation summaries and thread state are used as the default memory system.";
+      }
+      if (hasSensitiveMemoryPayload(`${args.key} ${args.value}`)) {
+        return "Refusing to store sensitive credential-like data in memory.";
+      }
       await convexClient.mutation(api.functions.knowledge.upsert, {
         agentId: context.agentId as any,
         gatewayId: context.gatewayId as any,
@@ -388,7 +439,7 @@ const getSoul: BuiltinTool = {
 
 const memorySearch: BuiltinTool = {
   name: "memory_search",
-  description: "Search knowledge base and conversation history using semantic similarity. Returns the most relevant results ranked by relevance score.",
+  description: "Search knowledge base, conversation summaries, and recent messages. Returns relevant long-term context and thread continuity clues.",
   category: "search",
   requiresApproval: false,
   parameters: Type.Object({
@@ -438,7 +489,25 @@ const memorySearch: BuiltinTool = {
         results.push(`Knowledge search error: ${e.message}`);
       }
 
-      // 2. Also search conversation messages if requested
+      // 2. Search closed conversation summaries and tags
+      try {
+        const relatedConvos = await convexClient.query(api.functions.conversations.findRelated, {
+          gatewayId: context.gatewayId as any,
+          queryText: args.query,
+          limit: 6,
+        });
+        if (relatedConvos && relatedConvos.length > 0) {
+          results.push("\n## Conversation Summary Matches:");
+          for (const convo of relatedConvos) {
+            const title = convo.title || "Untitled";
+            const summary = convo.summary || "(No summary)";
+            const tags = (convo.tags || convo.topics || []).slice(0, 4).join(", ");
+            results.push(`- ${title}: ${summary}${tags ? ` [${tags}]` : ""}`);
+          }
+        }
+      } catch {}
+
+      // 3. Also search recent conversation messages if requested
       if (args.include_messages !== false) {
         try {
           const messages = await convexClient.query(api.functions.messages.getRecent, {
@@ -461,6 +530,177 @@ const memorySearch: BuiltinTool = {
       return results.length > 0 ? results.join("\n") : `No results found for "${args.query}".`;
     } catch (e: any) {
       return `Memory search error: ${e.message}`;
+    }
+  },
+};
+
+const listConversationFiles: BuiltinTool = {
+  name: "list_conversation_files",
+  description: "List files linked to the current conversation (optionally including earlier chain segments). Use this before reading attached PDFs/images/docs from this thread.",
+  category: "file",
+  requiresApproval: false,
+  parameters: Type.Object({
+    include_chain: Type.Optional(Type.Boolean({ description: "Include previous linked conversation segments (default: true)" })),
+    limit: Type.Optional(Type.Number({ description: "Maximum files to return (default: 20)" })),
+  }),
+  handler: async (args, context) => {
+    try {
+      const { convexClient } = await import("@/lib/convex");
+      const { api } = await import("@/convex/_generated/api");
+      const includeChain = args.include_chain !== false;
+      const max = Math.max(1, Math.min(100, Number(args.limit || 20)));
+
+      const active = await convexClient.query(api.functions.conversations.getActive, {
+        sessionId: context.sessionId as any,
+      });
+      if (!active) return "No active conversation.";
+
+      let convoIds: string[] = [String(active._id)];
+      let chainMeta = new Map<string, string>();
+      chainMeta.set(String(active._id), active.title || "Current conversation");
+
+      if (includeChain) {
+        const chain = await convexClient.query(api.functions.conversations.getChain, {
+          conversationId: active._id,
+          maxDepth: 10,
+        });
+        convoIds = chain.map((c: any) => String(c._id));
+        for (const c of chain) {
+          chainMeta.set(String(c._id), c.title || "Untitled");
+        }
+      }
+
+      const seen = new Map<string, any>();
+      for (const convoId of convoIds) {
+        const files = await convexClient.query(api.functions.files.listByConversation, {
+          conversationId: convoId as any,
+          limit: max,
+        });
+        for (const file of files) {
+          if (!seen.has(String(file._id))) seen.set(String(file._id), file);
+        }
+      }
+
+      const all = Array.from(seen.values())
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .slice(0, max);
+
+      if (all.length === 0) return "No files linked to this conversation yet.";
+
+      return all.map((f) => {
+        const convoLabel = chainMeta.get(String(f.conversationId)) || "conversation";
+        const kb = Math.max(1, Math.round((f.size || 0) / 1024));
+        return `- [file:${f._id}:${f.filename}] (${f.mimeType}, ${kb} KB) in "${convoLabel}"`;
+      }).join("\n");
+    } catch (e: any) {
+      return `Failed to list conversation files: ${e.message}`;
+    }
+  },
+};
+
+const readUploadedFile: BuiltinTool = {
+  name: "read_uploaded_file",
+  description: "Read and analyze an uploaded file linked to this conversation (PDF, text, JSON, CSV, images with vision-capable models). Uses the dedicated file-reader routing capability, so it can use a different provider/model than chat.",
+  category: "file",
+  requiresApproval: false,
+  parameters: Type.Object({
+    file_id: Type.Optional(Type.String({ description: "Exact file id from [file:id:filename]" })),
+    filename: Type.Optional(Type.String({ description: "Filename match (if file_id not provided)" })),
+    question: Type.Optional(Type.String({ description: "What to extract from this file (default: summarize key details)" })),
+    include_chain: Type.Optional(Type.Boolean({ description: "Search earlier linked conversation segments too (default: true)" })),
+    max_chars: Type.Optional(Type.Number({ description: "Max extracted text chars before AI read (default: 120000)" })),
+  }),
+  handler: async (args, context) => {
+    try {
+      const { convexClient } = await import("@/lib/convex");
+      const { api } = await import("@/convex/_generated/api");
+      const {
+        getFileWithFreshUrl,
+        extractReadableText,
+        runFileReaderModel,
+      } = await import("@/lib/uploadedFileReader");
+
+      const includeChain = args.include_chain !== false;
+      const maxChars = Math.max(10_000, Math.min(250_000, Number(args.max_chars || 120_000)));
+      const fileNameQuery = String(args.filename || "").trim().toLowerCase();
+
+      let targetId = String(args.file_id || "").trim();
+      if (!targetId) {
+        const active = await convexClient.query(api.functions.conversations.getActive, {
+          sessionId: context.sessionId as any,
+        });
+        if (!active) return "No active conversation to search for files.";
+
+        let convoIds: string[] = [String(active._id)];
+        if (includeChain) {
+          const chain = await convexClient.query(api.functions.conversations.getChain, {
+            conversationId: active._id,
+            maxDepth: 10,
+          });
+          convoIds = chain.map((c: any) => String(c._id));
+        }
+
+        const candidates: any[] = [];
+        for (const convoId of convoIds) {
+          const files = await convexClient.query(api.functions.files.listByConversation, {
+            conversationId: convoId as any,
+            limit: 40,
+          });
+          candidates.push(...files);
+        }
+
+        const dedup = Array.from(new Map(candidates.map((f) => [String(f._id), f])).values())
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        const matched = fileNameQuery
+          ? dedup.find((f) => String(f.filename || "").toLowerCase().includes(fileNameQuery))
+          : dedup[0];
+
+        if (!matched) {
+          return fileNameQuery
+            ? `No conversation-linked file matched "${args.filename}". Use list_conversation_files first.`
+            : "No conversation-linked files found. Use list_conversation_files first.";
+        }
+        targetId = String(matched._id);
+      }
+
+      const resolved = await getFileWithFreshUrl(targetId as any);
+      if (!resolved?.file) return `File not found: ${targetId}`;
+      if (!resolved.url) return `File exists but has no downloadable URL: ${resolved.file.filename}`;
+
+      const extracted = await extractReadableText(
+        { filename: resolved.file.filename, mimeType: resolved.file.mimeType },
+        resolved.url,
+        maxChars
+      );
+      if (extracted.mode === "binary") {
+        return `File "${resolved.file.filename}" is not directly readable yet (type: ${resolved.file.mimeType}).`;
+      }
+
+      const toolOverride = (context as any).__toolModelOverride || {};
+      const routeOverride = {
+        providerProfileId: toolOverride.providerProfileId,
+        provider: toolOverride.provider,
+        model: toolOverride.model,
+      };
+
+      const analysis = await runFileReaderModel({
+        gatewayId: context.gatewayId as any,
+        filename: resolved.file.filename,
+        mimeType: resolved.file.mimeType,
+        fileUrl: resolved.url,
+        extracted,
+        question: args.question,
+        routeOverride,
+      });
+
+      const truncated = extracted.truncated ? " (source text truncated before analysis)" : "";
+      return `File: ${resolved.file.filename}
+Type: ${resolved.file.mimeType}
+Reader model: ${analysis.provider}:${analysis.model}${truncated}
+
+${analysis.text || "No output."}`;
+    } catch (e: any) {
+      return `Failed to read uploaded file: ${e.message}`;
     }
   },
 };
@@ -2174,6 +2414,8 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   saveSoul,
   getSoul,
   memorySearch,
+  listConversationFiles,
+  readUploadedFile,
   codeExecute,
   httpRequest,
   fileRead,

@@ -8,6 +8,12 @@ export async function POST(req: NextRequest) {
   try {
     const { userId, gatewayId } = await getGatewayContext(req);
     const { sessionId, targetConvoId } = await req.json();
+    const target = await convexClient.query(api.functions.conversations.get, {
+      id: targetConvoId as Id<"conversations">,
+    });
+    if (!target) {
+      return NextResponse.json({ error: "Target conversation not found" }, { status: 404 });
+    }
 
     let activeConvo = await convexClient.query(api.functions.conversations.getActive, {
       sessionId: sessionId as Id<"sessions">,
@@ -19,7 +25,7 @@ export async function POST(req: NextRequest) {
         gatewayId: gatewayId as Id<"gateways">,
         userId: userId as Id<"authUsers"> | undefined,
         previousConvoId: targetConvoId as Id<"conversations">,
-        depth: 2,
+        depth: (target.depth || 1) + 1,
       });
       return NextResponse.json({ linked: true, conversationId: newId, created: true });
     }

@@ -188,7 +188,7 @@ export async function buildContext(
   _conversationId?: Id<"conversations">
 ): Promise<ContextResult> {
   const sessionDoc = await convexClient.query(api.functions.sessions.get, { id: sessionId });
-  const userId = sessionDoc?.externalUserId;
+  const knowledgeUserId = sessionDoc?.externalUserId;
 
   // Get active conversation for escalation level
   let escalationLevel = 0;
@@ -204,12 +204,12 @@ export async function buildContext(
     convexClient.query(api.functions.agents.get, { id: agentId }),
     convexClient.query(api.functions.knowledge.getWithEmbeddings, {
       agentId,
-      userId,
+      userId: knowledgeUserId,
     }).catch(() =>
       // Fallback if getWithEmbeddings not deployed yet
       convexClient.query(api.functions.knowledge.getRelevant, {
         agentId,
-        userId,
+        userId: knowledgeUserId,
         limit: escParams.broadKnowledge ? 50 : 20,
       })
     ),
@@ -392,6 +392,52 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
     console.log(`[Context] Chain summaries: ${estimateTokens(conversationChainSection)} tokens`);
   }
 
+  // --- Conversation file artifacts ---
+  let conversationFilesSection = "";
+  if (chainConvoId) {
+    try {
+      const [currentFiles, chain] = await Promise.all([
+        convexClient.query((api as any).functions.files.listByConversation as any, {
+          conversationId: chainConvoId,
+          limit: 20,
+        }).catch(() => []),
+        convexClient.query(api.functions.conversations.getChain, {
+          conversationId: chainConvoId,
+          maxDepth: 8,
+        }).catch(() => []),
+      ]);
+
+      const fileMap = new Map<string, any>();
+      for (const f of currentFiles || []) fileMap.set(String(f._id), f);
+
+      for (const c of (chain || []).slice(1, 4)) {
+        const files = await convexClient.query((api as any).functions.files.listByConversation as any, {
+          conversationId: c._id,
+          limit: 10,
+        }).catch(() => []);
+        for (const f of files || []) {
+          fileMap.set(String(f._id), f);
+        }
+      }
+
+      const allFiles = Array.from(fileMap.values())
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .slice(0, 12);
+
+      if (allFiles.length > 0) {
+        const lines = allFiles.map((f) =>
+          `- [file:${f._id}:${f.filename}] (${f.mimeType}, ${Math.max(1, Math.round((f.size || 0) / 1024))} KB)`
+        );
+        conversationFilesSection = `\n\n## Files Available In This Thread\nUse \`read_uploaded_file\` to inspect these before answering file-specific questions.\n${lines.join("\n")}\n`;
+      }
+    } catch (err) {
+      console.error("[Context] Failed to load conversation files:", err);
+    }
+  }
+  if (conversationFilesSection) {
+    console.log(`[Context] File artifacts: ${estimateTokens(conversationFilesSection)} tokens`);
+  }
+
   // --- Layer 4: Topic context (past conversation search) ---
   // Always search past conversations - this is how the agent feels human
   // and can reference prior discussions naturally
@@ -434,7 +480,7 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
   } catch {}
 
   // --- Assemble ---
-  let systemPrompt = identitySection + knowledgeSection + conversationChainSection + topicSection + projectSection + runtimeSettingsSection + escalationHint;
+  let systemPrompt = identitySection + knowledgeSection + conversationChainSection + conversationFilesSection + topicSection + projectSection + runtimeSettingsSection + escalationHint;
 
   let totalTokens = estimateTokens(systemPrompt) + messageTokens;
   console.log(`[Context] Total: ${totalTokens} tokens (soft budget: ${configuredTokenBudget})`);

@@ -44,12 +44,20 @@ export async function POST(req: NextRequest) {
       await convexClient.mutation(api.functions.conversations.close, { id: activeConvo._id });
     }
 
+    let depth = 1;
+    if (previousConvoId) {
+      const previous = await convexClient.query(api.functions.conversations.get, {
+        id: previousConvoId as Id<"conversations">,
+      });
+      if (previous?.depth) depth = previous.depth + 1;
+    }
+
     const convoId = await convexClient.mutation(api.functions.conversations.create, {
       sessionId: sessionId as Id<"sessions">,
       gatewayId: gatewayId as Id<"gateways">,
       userId: userId as Id<"authUsers"> | undefined,
       previousConvoId: previousConvoId as Id<"conversations"> | undefined,
-      depth: 1,
+      depth,
     });
 
     return NextResponse.json({ conversationId: convoId });

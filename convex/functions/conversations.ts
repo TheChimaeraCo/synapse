@@ -106,6 +106,13 @@ export const close = mutation({
       reasoning: v.optional(v.string()),
       supersedes: v.optional(v.string()),
     }))),
+    stateUpdates: v.optional(v.array(v.object({
+      domain: v.string(),
+      attribute: v.string(),
+      value: v.string(),
+      confidence: v.optional(v.number()),
+      supersedes: v.optional(v.string()),
+    }))),
     endSeq: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -118,6 +125,7 @@ export const close = mutation({
       ...(updates.tags !== undefined ? { tags: updates.tags } : {}),
       ...(updates.topics !== undefined ? { topics: updates.topics } : {}),
       ...(updates.decisions !== undefined ? { decisions: updates.decisions } : {}),
+      ...(updates.stateUpdates !== undefined ? { stateUpdates: updates.stateUpdates } : {}),
       ...(updates.endSeq !== undefined ? { endSeq: updates.endSeq } : {}),
     });
   },
@@ -169,6 +177,13 @@ export const getChain = query({
       tags?: string[];
       topics?: string[];
       decisions?: Array<{ what: string; reasoning?: string; supersedes?: string }>;
+      stateUpdates?: Array<{
+        domain: string;
+        attribute: string;
+        value: string;
+        confidence?: number;
+        supersedes?: string;
+      }>;
       startSeq?: number;
       endSeq?: number;
       depth: number;
@@ -188,6 +203,7 @@ export const getChain = query({
         tags: convo.tags,
         topics: convo.topics,
         decisions: convo.decisions,
+        stateUpdates: convo.stateUpdates,
         startSeq: convo.startSeq,
         endSeq: convo.endSeq,
         depth: convo.depth,
@@ -256,31 +272,57 @@ export const deleteAll = mutation({
 export const findRelated = query({
   args: {
     gatewayId: v.id("gateways"),
+    userId: v.optional(v.id("authUsers")),
     queryText: v.string(),
     limit: v.optional(v.number()),
+    minKeywordMatches: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 5;
-    const words = args.queryText.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+    const stopwords = new Set([
+      "this", "that", "with", "from", "have", "about", "there", "their", "would", "could", "should",
+      "into", "your", "what", "when", "where", "which", "while", "were", "been", "being", "also",
+      "just", "than", "then", "them", "they", "want", "need", "help", "please", "talk", "continue",
+      "again", "some", "more", "over", "under", "after", "before", "like",
+    ]);
+    const words = Array.from(new Set(
+      args.queryText
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((w) => w.trim())
+        .filter((w) => w.length > 2 && !stopwords.has(w))
+    ));
     if (words.length === 0) return [];
+    const minKeywordMatches = args.minKeywordMatches ?? (words.length >= 5 ? 2 : 1);
 
-    const all = await ctx.db
+    let all = await ctx.db
       .query("conversations")
       .withIndex("by_gatewayId", (q) => q.eq("gatewayId", args.gatewayId))
       .filter((q) => q.eq(q.field("status"), "closed"))
       .order("desc")
       .take(100);
+    if (args.userId) {
+      all = all.filter((c) => c.userId === args.userId);
+    }
 
     const now = Date.now();
     const scored = all.map((c) => {
-      const text = [c.summary, c.title, ...(c.topics || []), ...(c.tags || [])].filter(Boolean).join(" ").toLowerCase();
-      const keywordScore = words.filter((w) => text.includes(w)).length;
+      const text = [
+        c.summary,
+        c.title,
+        ...(c.topics || []),
+        ...(c.tags || []),
+        ...(c.decisions || []).map((d) => `${d.what} ${d.reasoning || ""}`),
+        ...(c.stateUpdates || []).map((s) => `${s.domain} ${s.attribute} ${s.value}`),
+      ].filter(Boolean).join(" ").toLowerCase();
+
+      const keywordScore = words.reduce((count, w) => count + (text.includes(w) ? 1 : 0), 0);
       const ageMs = Math.max(0, now - (c.lastMessageAt || c.firstMessageAt || now));
       const ageDays = ageMs / (24 * 60 * 60 * 1000);
       const recencyBonus = Math.max(0, 1 - Math.min(ageDays, 30) / 30); // 0..1 over 30 days
-      const totalScore = keywordScore + recencyBonus;
+      const totalScore = keywordScore * 2 + recencyBonus * 0.35;
       return { convo: c, score: totalScore, keywordScore };
-    }).filter((s) => s.score > 0);
+    }).filter((s) => s.keywordScore >= minKeywordMatches);
 
     scored.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;

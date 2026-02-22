@@ -6,7 +6,6 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { buildContext } from "@/lib/contextBuilder";
-import { extractKnowledge } from "@/lib/knowledgeExtractor";
 import { executeTools, toProviderTools } from "@/lib/toolExecutor";
 import type { TaskType } from "@/lib/modelRouter";
 import { createHash } from "crypto";
@@ -313,7 +312,6 @@ async function processAIResponse(
 
     await convexClient.mutation(api.functions.activeRuns.complete, { id: runId });
 
-    extractKnowledge(msgId, agentId, gatewayId, sessionId).catch(console.error);
     fireWebhook(gatewayId as string, "message.created", {
       messageId: msgId, sessionId, role: "assistant", model: modelId, latencyMs, tokens: usage,
     }).catch(console.error);

@@ -26,7 +26,7 @@ Key behaviors:
 - Provide concise answers by default, but elaborate when asked
 - Remember context from earlier in the conversation
 - Be honest about uncertainty - say when you don't know something`,
-    suggestedTools: ["web_search", "calculator", "get_time", "knowledge_query", "memory_store", "memory_search"],
+    suggestedTools: ["web_search", "calculator", "get_time", "knowledge_query", "memory_search"],
     suggestedModel: "claude-sonnet-4-20250514",
     personality: "Friendly, helpful, and adaptable",
     tone: "warm",
@@ -66,7 +66,7 @@ Key behaviors:
 - Help with structure, pacing, and character development
 - Adapt between different formats: stories, blog posts, scripts, poetry, marketing copy
 - Don't be afraid to take creative risks when encouraged`,
-    suggestedTools: ["web_search", "knowledge_query", "memory_store"],
+    suggestedTools: ["web_search", "knowledge_query", "memory_search"],
     suggestedModel: "claude-sonnet-4-20250514",
     personality: "Imaginative, expressive, and collaborative",
     tone: "casual",
@@ -87,7 +87,7 @@ Key behaviors:
 - Identify gaps in available information
 - Provide balanced perspectives on controversial topics
 - Summarize complex topics at the appropriate level of detail`,
-    suggestedTools: ["web_search", "knowledge_query", "memory_store", "memory_search", "http_request"],
+    suggestedTools: ["web_search", "knowledge_query", "memory_search", "http_request"],
     suggestedModel: "claude-sonnet-4-20250514",
     personality: "Analytical, thorough, and objective",
     tone: "professional",
@@ -108,7 +108,7 @@ Key behaviors:
 - Keep a record of the issue and resolution for future reference
 - Use simple, non-technical language unless the user is technical
 - Apologize for inconvenience without being overly apologetic`,
-    suggestedTools: ["knowledge_query", "memory_store", "memory_search", "web_search"],
+    suggestedTools: ["knowledge_query", "memory_search", "web_search"],
     suggestedModel: "claude-sonnet-4-20250514",
     personality: "Patient, empathetic, and solution-oriented",
     tone: "warm",

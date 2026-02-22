@@ -14,6 +14,7 @@ export const create = mutation({
     userId: v.optional(v.id("authUsers")),
     sessionId: v.optional(v.id("sessions")),
     messageId: v.optional(v.id("messages")),
+    conversationId: v.optional(v.id("conversations")),
     filename: v.string(),
     mimeType: v.string(),
     size: v.number(),
@@ -53,6 +54,21 @@ export const listBySession = query({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .order("desc")
       .take(50);
+  },
+});
+
+export const listByConversation = query({
+  args: {
+    conversationId: v.id("conversations"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 50;
+    return await ctx.db
+      .query("files")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", args.conversationId))
+      .order("desc")
+      .take(limit);
   },
 });
 

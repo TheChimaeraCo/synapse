@@ -2,6 +2,48 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery } from "../_generated/server";
 import { internal } from "../_generated/api";
 
+const FILE_REF_RE = /\[file:([^\]:]+):([^\]]+)\]/g;
+
+function extractFileIds(content: string): string[] {
+  if (!content || !content.includes("[file:")) return [];
+  const ids: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = FILE_REF_RE.exec(content)) !== null) {
+    if (match[1]) ids.push(match[1]);
+  }
+  FILE_REF_RE.lastIndex = 0;
+  return Array.from(new Set(ids));
+}
+
+async function syncFileLinksForMessage(
+  ctx: any,
+  args: {
+    gatewayId: any;
+    sessionId: any;
+    conversationId?: any;
+    messageId: any;
+    content: string;
+  }
+) {
+  const fileIds = extractFileIds(args.content);
+  if (fileIds.length === 0) return;
+
+  for (const fileId of fileIds) {
+    try {
+      const file = await ctx.db.get(fileId as any);
+      if (!file) continue;
+      if (String(file.gatewayId) !== String(args.gatewayId)) continue;
+      await ctx.db.patch(fileId as any, {
+        sessionId: args.sessionId,
+        messageId: args.messageId,
+        conversationId: args.conversationId,
+      });
+    } catch {
+      // Best effort, continue linking other refs.
+    }
+  }
+}
+
 export const getNextSeq = internalQuery({
   args: { sessionId: v.id("sessions") },
   handler: async (ctx, args) => {
@@ -156,6 +198,13 @@ export const create = mutation({
       seq = (last?.seq ?? 0) + 1;
     }
     const messageId = await ctx.db.insert("messages", { ...args, seq });
+    await syncFileLinksForMessage(ctx, {
+      gatewayId: args.gatewayId,
+      sessionId: args.sessionId,
+      conversationId: args.conversationId,
+      messageId,
+      content: args.content,
+    });
     await ctx.scheduler.runAfter(0, internal.functions.sessions.updateLastMessage, {
       id: args.sessionId,
     });
@@ -202,7 +251,17 @@ export const updateConversationId = mutation({
     conversationId: v.id("conversations"),
   },
   handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.id);
+    if (!message) return;
     await ctx.db.patch(args.id, { conversationId: args.conversationId });
+
+    const linkedFiles = await ctx.db
+      .query("files")
+      .withIndex("by_message", (q) => q.eq("messageId", args.id))
+      .collect();
+    for (const file of linkedFiles) {
+      await ctx.db.patch(file._id, { conversationId: args.conversationId });
+    }
   },
 });
 

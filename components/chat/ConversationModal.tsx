@@ -12,6 +12,7 @@ interface ConversationData {
   summary?: string;
   topics?: string[];
   decisions?: Array<{ what: string; reasoning?: string }>;
+  stateUpdates?: Array<{ domain: string; attribute: string; value: string; supersedes?: string }>;
   status: string;
   messageCount: number;
   firstMessageAt: number;
@@ -26,6 +27,17 @@ interface Message {
   role: string;
   content: string;
   _creationTime: number;
+}
+
+interface ConversationFile {
+  _id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  conversationId?: string;
+  messageId?: string;
+  createdAt: number;
+  url?: string;
 }
 
 interface Props {
@@ -51,6 +63,7 @@ function formatDuration(start: number, end: number): string {
 export function ConversationModal({ conversationId, onClose, onContinue }: Props) {
   const [convo, setConvo] = useState<ConversationData | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [files, setFiles] = useState<ConversationFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showMessages, setShowMessages] = useState(false);
 
@@ -58,9 +71,10 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
     const fetchData = async () => {
       setLoading(true);
       try {
-        const [convoRes, msgsRes] = await Promise.all([
+        const [convoRes, msgsRes, filesRes] = await Promise.all([
           gatewayFetch(`/api/conversations/${conversationId}`),
           gatewayFetch(`/api/conversations/${conversationId}/messages`),
+          gatewayFetch(`/api/conversations/${conversationId}/files?includeChain=true`),
         ]);
         if (convoRes.ok) {
           const data = await convoRes.json();
@@ -69,6 +83,10 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
         if (msgsRes.ok) {
           const data = await msgsRes.json();
           setMessages(data.messages || []);
+        }
+        if (filesRes.ok) {
+          const data = await filesRes.json();
+          setFiles(data.files || []);
         }
       } catch {}
       setLoading(false);
@@ -209,6 +227,25 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
                 </div>
               )}
 
+              {convo?.stateUpdates && convo.stateUpdates.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Thread State Updates</h3>
+                  <div className="space-y-2">
+                    {convo.stateUpdates.map((s, i) => (
+                      <div key={`${s.domain}-${s.attribute}-${i}`} className="glass rounded-lg p-3">
+                        <p className="text-xs text-zinc-500 uppercase tracking-wide mb-0.5">{s.domain}</p>
+                        <p className="text-sm text-zinc-200">
+                          <span className="text-zinc-400">{s.attribute}:</span> {s.value}
+                        </p>
+                        {s.supersedes && (
+                          <p className="text-[11px] text-zinc-500 mt-1">Supersedes: {s.supersedes}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Messages toggle */}
               <div>
                 <button
@@ -256,8 +293,35 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
                 )}
               </div>
 
+              {files.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">
+                    Linked Files ({files.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {files.slice(0, 20).map((file) => (
+                      <a
+                        key={file._id}
+                        href={`/api/files/${file._id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 hover:bg-white/10 transition"
+                      >
+                        <div>
+                          <p className="text-sm text-zinc-200">{file.filename}</p>
+                          <p className="text-[11px] text-zinc-500">
+                            {file.mimeType} • {(file.size / 1024).toFixed(0)} KB • {formatDateTime(file.createdAt)}
+                          </p>
+                        </div>
+                        <span className="text-xs text-blue-300">Open</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Empty state */}
-              {!convo?.summary && (!convo?.topics || convo.topics.length === 0) && (!convo?.decisions || convo.decisions.length === 0) && messages.length === 0 && (
+              {!convo?.summary && (!convo?.topics || convo.topics.length === 0) && (!convo?.decisions || convo.decisions.length === 0) && (!convo?.stateUpdates || convo.stateUpdates.length === 0) && messages.length === 0 && files.length === 0 && (
                 <div className="text-center text-zinc-600 py-8">
                   <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm">This conversation hasn't been summarized yet.</p>

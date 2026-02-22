@@ -4,7 +4,6 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { buildContext } from "@/lib/contextBuilder";
-import { extractKnowledge } from "@/lib/knowledgeExtractor";
 import { executeTools, toProviderTools } from "@/lib/toolExecutor";
 import { parseSlashCommand } from "@/lib/slashCommands";
 import { getThinkingParams, isValidThinkingLevel, type ThinkingLevel } from "@/lib/thinkingLevels";
@@ -280,16 +279,25 @@ export async function POST(req: NextRequest) {
           }
           const textContent = m.content.replace(FILE_REF_RE, "").trim();
           const imageRefs = fileRefs.filter(f => IMAGE_EXTS.test(f.filename));
+          const nonImageRefs = fileRefs.filter(f => !IMAGE_EXTS.test(f.filename));
+          const fileContextLines: string[] = [];
+          if (imageRefs.length > 0) {
+            fileContextLines.push(...imageRefs.map(f => `Attached image: ${f.filename} (id: ${f.id})`));
+          }
+          if (nonImageRefs.length > 0) {
+            fileContextLines.push(...nonImageRefs.map(f => `Attached file: ${f.filename} (id: ${f.id})`));
+          }
+          const mergedText = [textContent, fileContextLines.join("\n")].filter(Boolean).join("\n\n").trim();
           if (imageRefs.length > 0) {
             const parts: any[] = [];
             for (const img of imageRefs) {
               const fileUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/files/${img.id}`;
               parts.push({ type: "image", source: { type: "url", url: fileUrl } });
             }
-            if (textContent) parts.push({ type: "text", text: textContent });
+            if (mergedText) parts.push({ type: "text", text: mergedText });
             return { role: "user" as const, content: parts, timestamp: Date.now() };
           }
-          return { role: "user" as const, content: textContent || m.content, timestamp: Date.now() };
+          return { role: "user" as const, content: mergedText || m.content, timestamp: Date.now() };
         };
 
         const context: any = {
@@ -489,8 +497,6 @@ export async function POST(req: NextRequest) {
         }
 
         controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId, tokens: usage, cost })));
-
-        extractKnowledge(msgId, sessionDoc.agentId, gatewayId as Id<"gateways">, sessionId as Id<"sessions">).catch(console.error);
 
       } catch (err: any) {
         console.error("SSE stream error:", err);

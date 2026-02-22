@@ -13,12 +13,78 @@ const SUMMARY_MODELS: Record<string, string> = {
 
 const SUMMARY_PROMPT = `Analyze this conversation and provide a JSON response with:
 - "title": A short, natural title (under 60 chars) - like how you'd describe this chat to a friend
-- "summary": A 2-3 sentence summary focused on: what the user wanted, what was discussed, and what the outcome was. Write it as if you're reminding yourself what happened - e.g. "User asked about X. We worked through Y and decided Z." NOT a formal abstract.
+- "summary": A 2-3 sentence summary focused on: what the user wanted, what was discussed, and what the outcome was. Include concrete nouns for numeric constraints (e.g. "car payment budget under $400/month" rather than just "budget under $400/month"). Write it as if you're reminding yourself what happened - e.g. "User asked about X. We worked through Y and decided Z." NOT a formal abstract.
 - "topics": Array of topic keywords (3-7 items)
-- "decisions": Array of decisions made, each with "what" (the decision) and optional "reasoning"
-- "userFacts": Array of facts learned about the user during this conversation (e.g. "prefers dark mode", "works on a Next.js project", "lives in Austin"). Only include things explicitly stated or clearly implied. Empty array if nothing new learned.
+- "decisions": Array of decisions made, each with "what" (the decision), optional "reasoning", and optional "supersedes" when this decision replaces an older one.
+- "stateUpdates": Array of stable context facts useful for future continuity, each with:
+  - "domain": compact domain label like "car_search", "project", "travel", "health", "work"
+  - "attribute": specific key like "target_vehicle", "max_monthly_payment", "location"
+  - "value": explicit value
+  - optional "confidence" between 0 and 1
+  - optional "supersedes" describing prior value if this is a change
+  Keep this concise (max 12 items), and prefer durable constraints/preferences over trivia.
+
+Safety rules:
+- Never include secrets, tokens, passwords, API keys, or long credential-like strings in summary, decisions, or stateUpdates.
+- If sensitive strings appear in the chat, omit/redact them.
 
 Respond ONLY with valid JSON, no markdown.`;
+
+const SECRET_LIKE_PATTERNS = [
+  /sk-[A-Za-z0-9._-]{16,}/,
+  /AIza[0-9A-Za-z\-_]{20,}/,
+  /ghp_[A-Za-z0-9]{20,}/,
+  /xox[baprs]-[A-Za-z0-9-]{10,}/,
+  /eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}/,
+];
+
+function containsSensitiveLikeValue(text: string): boolean {
+  const value = text.trim();
+  if (!value) return false;
+  if (SECRET_LIKE_PATTERNS.some((p) => p.test(value))) return true;
+  if (/(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|secret|password|bearer)/i.test(value)) return true;
+  return value.length > 48 && !/\s/.test(value) && /[A-Za-z]/.test(value) && /[0-9]/.test(value);
+}
+
+function sanitizeStateUpdates(raw: any): Array<{
+  domain: string;
+  attribute: string;
+  value: string;
+  confidence?: number;
+  supersedes?: string;
+}> {
+  if (!Array.isArray(raw)) return [];
+
+  const cleaned: Array<{
+    domain: string;
+    attribute: string;
+    value: string;
+    confidence?: number;
+    supersedes?: string;
+  }> = [];
+
+  for (const entry of raw.slice(0, 20)) {
+    if (!entry || typeof entry !== "object") continue;
+    const domain = typeof entry.domain === "string" ? entry.domain.trim() : "";
+    const attribute = typeof entry.attribute === "string" ? entry.attribute.trim() : "";
+    const value = typeof entry.value === "string" ? entry.value.trim() : "";
+    if (!domain || !attribute || !value) continue;
+    if (containsSensitiveLikeValue(`${domain} ${attribute} ${value}`)) continue;
+
+    const normalized = {
+      domain: domain.slice(0, 40),
+      attribute: attribute.slice(0, 80),
+      value: value.slice(0, 240),
+      ...(typeof entry.confidence === "number" ? { confidence: Math.max(0, Math.min(1, entry.confidence)) } : {}),
+      ...(typeof entry.supersedes === "string" && entry.supersedes.trim()
+        ? { supersedes: entry.supersedes.trim().slice(0, 240) }
+        : {}),
+    };
+    cleaned.push(normalized);
+  }
+
+  return cleaned.slice(0, 12);
+}
 
 /**
  * Summarize a conversation using AI. Called when a conversation closes.
@@ -134,6 +200,21 @@ export async function summarizeConversation(
     const topics = Array.isArray(parsed.topics)
       ? parsed.topics.filter((t: any) => typeof t === "string" && t.trim()).map((t: string) => t.trim()).slice(0, 10)
       : undefined;
+    const decisions = Array.isArray(parsed.decisions)
+      ? parsed.decisions
+        .filter((d: any) => d && typeof d.what === "string" && d.what.trim())
+        .map((d: any) => ({
+          what: d.what.trim().slice(0, 240),
+          ...(typeof d.reasoning === "string" && d.reasoning.trim()
+            ? { reasoning: d.reasoning.trim().slice(0, 480) }
+            : {}),
+          ...(typeof d.supersedes === "string" && d.supersedes.trim()
+            ? { supersedes: d.supersedes.trim().slice(0, 240) }
+            : {}),
+        }))
+        .slice(0, 10)
+      : undefined;
+    const stateUpdates = sanitizeStateUpdates(parsed.stateUpdates);
 
     await convexClient.mutation(api.functions.conversations.close, {
       id: conversationId,
@@ -141,36 +222,9 @@ export async function summarizeConversation(
       summary: parsed.summary || undefined,
       topics,
       tags: topics?.slice(0, 7),
-      decisions: Array.isArray(parsed.decisions) ? parsed.decisions : undefined,
+      decisions,
+      stateUpdates,
     });
-
-    // Store any learned user facts as knowledge entries
-    if (Array.isArray(parsed.userFacts) && parsed.userFacts.length > 0 && convo.gatewayId) {
-      try {
-        // Look up the agent for this gateway
-        const agents = await convexClient.query(api.functions.agents.list, { gatewayId: convo.gatewayId });
-        const agent = agents?.[0];
-        if (agent) {
-          for (const fact of parsed.userFacts.slice(0, 5)) { // cap at 5 facts per conversation
-            if (typeof fact === "string" && fact.trim()) {
-              await convexClient.mutation(api.functions.knowledge.upsert, {
-                agentId: agent._id,
-                gatewayId: convo.gatewayId,
-                userId: convo.userId ? String(convo.userId) : undefined,
-                category: "learned",
-                key: fact.trim().slice(0, 100),
-                value: fact.trim(),
-                source: "conversation",
-                confidence: 0.7,
-              });
-            }
-          }
-          console.log(`[conversationSummarizer] Stored ${Math.min(parsed.userFacts.length, 5)} user facts as knowledge`);
-        }
-      } catch (err) {
-        console.error("[conversationSummarizer] Failed to store user facts:", err);
-      }
-    }
 
     // Fire-and-forget soul reflection
     reflectOnConversation(conversationId, convo.gatewayId).catch((err) =>

@@ -451,6 +451,7 @@ export default defineSchema({
     userId: v.optional(v.id("authUsers")),
     sessionId: v.optional(v.id("sessions")),
     messageId: v.optional(v.id("messages")),
+    conversationId: v.optional(v.id("conversations")),
     filename: v.string(),
     mimeType: v.string(),
     size: v.number(),
@@ -462,7 +463,8 @@ export default defineSchema({
   })
     .index("by_gateway", ["gatewayId"])
     .index("by_session", ["sessionId"])
-    .index("by_message", ["messageId"]),
+    .index("by_message", ["messageId"])
+    .index("by_conversation", ["conversationId"]),
 
   // --- AGENT MESSAGES (A2A Communication) ---
   agentMessages: defineTable({
@@ -694,6 +696,13 @@ export default defineSchema({
     decisions: v.optional(v.array(v.object({
       what: v.string(),
       reasoning: v.optional(v.string()),
+      supersedes: v.optional(v.string()),
+    }))),
+    stateUpdates: v.optional(v.array(v.object({
+      domain: v.string(),
+      attribute: v.string(),
+      value: v.string(),
+      confidence: v.optional(v.number()),
       supersedes: v.optional(v.string()),
     }))),
     startSeq: v.optional(v.number()),

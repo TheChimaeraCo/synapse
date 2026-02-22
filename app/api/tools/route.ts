@@ -13,8 +13,10 @@ export async function GET(req: NextRequest) {
       gatewayId: gatewayId as Id<"gateways">,
     });
 
-    if (existing.length === 0) {
-      for (const tool of BUILTIN_TOOLS) {
+    const existingNames = new Set(existing.map((t: any) => t.name));
+    const missing = BUILTIN_TOOLS.filter((tool) => !existingNames.has(tool.name));
+    if (missing.length > 0) {
+      for (const tool of missing) {
         await convexClient.mutation(api.functions.tools.create, {
           gatewayId: gatewayId as Id<"gateways">,
           name: tool.name,
@@ -25,14 +27,14 @@ export async function GET(req: NextRequest) {
           parameters: tool.parameters,
         });
       }
-      const seeded = await convexClient.query(api.functions.tools.list, {
-        gatewayId: gatewayId as Id<"gateways">,
-      });
-      return NextResponse.json({ tools: seeded });
     }
 
+    const all = await convexClient.query(api.functions.tools.list, {
+      gatewayId: gatewayId as Id<"gateways">,
+    });
+
     // Filter tools by availability (some require higher tier)
-    const available = existing.filter((t: any) => TOOL_REGISTRY.has(t.name));
+    const available = all.filter((t: any) => TOOL_REGISTRY.has(t.name));
     return NextResponse.json({ tools: available });
   } catch (err) {
     return handleGatewayError(err);
