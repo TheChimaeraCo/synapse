@@ -115,8 +115,26 @@ const webSearch: BuiltinTool = {
     query: Type.String({ description: "Search query" }),
     count: Type.Optional(Type.Number({ description: "Number of results (1-10)", default: 5 })),
   }),
-  handler: async (args) => {
-    const apiKey = process.env.BRAVE_SEARCH_API_KEY;
+  handler: async (args, context) => {
+    let configuredKey = "";
+    try {
+      const { convexClient } = await import("@/lib/convex");
+      const { api } = await import("@/convex/_generated/api");
+      if (context?.gatewayId) {
+        try {
+          const gw = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+            gatewayId: context.gatewayId as any,
+            key: "brave_search_api_key",
+          });
+          configuredKey = gw?.value || "";
+        } catch {}
+      }
+      if (!configuredKey) {
+        configuredKey = (await convexClient.query(api.functions.config.get, { key: "brave_search_api_key" })) || "";
+      }
+    } catch {}
+
+    const apiKey = configuredKey || process.env.BRAVE_SEARCH_API_KEY;
     if (!apiKey) return "Web search is not configured (missing BRAVE_SEARCH_API_KEY).";
     try {
       const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(args.query)}&count=${args.count ?? 5}`;

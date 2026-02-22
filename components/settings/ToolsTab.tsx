@@ -38,15 +38,19 @@ const CATEGORY_COLORS: Record<string, string> = {
 export function ToolsTab() {
   const { data: session } = useSession();
   const { data: configData } = useFetch<Record<string, string>>("/api/config/all");
+  const { data: braveKeyData, refetch: refetchBraveKey } = useFetch<Record<string, string>>("/api/config?key=brave_search_api_key");
   const [tools, setTools] = useState<ToolRecord[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingApprovals, setLoadingApprovals] = useState(true);
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [braveApiKey, setBraveApiKey] = useState("");
+  const [savingBraveKey, setSavingBraveKey] = useState(false);
 
   const gatewayId = (session?.user as any)?.gatewayId;
   const providerProfiles = parseProviderProfiles(configData?.["ai.provider_profiles"]);
+  const braveConfigured = Boolean(braveKeyData?.brave_search_api_key);
 
   async function fetchApprovals() {
     try {
@@ -114,6 +118,43 @@ export function ToolsTab() {
     }
   }
 
+  async function saveBraveKey() {
+    if (!braveApiKey.trim()) return;
+    setSavingBraveKey(true);
+    try {
+      const saveConfigRes = await gatewayFetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "brave_search_api_key", value: braveApiKey.trim() }),
+      });
+      if (!saveConfigRes.ok) throw new Error("Failed to save key");
+
+      if (gatewayId) {
+        const envRes = await gatewayFetch("/api/setup/save-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gatewayId,
+            key: "brave_search_api_key",
+            value: braveApiKey.trim(),
+          }),
+        });
+        if (!envRes.ok) {
+          // Non-blocking: key is already stored in Convex config.
+          console.warn("[ToolsTab] Failed to mirror Brave key to Convex env");
+        }
+      }
+
+      setBraveApiKey("");
+      await refetchBraveKey();
+      alert("Brave Search API key saved");
+    } catch {
+      alert("Failed to save Brave Search API key");
+    } finally {
+      setSavingBraveKey(false);
+    }
+  }
+
   async function resolveApproval(approvalId: string, status: "approved" | "denied") {
     setResolvingApprovalId(approvalId);
     try {
@@ -144,6 +185,36 @@ export function ToolsTab() {
 
   return (
     <div className="space-y-6">
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Web Search API Key</h3>
+            <p className="text-xs text-zinc-400 mt-1">
+              Configure Brave Search for the <code>web_search</code> tool.
+            </p>
+          </div>
+          <span className={`text-xs px-2 py-1 rounded-full ${braveConfigured ? "bg-green-500/20 text-green-300" : "bg-zinc-500/20 text-zinc-300"}`}>
+            {braveConfigured ? "Configured" : "Not configured"}
+          </span>
+        </div>
+        <div className="mt-3 flex flex-col md:flex-row gap-2">
+          <input
+            type="password"
+            value={braveApiKey}
+            onChange={(e) => setBraveApiKey(e.target.value)}
+            placeholder="brv_... or your Brave Search API key"
+            className="flex-1 bg-white/[0.04] border border-white/[0.1] rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+          />
+          <button
+            onClick={saveBraveKey}
+            disabled={savingBraveKey || !braveApiKey.trim()}
+            className="px-3 py-2 text-sm rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white"
+          >
+            {savingBraveKey ? "Saving..." : "Save Key"}
+          </button>
+        </div>
+      </div>
+
       <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
