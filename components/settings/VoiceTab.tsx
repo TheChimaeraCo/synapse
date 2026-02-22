@@ -53,8 +53,6 @@ export function VoiceTab() {
     }
   };
 
-  if (loading) return <div className="text-zinc-400">Loading...</div>;
-
   const provider = get("tts_provider", "none");
   const ttsApiKey = get("tts_api_key", "");
   const selectedModel = get("tts_model", "");
@@ -113,6 +111,8 @@ export function VoiceTab() {
     }
     return Array.from(map.values());
   }, [elevenModels, selectedModel]);
+
+  if (loading) return <div className="text-zinc-400">Loading...</div>;
 
   return (
     <div className="space-y-6 max-w-2xl">
