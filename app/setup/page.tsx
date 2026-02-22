@@ -121,6 +121,13 @@ export default function SetupPage() {
   const [showFields, setShowFields] = useState<Record<string, boolean>>({});
   const [apiKeyValid, setApiKeyValid] = useState<boolean | null>(null);
   const [testUnverified, setTestUnverified] = useState(false);
+  const [oauthSessionId, setOauthSessionId] = useState<string>("");
+  const [oauthStatus, setOauthStatus] = useState<string>("");
+  const [oauthAuthUrl, setOauthAuthUrl] = useState<string>("");
+  const [oauthInstructions, setOauthInstructions] = useState<string>("");
+  const [oauthProgress, setOauthProgress] = useState<string[]>([]);
+  const [oauthInput, setOauthInput] = useState<string>("");
+  const [oauthBusy, setOauthBusy] = useState(false);
 
   // Step 4 - Telegram
   const [botToken, setBotToken] = useState(cached?.botToken || "");
@@ -276,6 +283,99 @@ export default function SetupPage() {
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       console.error(`Failed to save config "${key}":`, data);
+    }
+  };
+
+  const oauthProviderId = getAuthValue(authValues, "oauth_provider") || defaultOAuthProviderForProvider(selectedProvider) || "";
+  const supportsInAppOAuth = !!oauthProviderId && defaultAuthMethodForProvider(selectedProvider) === "oauth";
+
+  const applyOauthStatus = useCallback((data: any) => {
+    setOauthStatus(data?.status || "");
+    setOauthAuthUrl(data?.authUrl || "");
+    setOauthInstructions(data?.authInstructions || "");
+    setOauthProgress(Array.isArray(data?.progress) ? data.progress : []);
+    if (data?.status === "completed" && data?.credentials) {
+      setAuthValues((prev) => ({
+        ...prev,
+        oauth_credentials: JSON.stringify(data.credentials, null, 2),
+      }));
+      setApiKeyValid(null);
+      setTestUnverified(false);
+      setOauthSessionId("");
+      setOauthInput("");
+      toast.success("OAuth login completed. Credentials loaded.");
+    } else if (data?.status === "error" && data?.error) {
+      toast.error(data.error);
+      setOauthSessionId("");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!oauthSessionId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await gatewayFetch(`/api/config/oauth-login?sessionId=${encodeURIComponent(oauthSessionId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        applyOauthStatus(data);
+      } catch {}
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [oauthSessionId, applyOauthStatus]);
+
+  const resetOauthFlow = () => {
+    setOauthSessionId("");
+    setOauthStatus("");
+    setOauthAuthUrl("");
+    setOauthInstructions("");
+    setOauthProgress([]);
+    setOauthInput("");
+  };
+
+  const handleStartOAuth = async () => {
+    if (!oauthProviderId) return;
+    setOauthBusy(true);
+    try {
+      const res = await gatewayFetch("/api/config/oauth-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", provider: oauthProviderId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data?.error || "Failed to start OAuth login");
+        return;
+      }
+      setOauthSessionId(data.sessionId || "");
+      applyOauthStatus(data);
+      if (data?.authUrl) window.open(data.authUrl, "_blank", "noopener,noreferrer");
+    } catch {
+      toast.error("Failed to start OAuth login");
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const handleSubmitOAuthInput = async () => {
+    if (!oauthSessionId || !oauthInput.trim()) return;
+    setOauthBusy(true);
+    try {
+      const res = await gatewayFetch("/api/config/oauth-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "submit", sessionId: oauthSessionId, input: oauthInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data?.error || "Failed to submit OAuth input");
+        return;
+      }
+      setOauthInput("");
+      applyOauthStatus(data);
+    } catch {
+      toast.error("Failed to submit OAuth input");
+    } finally {
+      setOauthBusy(false);
     }
   };
 
@@ -628,6 +728,7 @@ export default function SetupPage() {
             <div className="max-h-[50vh] overflow-y-auto space-y-1 pr-1 overscroll-contain">
               {PROVIDERS.map((p) => (
                 <label key={p.slug}
+                  onClick={() => setSelectedProvider(p.slug)}
                   className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${
                     selectedProvider === p.slug
                       ? "bg-gradient-to-r from-blue-500/15 to-purple-500/10 border border-blue-500/30"
@@ -647,7 +748,7 @@ export default function SetupPage() {
                   </div>
                 </label>
               ))}
-              <label className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${
+              <label onClick={() => setSelectedProvider("skip")} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${
                 selectedProvider === "skip"
                   ? "bg-gradient-to-r from-blue-500/15 to-purple-500/10 border border-blue-500/30"
                   : "bg-white/[0.04] border border-transparent hover:bg-white/10"
@@ -674,6 +775,7 @@ export default function SetupPage() {
                 setApiKeyValid(null);
                 setTestUnverified(false);
                 setSelectedModel("");
+                resetOauthFlow();
                 setProviderPhase("auth");
               }
             }} className="w-full">
@@ -750,6 +852,48 @@ export default function SetupPage() {
                   {field.helpText && <p className="text-zinc-600 text-xs mt-1">{field.helpText}</p>}
                 </div>
               ))}
+              {supportsInAppOAuth && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3">
+                  <div>
+                    <p className="text-sm text-zinc-200 font-medium">In-App OAuth Login</p>
+                    <p className="text-xs text-zinc-500">Start login, finish browser sign-in, then paste callback URL/code.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" onClick={handleStartOAuth} disabled={oauthBusy} className="border-white/10 text-zinc-300 hover:text-white rounded-xl">
+                      {oauthBusy ? "Starting..." : "Start OAuth Login"}
+                    </Button>
+                    {oauthAuthUrl && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => window.open(oauthAuthUrl, "_blank", "noopener,noreferrer")}
+                        className="border-white/10 text-zinc-300 hover:text-white rounded-xl"
+                      >
+                        Open Auth URL
+                      </Button>
+                    )}
+                  </div>
+                  {oauthAuthUrl && <p className="text-xs text-zinc-500 break-all">{oauthAuthUrl}</p>}
+                  {oauthInstructions && <p className="text-xs text-zinc-500">{oauthInstructions}</p>}
+                  {oauthSessionId && (
+                    <div className="space-y-2">
+                      <Input
+                        value={oauthInput}
+                        onChange={(e) => setOauthInput(e.target.value)}
+                        placeholder="Paste callback URL or authorization code"
+                        className="bg-white/[0.04] border-white/10 text-zinc-200 rounded-xl"
+                      />
+                      <div className="flex items-center gap-2">
+                        <Button type="button" variant="outline" onClick={handleSubmitOAuthInput} disabled={oauthBusy || !oauthInput.trim()} className="border-white/10 text-zinc-300 hover:text-white rounded-xl">
+                          Submit OAuth Input
+                        </Button>
+                        <span className="text-xs text-zinc-500">Status: {oauthStatus || "starting"}</span>
+                      </div>
+                      {oauthProgress.length > 0 && <p className="text-xs text-zinc-500">{oauthProgress[oauthProgress.length - 1]}</p>}
+                    </div>
+                  )}
+                </div>
+              )}
               {provider.models.length > 1 && (
                 <div>
                   <label className="text-sm text-zinc-400 mb-1 block">Default Model</label>

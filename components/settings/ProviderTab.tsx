@@ -137,6 +137,13 @@ export function ProviderTab() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
+  const [oauthSessionId, setOauthSessionId] = useState<string>("");
+  const [oauthStatus, setOauthStatus] = useState<string>("");
+  const [oauthAuthUrl, setOauthAuthUrl] = useState<string>("");
+  const [oauthInstructions, setOauthInstructions] = useState<string>("");
+  const [oauthProgress, setOauthProgress] = useState<string[]>([]);
+  const [oauthInput, setOauthInput] = useState<string>("");
+  const [oauthBusy, setOauthBusy] = useState(false);
 
   useEffect(() => {
     setProfiles(parsedProfiles);
@@ -152,6 +159,8 @@ export function ProviderTab() {
   const providerDef = PROVIDERS.find((p) => p.slug === draft.provider);
   const anthropicAuthMethod = (draft.authMethod || "api_key") as AnthropicAuthMethod;
   const isAnthropic = draft.provider === "anthropic";
+  const oauthProviderId = clean(draft.oauthProvider) || defaultOAuthProvider(draft.provider) || "";
+  const supportsInAppOAuth = !!oauthProviderId && (draft.authMethod === "oauth" || defaultAuthMethod(draft.provider) === "oauth");
   const fields = isAnthropic && anthropicAuthMethod === "setup_token"
     ? [{ key: "setup_token", label: "Setup Token", type: "password" as const, required: true, helpText: 'Run "claude setup-token" in another terminal' }]
     : (providerDef?.authFields || []);
@@ -220,6 +229,94 @@ export function ProviderTab() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const applyOauthStatus = (data: any) => {
+    setOauthStatus(data?.status || "");
+    setOauthAuthUrl(data?.authUrl || "");
+    setOauthInstructions(data?.authInstructions || "");
+    setOauthProgress(Array.isArray(data?.progress) ? data.progress : []);
+    if (data?.status === "completed" && data?.credentials) {
+      setDraft((d) => ({ ...d, oauthCredentials: JSON.stringify(data.credentials, null, 2) }));
+      setTestResult(null);
+      setOauthSessionId("");
+      setOauthInput("");
+      toast.success("OAuth login completed. Credentials loaded.");
+    } else if (data?.status === "error" && data?.error) {
+      toast.error(data.error);
+      setOauthSessionId("");
+    }
+  };
+
+  useEffect(() => {
+    if (!oauthSessionId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await gatewayFetch(`/api/config/oauth-login?sessionId=${encodeURIComponent(oauthSessionId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        applyOauthStatus(data);
+      } catch {}
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [oauthSessionId]);
+
+  const onStartOauth = async () => {
+    if (!oauthProviderId) return;
+    setOauthBusy(true);
+    try {
+      const res = await gatewayFetch("/api/config/oauth-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", provider: oauthProviderId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data?.error || "Failed to start OAuth login");
+        return;
+      }
+      setOauthSessionId(data.sessionId || "");
+      applyOauthStatus(data);
+      if (data?.authUrl && typeof window !== "undefined") {
+        window.open(data.authUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch {
+      toast.error("Failed to start OAuth login");
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const onSubmitOauthInput = async () => {
+    if (!oauthSessionId || !clean(oauthInput)) return;
+    setOauthBusy(true);
+    try {
+      const res = await gatewayFetch("/api/config/oauth-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "submit", sessionId: oauthSessionId, input: oauthInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data?.error || "Failed to submit OAuth input");
+        return;
+      }
+      setOauthInput("");
+      applyOauthStatus(data);
+    } catch {
+      toast.error("Failed to submit OAuth input");
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const resetOauthFlow = () => {
+    setOauthSessionId("");
+    setOauthStatus("");
+    setOauthAuthUrl("");
+    setOauthInstructions("");
+    setOauthProgress([]);
+    setOauthInput("");
   };
 
   const onTest = async () => {
@@ -299,12 +396,14 @@ export function ProviderTab() {
     setEditingIndex(null);
     setDraft(newDraft(currentProvider?.provider || "anthropic"));
     setTestResult(null);
+    resetOauthFlow();
   };
 
   const startEdit = (index: number) => {
     setEditingIndex(index);
     setDraft(toDraft(profiles[index]));
     setTestResult(null);
+    resetOauthFlow();
   };
 
   return (
@@ -379,6 +478,7 @@ export function ProviderTab() {
                   defaultModel: PROVIDERS.find((p) => p.slug === nextProvider)?.defaultModel || "",
                 }));
                 setTestResult(null);
+                resetOauthFlow();
               }}
               className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
             >
@@ -424,6 +524,53 @@ export function ProviderTab() {
               {field.helpText && <p className="text-zinc-600 text-xs mt-1">{field.helpText}</p>}
             </div>
           ))}
+
+          {supportsInAppOAuth && (
+            <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-3 space-y-3">
+              <div>
+                <p className="text-sm text-zinc-200 font-medium">In-App OAuth Login</p>
+                <p className="text-xs text-zinc-500">Start login, complete browser sign-in, then paste callback URL/code here.</p>
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={onStartOauth} disabled={oauthBusy} className="border-white/[0.08] text-zinc-300">
+                  {oauthBusy ? "Starting..." : "Start OAuth Login"}
+                </Button>
+                {oauthAuthUrl && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (typeof window !== "undefined") window.open(oauthAuthUrl, "_blank", "noopener,noreferrer");
+                    }}
+                    className="border-white/[0.08] text-zinc-300"
+                  >
+                    Open Auth URL
+                  </Button>
+                )}
+              </div>
+              {oauthAuthUrl && <p className="text-xs text-zinc-500 break-all">{oauthAuthUrl}</p>}
+              {oauthInstructions && <p className="text-xs text-zinc-500">{oauthInstructions}</p>}
+              {oauthSessionId && (
+                <div className="space-y-2">
+                  <Input
+                    value={oauthInput}
+                    onChange={(e) => setOauthInput(e.target.value)}
+                    placeholder="Paste callback URL or authorization code"
+                    className="bg-white/[0.06] border-white/[0.08] text-white"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="outline" onClick={onSubmitOauthInput} disabled={oauthBusy || !clean(oauthInput)} className="border-white/[0.08] text-zinc-300">
+                      Submit OAuth Input
+                    </Button>
+                    <span className="text-xs text-zinc-500">Status: {oauthStatus || "starting"}</span>
+                  </div>
+                  {oauthProgress.length > 0 && (
+                    <p className="text-xs text-zinc-500">{oauthProgress[oauthProgress.length - 1]}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="text-sm text-zinc-400 mb-1 block">Default Model (for this profile)</label>
