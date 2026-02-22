@@ -544,6 +544,128 @@ export default defineSchema({
     .index("by_name", ["name"])
     .index("by_gatewayId", ["gatewayId"]),
 
+  // --- SHARED STATE LEDGER ---
+  chain_executions: defineTable({
+    gatewayId: v.optional(v.id("gateways")),
+    chainName: v.string(),
+    chainVersion: v.optional(v.string()),
+    agentNamespace: v.string(),
+    agentName: v.optional(v.string()),
+    agentVersion: v.optional(v.string()),
+    triggerType: v.union(v.literal("human"), v.literal("scheduled"), v.literal("chain"), v.literal("agent")),
+    triggerRef: v.optional(v.string()),
+    humanTouchpoint: v.boolean(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+      v.literal("rolled_back"),
+      v.literal("rollback_failed"),
+      v.literal("aborted")
+    ),
+    resourceId: v.string(),
+    preState: v.optional(v.any()),
+    postState: v.optional(v.any()),
+    metadata: v.optional(v.any()),
+    lockId: v.optional(v.id("resource_locks")),
+    error: v.optional(v.string()),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_resource_status", ["resourceId", "status"])
+    .index("by_agent_started", ["agentNamespace", "startedAt"])
+    .index("by_status_started", ["status", "startedAt"])
+    .index("by_chain_started", ["chainName", "startedAt"])
+    .index("by_startedAt", ["startedAt"]),
+
+  step_executions: defineTable({
+    chainExecutionId: v.id("chain_executions"),
+    stepKey: v.string(),
+    stepName: v.optional(v.string()),
+    order: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+      v.literal("skipped"),
+      v.literal("rolled_back"),
+      v.literal("rollback_failed")
+    ),
+    command: v.optional(v.string()),
+    stdout: v.optional(v.string()),
+    stderr: v.optional(v.string()),
+    exitCode: v.optional(v.number()),
+    errorStrategy: v.optional(v.union(v.literal("stop"), v.literal("continue"), v.literal("retry"), v.literal("rollback"))),
+    retryCount: v.number(),
+    rollbackCommand: v.optional(v.string()),
+    rollbackStatus: v.optional(v.union(
+      v.literal("not_needed"),
+      v.literal("pending"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+      v.literal("skipped")
+    )),
+    metadata: v.optional(v.any()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_chain_order", ["chainExecutionId", "order"])
+    .index("by_chain_status", ["chainExecutionId", "status"])
+    .index("by_startedAt", ["startedAt"]),
+
+  resource_locks: defineTable({
+    resourceId: v.string(),
+    executionId: v.id("chain_executions"),
+    agentNamespace: v.string(),
+    lockState: v.union(v.literal("active"), v.literal("released"), v.literal("blocked")),
+    acquiredAt: v.number(),
+    releasedAt: v.optional(v.number()),
+    releaseReason: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+  })
+    .index("by_resource_state", ["resourceId", "lockState"])
+    .index("by_resource", ["resourceId"])
+    .index("by_execution", ["executionId"])
+    .index("by_agent_state", ["agentNamespace", "lockState"]),
+
+  resource_health: defineTable({
+    resourceId: v.string(),
+    agentNamespace: v.string(),
+    consecutiveFailures: v.number(),
+    locked: v.boolean(),
+    lockReason: v.optional(v.string()),
+    lockedAt: v.optional(v.number()),
+    lastFailureAt: v.optional(v.number()),
+    lastSuccessAt: v.optional(v.number()),
+    lastExecutionId: v.optional(v.id("chain_executions")),
+    updatedAt: v.number(),
+    metadata: v.optional(v.any()),
+  })
+    .index("by_resource_agent", ["resourceId", "agentNamespace"])
+    .index("by_locked", ["locked"])
+    .index("by_updatedAt", ["updatedAt"]),
+
+  secret_access_log: defineTable({
+    executionId: v.id("chain_executions"),
+    stepExecutionId: v.optional(v.id("step_executions")),
+    resourceId: v.string(),
+    secretRef: v.string(),
+    agentNamespace: v.string(),
+    action: v.union(v.literal("read"), v.literal("write"), v.literal("list"), v.literal("delete")),
+    allowed: v.boolean(),
+    reason: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+    accessedAt: v.number(),
+  })
+    .index("by_resource_time", ["resourceId", "accessedAt"])
+    .index("by_secret_time", ["secretRef", "accessedAt"])
+    .index("by_execution", ["executionId"])
+    .index("by_agent_time", ["agentNamespace", "accessedAt"]),
+
   // --- NOTIFICATIONS ---
   notifications: defineTable({
     userId: v.optional(v.string()),

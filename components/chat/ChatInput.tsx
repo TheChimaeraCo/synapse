@@ -840,11 +840,11 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     let detectWindowStart = 0;
     let calibrationUntil = 0;
     let noiseRms = 0.008;
-    const CALIBRATION_MS = 700;
-    const MIN_SPEECH_MS = 500;
-    const COOLDOWN_MS = 2200;
-    const MIN_RMS_FLOOR = 0.018;
-    const SPEECH_BAND_MIN = 9;
+    const CALIBRATION_MS = 650;
+    const MIN_SPEECH_MS = 420;
+    const COOLDOWN_MS = 1800;
+    const MIN_RMS_FLOOR = 0.016;
+    const SPEECH_BAND_MIN = 8;
 
     (async () => {
       try {
@@ -920,13 +920,15 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           }
 
           const duringPlayback = ttsPlayingRef.current || streamSpeechLoopActiveRef.current || Boolean(activeAudioRef.current);
-          const dynamicRmsThreshold = Math.max(MIN_RMS_FLOOR, noiseRms * (duringPlayback ? 3.5 : 2.3));
-          const speechBandThreshold = duringPlayback ? SPEECH_BAND_MIN + 8 : SPEECH_BAND_MIN;
-          const isSpeechLike = rms > dynamicRmsThreshold && speechBandAvg > speechBandThreshold;
+          const dynamicRmsThreshold = Math.max(MIN_RMS_FLOOR, noiseRms * (duringPlayback ? 3.0 : 2.1));
+          const speechBandThreshold = duringPlayback ? SPEECH_BAND_MIN + 6 : SPEECH_BAND_MIN;
+          const spikeThreshold = Math.max(0.02, noiseRms * (duringPlayback ? 1.9 : 1.7));
+          const spikeDetected = rms > spikeThreshold && (rms - noiseRms) > 0.012 && speechBandAvg > (SPEECH_BAND_MIN + 2);
+          const isSpeechLike = (rms > dynamicRmsThreshold && speechBandAvg > speechBandThreshold) || spikeDetected;
 
           if (isSpeechLike) {
             speechAccumMs += dt;
-            const requiredMs = duringPlayback ? Math.max(900, MIN_SPEECH_MS) : MIN_SPEECH_MS;
+            const requiredMs = duringPlayback ? Math.max(650, MIN_SPEECH_MS) : MIN_SPEECH_MS;
             if (speechAccumMs >= requiredMs && now - bargeInCooldownRef.current >= COOLDOWN_MS) {
               bargeInCooldownRef.current = now;
               speechAccumMs = 0;

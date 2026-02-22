@@ -27,6 +27,7 @@
     "verify:deploy": "node scripts/deploy.js --verify-only",
     "deploy:convex": "node scripts/deploy.js",
     "deploy:convex:dry-run": "node scripts/deploy.js --dry-run",
+    "echo:ask": "node scripts/echo-collab.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
