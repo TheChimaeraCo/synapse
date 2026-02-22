@@ -206,6 +206,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
             messageId: latestAssistant._id,
             content: latestAssistant.content,
             sessionId,
+            createdAt: latestAssistant._creationTime,
           },
         })
       );

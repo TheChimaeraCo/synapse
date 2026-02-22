@@ -70,6 +70,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const ttsPlayingRef = useRef(false);
   const chatStreamingRef = useRef(false);
   const awaitingReplyTimerRef = useRef<number | null>(null);
+  const awaitingSinceRef = useRef(0);
   const streamSpeechBufferRef = useRef("");
   const streamSpeechQueueRef = useRef<string[]>([]);
   const streamSpeechLoopActiveRef = useRef(false);
@@ -479,6 +480,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       window.clearTimeout(awaitingReplyTimerRef.current);
       awaitingReplyTimerRef.current = null;
     }
+    awaitingSinceRef.current = 0;
     voiceAwaitingReplyRef.current = false;
     setVoiceAwaitingReply(false);
   }, []);
@@ -495,6 +497,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         awaitingReplyTimerRef.current = null;
       }, 20000);
     }
+    awaitingSinceRef.current = Date.now();
     voiceAwaitingReplyRef.current = true;
     setVoiceAwaitingReply(true);
   }, [resetLiveSpeechState]);
@@ -837,11 +840,11 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     let detectWindowStart = 0;
     let calibrationUntil = 0;
     let noiseRms = 0.008;
-    const CALIBRATION_MS = 900;
-    const MIN_SPEECH_MS = 850;
-    const COOLDOWN_MS = 2500;
-    const MIN_RMS_FLOOR = 0.02;
-    const SPEECH_BAND_MIN = 12;
+    const CALIBRATION_MS = 700;
+    const MIN_SPEECH_MS = 500;
+    const COOLDOWN_MS = 2200;
+    const MIN_RMS_FLOOR = 0.018;
+    const SPEECH_BAND_MIN = 9;
 
     (async () => {
       try {
@@ -917,13 +920,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           }
 
           const duringPlayback = ttsPlayingRef.current || streamSpeechLoopActiveRef.current || Boolean(activeAudioRef.current);
-          const dynamicRmsThreshold = Math.max(MIN_RMS_FLOOR, noiseRms * (duringPlayback ? 4.2 : 2.8));
-          const speechBandThreshold = duringPlayback ? SPEECH_BAND_MIN + 10 : SPEECH_BAND_MIN;
+          const dynamicRmsThreshold = Math.max(MIN_RMS_FLOOR, noiseRms * (duringPlayback ? 3.5 : 2.3));
+          const speechBandThreshold = duringPlayback ? SPEECH_BAND_MIN + 8 : SPEECH_BAND_MIN;
           const isSpeechLike = rms > dynamicRmsThreshold && speechBandAvg > speechBandThreshold;
 
           if (isSpeechLike) {
             speechAccumMs += dt;
-            const requiredMs = duringPlayback ? Math.max(1200, MIN_SPEECH_MS) : MIN_SPEECH_MS;
+            const requiredMs = duringPlayback ? Math.max(900, MIN_SPEECH_MS) : MIN_SPEECH_MS;
             if (speechAccumMs >= requiredMs && now - bargeInCooldownRef.current >= COOLDOWN_MS) {
               bargeInCooldownRef.current = now;
               speechAccumMs = 0;
@@ -996,10 +999,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   // Voice mode turn-taking: when a new assistant message arrives, speak it then listen again.
   useEffect(() => {
     const handler = async (event: Event) => {
-      const detail = (event as CustomEvent).detail as { content?: string; sessionId?: string } | undefined;
+      const detail = (event as CustomEvent).detail as { content?: string; sessionId?: string; createdAt?: number } | undefined;
       if (typeof detail?.content !== "string" || !detail.content.trim()) return;
       if (detail.sessionId && detail.sessionId !== sessionIdRef.current) return;
-      if (!voiceModeRef.current) return;
+      if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
+      if (typeof detail.createdAt === "number" && awaitingSinceRef.current > 0 && detail.createdAt < (awaitingSinceRef.current - 500)) {
+        return;
+      }
 
       try {
         if (voiceSettingsRef.current.autoRead) {
