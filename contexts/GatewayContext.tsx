@@ -13,6 +13,7 @@ export interface Gateway {
   role?: string;
   memberCount?: number;
   messageCount?: number;
+  workspacePath?: string;
 }
 
 interface GatewayContextType {

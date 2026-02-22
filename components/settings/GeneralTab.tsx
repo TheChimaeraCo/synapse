@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PROVIDERS } from "@/lib/providers";
 import { useFetch } from "@/lib/hooks";
 import { useConfigSettings } from "@/lib/useConfigSettings";
+import { useGateway } from "@/contexts/GatewayContext";
 import { Slider } from "@/components/ui/slider";
 import { Toggle } from "@/components/ui/toggle";
 import { parseProviderProfiles, pickDefaultProfileId } from "@/lib/aiRoutingConfig";
@@ -27,7 +28,17 @@ const TIMEZONES = [
 export function GeneralTab() {
   const { data: agents, refetch } = useFetch<any[]>("/api/agents");
   const { data: configData } = useFetch<Record<string, string>>("/api/config/all");
-  const { get, set, save: saveConfig, saving: savingConfig } = useConfigSettings("identity.");
+  const { activeGateway } = useGateway();
+  const { get, set, save: saveConfig, saving: savingConfig, config, loaded: configLoaded } = useConfigSettings("identity.");
+
+  // Seed workspace_path from gateway record if config is empty (only after config has loaded)
+  const [seededWorkspace, setSeededWorkspace] = useState(false);
+  useEffect(() => {
+    if (!seededWorkspace && configLoaded && activeGateway?.workspacePath && !config["identity.workspace_path"]) {
+      set("workspace_path", activeGateway.workspacePath);
+      setSeededWorkspace(true);
+    }
+  }, [activeGateway, config, seededWorkspace, configLoaded]);
 
   const agent = agents?.[0];
   const providerProfiles = parseProviderProfiles(configData?.["ai.provider_profiles"]);
@@ -78,6 +89,15 @@ export function GeneralTab() {
       });
       if (!res.ok) throw new Error("Failed to save");
       await saveConfig();
+      // Sync workspace path back to gateway record
+      const wsPath = get("workspace_path");
+      if (activeGateway && wsPath && wsPath !== activeGateway.workspacePath) {
+        await gatewayFetch(`/api/gateways/${activeGateway._id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspacePath: wsPath }),
+        });
+      }
       toast.success("Settings saved");
       refetch();
     } catch {

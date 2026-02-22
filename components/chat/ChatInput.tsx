@@ -378,6 +378,46 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
       mediaRecorder.start();
       setRecording(true);
+
+      // VAD: auto-stop after silence when in voice mode (autoSend)
+      if (autoSend) {
+        const audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        let silenceStart = 0;
+        let speechDetected = false;
+        const SILENCE_THRESHOLD = 15;
+        const SILENCE_DURATION = 1500; // ms of silence before auto-stop
+        const MIN_RECORD_TIME = 500; // minimum recording time before checking silence
+
+        const checkSilence = () => {
+          if (mediaRecorder.state !== "recording") {
+            audioCtx.close();
+            return;
+          }
+          analyser.getByteFrequencyData(dataArray);
+          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+
+          if (avg > SILENCE_THRESHOLD) {
+            speechDetected = true;
+            silenceStart = 0;
+          } else if (speechDetected) {
+            if (!silenceStart) silenceStart = Date.now();
+            else if (Date.now() - silenceStart > SILENCE_DURATION) {
+              audioCtx.close();
+              mediaRecorder.stop();
+              setRecording(false);
+              return;
+            }
+          }
+          requestAnimationFrame(checkSilence);
+        };
+        // Delay VAD start to avoid cutting off immediately
+        setTimeout(checkSilence, MIN_RECORD_TIME);
+      }
     } catch {
       toast.error("Microphone access denied");
     }

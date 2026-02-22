@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
     }
 
     const config = await getVoiceConfigFromDb(gatewayId as Id<"gateways">);
+    console.log("[STT] provider:", config.sttProvider, "hasKey:", !!config.sttApiKey, "fileType:", file.type, "fileSize:", file.size);
     if (config.sttProvider === "none") {
       return NextResponse.json({ error: "STT is not configured" }, { status: 400 });
     }
@@ -29,8 +30,10 @@ export async function POST(req: NextRequest) {
       filename: file.name || undefined,
     });
 
+    console.log("[STT] result:", JSON.stringify(text).slice(0, 200));
     return NextResponse.json({ text });
   } catch (err) {
+    console.error("[STT] error:", err);
     return handleGatewayError(err);
   }
 }

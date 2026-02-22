@@ -42,5 +42,5 @@ export function useConfigSettings(prefix: string) {
     }
   };
 
-  return { get, set, save, saving, loading, config };
+  return { get, set, save, saving, loading, config, loaded: !loading };
 }

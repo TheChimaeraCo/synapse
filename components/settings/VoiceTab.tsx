@@ -141,18 +141,19 @@ export function VoiceTab() {
         <CardContent className="space-y-4">
           <div>
             <label className="text-sm text-zinc-400 mb-1 block">STT Provider</label>
-            <Select value={get("stt_provider", "openai")} onValueChange={(val) => set("stt_provider", val)}>
+            <Select value={get("stt_provider", "groq")} onValueChange={(val) => set("stt_provider", val)}>
               <SelectTrigger className="w-full bg-white/[0.04] border-white/[0.08] text-zinc-200 rounded-xl">
                 <SelectValue placeholder="Select..." />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Disabled</SelectItem>
+                <SelectItem value="groq">Groq Whisper (Free)</SelectItem>
                 <SelectItem value="openai">OpenAI Whisper</SelectItem>
                 <SelectItem value="google">Google Cloud</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          {get("stt_provider", "openai") !== "none" && (
+          {get("stt_provider", "groq") !== "none" && (
             <div>
               <label className="text-sm text-zinc-400 mb-1 block">STT API Key (leave blank to use TTS key)</label>
               <Input

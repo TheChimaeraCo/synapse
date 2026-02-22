@@ -13,7 +13,7 @@ export interface VoiceConfig {
   ttsSimilarity?: number;
   ttsStyle?: number;
   ttsSpeed?: number;
-  sttProvider: "openai" | "google" | "none";
+  sttProvider: "openai" | "google" | "groq" | "none";
   sttApiKey?: string;
 }
 
@@ -223,6 +223,36 @@ export async function speechToText(
     return String(data?.text || "").trim();
   }
 
+  if (config.sttProvider === "groq") {
+    const apiKey = requireApiKey("groq" as any, config.sttApiKey || process.env.GROQ_API_KEY);
+    const formData = new FormData();
+    // Groq Whisper works better with explicit file extensions matching the codec
+    const groqExt = mimeType.includes("opus") ? "ogg" : extensionFromMime(mimeType);
+    const groqFilename = `recording.${groqExt}`;
+    const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });
+    formData.append("file", blob, groqFilename);
+    formData.append("model", "whisper-large-v3-turbo");
+    formData.append("language", language);
+    formData.append("response_format", "verbose_json");
+
+    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Groq STT failed (${res.status}): ${err}`);
+    }
+
+    const data = await res.json();
+    console.log("[Groq STT] response:", JSON.stringify(data).slice(0, 500));
+    return String(data?.text || "").trim();
+  }
+
   if (config.sttProvider === "google") {
     const apiKey = requireApiKey("google", config.sttApiKey || process.env.GOOGLE_API_KEY);
     const { encoding, sampleRateHertz } = googleEncodingFromMime(mimeType);
@@ -292,9 +322,9 @@ export async function getVoiceConfigFromDb(gatewayId?: Id<"gateways">): Promise<
     }
 
     const ttsProviderRaw = firstValue(configs, ["voice.tts_provider", "voice_tts_provider"]) || "none";
-    const sttProviderRaw = firstValue(configs, ["voice.stt_provider", "voice_stt_provider"]) || "openai";
+    const sttProviderRaw = firstValue(configs, ["voice.stt_provider", "voice_stt_provider"]) || "groq";
     const ttsProvider = (["elevenlabs", "openai", "google", "none"].includes(ttsProviderRaw) ? ttsProviderRaw : "none") as VoiceConfig["ttsProvider"];
-    const sttProvider = (["openai", "google", "none"].includes(sttProviderRaw) ? sttProviderRaw : "openai") as VoiceConfig["sttProvider"];
+    const sttProvider = (["openai", "google", "groq", "none"].includes(sttProviderRaw) ? sttProviderRaw : "groq") as VoiceConfig["sttProvider"];
 
     const ttsApiKey =
       firstValue(configs, ["voice.tts_api_key", "voice_tts_api_key", "ai_api_key"]) ||
@@ -306,6 +336,7 @@ export async function getVoiceConfigFromDb(gatewayId?: Id<"gateways">): Promise<
       firstValue(configs, ["voice.stt_api_key", "voice_stt_api_key"]) ||
       firstValue(configs, ["voice.tts_api_key", "voice_tts_api_key", "ai_api_key"]) ||
       (sttProvider === "openai" ? process.env.OPENAI_API_KEY : undefined) ||
+      (sttProvider === "groq" ? process.env.GROQ_API_KEY : undefined) ||
       (sttProvider === "google" ? process.env.GOOGLE_API_KEY : undefined);
 
     return {
