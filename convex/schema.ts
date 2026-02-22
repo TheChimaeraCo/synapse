@@ -837,6 +837,40 @@ export default defineSchema({
     .index("by_session", ["sessionId"])
     .index("by_user", ["userId"]),
 
+  // --- PROACTIVE FOLLOWUPS ---
+  proactiveFollowups: defineTable({
+    gatewayId: v.id("gateways"),
+    sessionId: v.id("sessions"),
+    conversationId: v.optional(v.id("conversations")),
+    userId: v.optional(v.id("authUsers")),
+    channelId: v.optional(v.id("channels")),
+    externalUserId: v.optional(v.string()),
+    topic: v.string(),
+    prompt: v.string(),
+    dueAt: v.number(),
+    tags: v.optional(v.array(v.string())),
+    confidence: v.optional(v.number()),
+    status: v.union(
+      v.literal("open"),
+      v.literal("sent"),
+      v.literal("completed"),
+      v.literal("cancelled")
+    ),
+    attempts: v.number(),
+    lastAttemptAt: v.optional(v.number()),
+    sentAt: v.optional(v.number()),
+    respondedAt: v.optional(v.number()),
+    proactiveMessageId: v.optional(v.id("messages")),
+    sourceSummary: v.optional(v.string()),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_status_dueAt", ["status", "dueAt"])
+    .index("by_gateway", ["gatewayId", "dueAt"])
+    .index("by_session", ["sessionId", "dueAt"])
+    .index("by_conversation", ["conversationId"]),
+
   // --- MESSAGE REACTIONS ---
   messageReactions: defineTable({
     gatewayId: v.id("gateways"),

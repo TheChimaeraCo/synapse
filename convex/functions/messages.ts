@@ -208,6 +208,12 @@ export const create = mutation({
     await ctx.scheduler.runAfter(0, internal.functions.sessions.updateLastMessage, {
       id: args.sessionId,
     });
+    if (args.role === "user") {
+      await ctx.scheduler.runAfter(0, (internal as any).functions.proactive.completeOnUserReply, {
+        sessionId: args.sessionId,
+        repliedAt: Date.now(),
+      });
+    }
     return messageId;
   },
 });

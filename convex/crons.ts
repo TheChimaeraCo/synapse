@@ -27,4 +27,10 @@ crons.interval(
   internal.actions.embeddings.processQueue
 );
 
+crons.interval(
+  "proactive-followups",
+  { minutes: 10 },
+  (internal as any).actions.proactive.tick
+);
+
 export default crons;

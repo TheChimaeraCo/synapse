@@ -30,6 +30,29 @@ Safety rules:
 
 Respond ONLY with valid JSON, no markdown.`;
 
+const FOLLOWUP_PROMPT = `Extract proactive follow-ups from this conversation.
+
+Return JSON only:
+{
+  "followups": [
+    {
+      "topic": "short topic label",
+      "prompt": "single follow-up message/question to send later",
+      "dueAtIso": "ISO-8601 timestamp with timezone",
+      "confidence": 0.0-1.0,
+      "tags": ["tag1", "tag2"]
+    }
+  ]
+}
+
+Rules:
+- Only include follow-ups when the user clearly mentioned a future intent, pending outcome, or check-back moment.
+- If no specific future check-in exists, return an empty array.
+- Keep prompt concise (max ~1 sentence).
+- dueAtIso must be in the future relative to the provided current time.
+- Never include secrets, API keys, tokens, credentials, or sensitive identifiers.
+- Max 5 followups.`;
+
 const SECRET_LIKE_PATTERNS = [
   /sk-[A-Za-z0-9._-]{16,}/,
   /AIza[0-9A-Za-z\-_]{20,}/,
@@ -84,6 +107,211 @@ function sanitizeStateUpdates(raw: any): Array<{
   }
 
   return cleaned.slice(0, 12);
+}
+
+function parseBool(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const v = value.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+function sanitizeFollowups(
+  raw: any,
+  now: number,
+): Array<{ topic: string; prompt: string; dueAt: number; confidence?: number; tags?: string[] }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ topic: string; prompt: string; dueAt: number; confidence?: number; tags?: string[] }> = [];
+  const maxDueAt = now + 90 * 24 * 60 * 60 * 1000;
+  for (const item of raw.slice(0, 10)) {
+    if (!item || typeof item !== "object") continue;
+    const topic = typeof item.topic === "string" ? item.topic.trim().slice(0, 80) : "";
+    const prompt = typeof item.prompt === "string" ? item.prompt.trim().slice(0, 220) : "";
+    const dueAtIso = typeof item.dueAtIso === "string" ? item.dueAtIso.trim() : "";
+    const dueAt = dueAtIso ? Date.parse(dueAtIso) : NaN;
+    if (!topic || !prompt || !Number.isFinite(dueAt)) continue;
+    if (dueAt <= now + 5 * 60 * 1000 || dueAt > maxDueAt) continue;
+    if (containsSensitiveLikeValue(`${topic} ${prompt}`)) continue;
+    const tags = Array.isArray(item.tags)
+      ? item.tags
+        .filter((t: any) => typeof t === "string" && t.trim())
+        .map((t: string) => t.trim().toLowerCase().slice(0, 40))
+        .slice(0, 8)
+      : undefined;
+    out.push({
+      topic,
+      prompt,
+      dueAt,
+      ...(typeof item.confidence === "number" ? { confidence: Math.max(0, Math.min(1, item.confidence)) } : {}),
+      ...(tags && tags.length ? { tags } : {}),
+    });
+  }
+  return out.slice(0, 5);
+}
+
+const WEEKDAYS: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+function nextWeekdayAt(now: number, weekday: number, hour = 18, minute = 0): number {
+  const date = new Date(now);
+  const current = date.getDay();
+  let delta = weekday - current;
+  if (delta < 0) delta += 7;
+  if (delta === 0) {
+    const sameDay = new Date(now);
+    sameDay.setHours(hour, minute, 0, 0);
+    if (sameDay.getTime() > now + 5 * 60 * 1000) return sameDay.getTime();
+    delta = 7;
+  }
+  const out = new Date(now + delta * 24 * 60 * 60 * 1000);
+  out.setHours(hour, minute, 0, 0);
+  return out.getTime();
+}
+
+function extractHeuristicFollowups(
+  messages: Array<{ role: string; content: string }>,
+  now: number,
+): Array<{ topic: string; prompt: string; dueAt: number; confidence?: number; tags?: string[] }> {
+  const items: Array<{ topic: string; prompt: string; dueAt: number; confidence?: number; tags?: string[] }> = [];
+  const userMessages = messages.filter((m) => m.role === "user").slice(-20);
+  for (const msg of userMessages) {
+    const text = (msg.content || "").trim();
+    if (!text) continue;
+    const lower = text.toLowerCase();
+    const intent = /\b(maybe|might|plan(?:ning)? to|going to|gonna|thinking about|considering)\b/.test(lower);
+    if (!intent) continue;
+
+    const weekdayName = Object.keys(WEEKDAYS).find((day) => lower.includes(day));
+    if (!weekdayName) continue;
+    const dueAt = nextWeekdayAt(now, WEEKDAYS[weekdayName], 18, 0);
+    if (!Number.isFinite(dueAt)) continue;
+
+    if (/\bmovie|cinema|theater\b/.test(lower)) {
+      items.push({
+        topic: "movie_plan",
+        prompt: `You mentioned maybe seeing a movie on ${weekdayName}. Did you end up going?`,
+        dueAt,
+        confidence: 0.65,
+        tags: ["movie", "followup"],
+      });
+      continue;
+    }
+
+    items.push({
+      topic: "pending_plan",
+      prompt: `Quick follow-up on your plan for ${weekdayName}: did it happen, or should we adjust it?`,
+      dueAt,
+      confidence: 0.5,
+      tags: ["followup"],
+    });
+    if (items.length >= 3) break;
+  }
+  return items.slice(0, 3);
+}
+
+async function maybeExtractFollowups(args: {
+  gatewayId: Id<"gateways">;
+  sessionId: Id<"sessions">;
+  conversationId: Id<"conversations">;
+  userId?: Id<"authUsers">;
+  summary?: string;
+  formattedConversation: string;
+  messages: Array<{ role: string; content: string }>;
+}): Promise<void> {
+  const enabledRaw = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+    gatewayId: args.gatewayId,
+    key: "proactive.enabled",
+  }).catch(() => null);
+  const modeRaw = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+    gatewayId: args.gatewayId,
+    key: "proactive.mode",
+  }).catch(() => null);
+  const timezoneRaw = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+    gatewayId: args.gatewayId,
+    key: "proactive.timezone",
+  }).catch(() => null);
+  const identityTimezoneRaw = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+    gatewayId: args.gatewayId,
+    key: "identity.timezone",
+  }).catch(() => null);
+
+  if (!parseBool(enabledRaw?.value)) return;
+  const mode = (modeRaw?.value || "followups_only").trim().toLowerCase();
+  if (mode === "off") return;
+
+  const now = Date.now();
+  const timezone = (timezoneRaw?.value || identityTimezoneRaw?.value || "UTC").trim() || "UTC";
+  const selection = await resolveAiSelection({
+    gatewayId: args.gatewayId,
+    capability: "summary",
+    message: args.summary || args.formattedConversation.slice(0, 1200),
+  });
+  const provider = selection.provider;
+  const key = selection.apiKey;
+  if (!key) return;
+
+  const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
+  registerBuiltInApiProviders();
+  const preferredModelId = SUMMARY_MODELS[provider] || SUMMARY_MODELS.anthropic;
+  let model = getModel(provider as any, preferredModelId as any);
+  if (!model && selection.model) model = getModel(provider as any, selection.model as any);
+  if (!model) return;
+
+  const prompt = `${FOLLOWUP_PROMPT}
+
+Current time: ${new Date(now).toISOString()}
+Timezone: ${timezone}
+
+Conversation:
+${args.formattedConversation.slice(0, 16_000)}`;
+
+  let text = "";
+  const aiStream = streamSimple(model, {
+    systemPrompt: "",
+    messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+  }, { maxTokens: 500, apiKey: key });
+  for await (const event of aiStream) {
+    if (event.type === "text_delta") text += event.delta;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return;
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch {
+      return;
+    }
+  }
+
+  let items = sanitizeFollowups(parsed?.followups, now);
+  if (items.length === 0) {
+    items = extractHeuristicFollowups(args.messages, now);
+  }
+  if (items.length === 0) return;
+
+  const session = await convexClient.query(api.functions.sessions.get, { id: args.sessionId });
+  if (!session) return;
+
+  await convexClient.mutation((api as any).functions.proactive.createMany, {
+    gatewayId: args.gatewayId,
+    sessionId: args.sessionId,
+    conversationId: args.conversationId,
+    userId: args.userId,
+    channelId: session.channelId,
+    externalUserId: session.externalUserId,
+    sourceSummary: args.summary,
+    items,
+  });
 }
 
 /**
@@ -225,6 +453,21 @@ export async function summarizeConversation(
       decisions,
       stateUpdates,
     });
+
+    // Extract proactive follow-up loops for future check-ins.
+    try {
+      await maybeExtractFollowups({
+        gatewayId: convo.gatewayId,
+        sessionId: convo.sessionId,
+        conversationId,
+        userId: convo.userId || undefined,
+        summary: parsed.summary || undefined,
+        formattedConversation: formatted,
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      });
+    } catch (err) {
+      console.error("[conversationSummarizer] Follow-up extraction failed:", err);
+    }
 
     // Fire-and-forget soul reflection
     reflectOnConversation(conversationId, convo.gatewayId).catch((err) =>

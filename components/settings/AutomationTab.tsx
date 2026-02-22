@@ -55,6 +55,28 @@ const INTERVAL_OPTIONS = [
   { label: "4 hr", value: 240 },
 ];
 
+const PROACTIVE_KEYS = [
+  "proactive.enabled",
+  "proactive.mode",
+  "proactive.max_messages_per_day",
+  "proactive.min_hours_between",
+  "proactive.quiet_hours_start",
+  "proactive.quiet_hours_end",
+  "proactive.timezone",
+  "proactive.allowed_platforms",
+] as const;
+
+const DEFAULT_PROACTIVE = {
+  enabled: false,
+  mode: "followups_only",
+  maxMessagesPerDay: "2",
+  minHoursBetween: "8",
+  quietHoursStart: "22:00",
+  quietHoursEnd: "08:00",
+  timezone: "UTC",
+  allowedPlatforms: "hub,telegram,whatsapp,api,custom",
+};
+
 function StatusBadge({ status }: { status?: string }) {
   if (!status) return <Badge variant="outline" className="text-zinc-500 border-white/[0.08]">Never run</Badge>;
   if (status === "ok") return <Badge className="bg-emerald-900/50 text-emerald-400 border-emerald-700">OK</Badge>;
@@ -92,6 +114,58 @@ export function AutomationTab() {
   const [newCron, setNewCron] = useState({ label: "", schedule: "", prompt: "" });
   const [seeding, setSeeding] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
+  const [savingProactive, setSavingProactive] = useState(false);
+  const [proactive, setProactive] = useState(DEFAULT_PROACTIVE);
+
+  const loadProactive = useCallback(async () => {
+    try {
+      const keys = PROACTIVE_KEYS.join(",");
+      const res = await gatewayFetch(`/api/config?keys=${encodeURIComponent(keys)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setProactive({
+        enabled: String(data["proactive.enabled"] || "").toLowerCase() === "true",
+        mode: data["proactive.mode"] || DEFAULT_PROACTIVE.mode,
+        maxMessagesPerDay: data["proactive.max_messages_per_day"] || DEFAULT_PROACTIVE.maxMessagesPerDay,
+        minHoursBetween: data["proactive.min_hours_between"] || DEFAULT_PROACTIVE.minHoursBetween,
+        quietHoursStart: data["proactive.quiet_hours_start"] || DEFAULT_PROACTIVE.quietHoursStart,
+        quietHoursEnd: data["proactive.quiet_hours_end"] || DEFAULT_PROACTIVE.quietHoursEnd,
+        timezone: data["proactive.timezone"] || DEFAULT_PROACTIVE.timezone,
+        allowedPlatforms: data["proactive.allowed_platforms"] || DEFAULT_PROACTIVE.allowedPlatforms,
+      });
+    } catch (e) {
+      console.error("Failed to load proactive settings:", e);
+    }
+  }, []);
+
+  const saveProactive = async () => {
+    setSavingProactive(true);
+    try {
+      const entries: Array<[string, string]> = [
+        ["proactive.enabled", proactive.enabled ? "true" : "false"],
+        ["proactive.mode", proactive.mode || "followups_only"],
+        ["proactive.max_messages_per_day", proactive.maxMessagesPerDay || "2"],
+        ["proactive.min_hours_between", proactive.minHoursBetween || "8"],
+        ["proactive.quiet_hours_start", proactive.quietHoursStart || "22:00"],
+        ["proactive.quiet_hours_end", proactive.quietHoursEnd || "08:00"],
+        ["proactive.timezone", proactive.timezone || "UTC"],
+        ["proactive.allowed_platforms", proactive.allowedPlatforms || DEFAULT_PROACTIVE.allowedPlatforms],
+      ];
+
+      for (const [key, value] of entries) {
+        const res = await gatewayFetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, value }),
+        });
+        if (!res.ok) throw new Error(`Failed to save ${key}`);
+      }
+    } catch (e) {
+      console.error("Failed to save proactive settings:", e);
+    } finally {
+      setSavingProactive(false);
+    }
+  };
 
   const fetchData = useCallback(async (gId?: string) => {
     try {
@@ -128,12 +202,13 @@ export function AutomationTab() {
         if (gId) {
           setGatewayId(gId);
           fetchData(gId);
+          loadProactive();
         } else {
           setLoading(false);
         }
       })
       .catch(() => setLoading(false));
-  }, []);
+  }, [fetchData, loadProactive]);
 
   const toggleModule = async (mod: HeartbeatModule) => {
     setSaving(mod._id);
@@ -227,6 +302,112 @@ export function AutomationTab() {
         <h2 className="text-xl font-semibold text-white mb-1">Automation</h2>
         <p className="text-sm text-zinc-400">Heartbeat engine, cron jobs, and webhooks - all Convex-native.</p>
       </div>
+
+      <Card className="bg-white/[0.04] border-white/[0.06]">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-white flex items-center gap-2 text-base">
+            <Zap className="h-4 w-4 text-blue-400" />
+            Proactive Follow-ups
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between p-3 rounded-lg bg-white/[0.04] border border-white/[0.08]/50">
+            <div>
+              <p className="text-sm text-zinc-200 font-medium">Enable proactive follow-ups</p>
+              <p className="text-xs text-zinc-500">When due, Synapse can send a check-in message without waiting for a user prompt.</p>
+            </div>
+            <button
+              onClick={() => setProactive((p) => ({ ...p, enabled: !p.enabled }))}
+              className={`w-11 h-6 rounded-full transition-colors relative ${proactive.enabled ? "bg-gradient-to-r from-blue-500 to-purple-500 shadow-[0_0_12px_rgba(59,130,246,0.25)]" : "bg-white/[0.12]"}`}
+            >
+              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${proactive.enabled ? "left-5.5" : "left-0.5"}`} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Mode</p>
+              <Select
+                value={proactive.mode}
+                onValueChange={(value) => setProactive((p) => ({ ...p, mode: value }))}
+              >
+                <SelectTrigger className="h-9 bg-white/[0.04] border-white/[0.08] text-zinc-200 rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="followups_only">Follow-ups Only</SelectItem>
+                  <SelectItem value="off">Off</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Timezone</p>
+              <Input
+                value={proactive.timezone}
+                onChange={(e) => setProactive((p) => ({ ...p, timezone: e.target.value }))}
+                placeholder="America/New_York"
+                className="bg-white/[0.06] border-white/[0.08] text-zinc-200"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Max proactive messages/day</p>
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={proactive.maxMessagesPerDay}
+                onChange={(e) => setProactive((p) => ({ ...p, maxMessagesPerDay: e.target.value }))}
+                className="bg-white/[0.06] border-white/[0.08] text-zinc-200"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Minimum hours between proactive messages</p>
+              <Input
+                type="number"
+                min={1}
+                max={48}
+                value={proactive.minHoursBetween}
+                onChange={(e) => setProactive((p) => ({ ...p, minHoursBetween: e.target.value }))}
+                className="bg-white/[0.06] border-white/[0.08] text-zinc-200"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Quiet hours start (HH:MM)</p>
+              <Input
+                value={proactive.quietHoursStart}
+                onChange={(e) => setProactive((p) => ({ ...p, quietHoursStart: e.target.value }))}
+                placeholder="22:00"
+                className="bg-white/[0.06] border-white/[0.08] text-zinc-200"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Quiet hours end (HH:MM)</p>
+              <Input
+                value={proactive.quietHoursEnd}
+                onChange={(e) => setProactive((p) => ({ ...p, quietHoursEnd: e.target.value }))}
+                placeholder="08:00"
+                className="bg-white/[0.06] border-white/[0.08] text-zinc-200"
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs text-zinc-500 mb-1">Allowed platforms (comma-separated)</p>
+            <Input
+              value={proactive.allowedPlatforms}
+              onChange={(e) => setProactive((p) => ({ ...p, allowedPlatforms: e.target.value }))}
+              placeholder="hub,telegram,whatsapp,api,custom"
+              className="bg-white/[0.06] border-white/[0.08] text-zinc-200"
+            />
+          </div>
+
+          <div className="flex justify-end">
+            <Button onClick={saveProactive} disabled={savingProactive}>
+              {savingProactive ? "Saving..." : "Save Proactive Settings"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Heartbeat Modules */}
       <Card className="bg-white/[0.04] border-white/[0.06]">

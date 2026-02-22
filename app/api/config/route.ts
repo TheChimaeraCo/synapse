@@ -20,6 +20,14 @@ const CONFIG_KEYS = [
   "telegram_bot_token",
   "setup_complete",
   "agent_name",
+  "proactive.enabled",
+  "proactive.mode",
+  "proactive.max_messages_per_day",
+  "proactive.min_hours_between",
+  "proactive.quiet_hours_start",
+  "proactive.quiet_hours_end",
+  "proactive.timezone",
+  "proactive.allowed_platforms",
 ];
 
 export async function GET(req: NextRequest) {
