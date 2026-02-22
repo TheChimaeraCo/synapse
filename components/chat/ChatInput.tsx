@@ -360,16 +360,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   };
 
   const handleStop = () => {
-    (window as any).__synapse_chat?.stopStreaming?.();
-    if (voiceModeRef.current) {
-      clearAwaitingReply();
-      resetLiveSpeechState();
-      if (voiceSettingsRef.current.autoTranscribe) {
+    void (async () => {
+      await interruptAssistantTurn();
+      if (voiceModeRef.current && voiceSettingsRef.current.autoTranscribe) {
         window.setTimeout(() => {
           if (voiceModeRef.current) void startRecordingRef.current(true);
         }, 200);
       }
-    }
+    })();
   };
 
   const sendTextDirect = useCallback(async (text: string) => {
@@ -382,6 +380,15 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     if (typeof window === "undefined") return false;
     return Boolean((window as any).__synapse_chat?.isStreaming);
   }, []);
+
+  const isAssistantBusyNow = useCallback(() => {
+    return (
+      isChatStreamingNow() ||
+      ttsPlayingRef.current ||
+      Boolean(activeAudioRef.current) ||
+      streamSpeechLoopActiveRef.current
+    );
+  }, [isChatStreamingNow]);
 
   const waitForChatIdle = useCallback(async (timeoutMs = 6000) => {
     const startedAt = Date.now();
@@ -593,14 +600,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       throw new Error("Browser speech recognition is not supported in this browser.");
     }
     if (recording || transcribing) return;
-    if (isChatStreamingNow()) {
+    if (isAssistantBusyNow()) {
       if (autoSend || voiceModeRef.current) {
         await interruptAssistantTurn();
       } else {
         return;
       }
     }
-    if (isChatStreamingNow()) return;
+    if (isAssistantBusyNow()) return;
 
     setRecording(true);
     setTranscribing(true);
@@ -651,7 +658,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     };
 
     recognition.start();
-  }, [clearAwaitingReply, getBrowserSpeechCtor, interruptAssistantTurn, isChatStreamingNow, markAwaitingReply, recording, sendTextDirect, transcribing, voiceSettings.sttLanguage]);
+  }, [clearAwaitingReply, getBrowserSpeechCtor, interruptAssistantTurn, isAssistantBusyNow, markAwaitingReply, recording, sendTextDirect, transcribing, voiceSettings.sttLanguage]);
 
   const stopRecording = useCallback(() => {
     const speech = speechRecognitionRef.current;
@@ -667,14 +674,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
   const startRecording = useCallback(async (autoSend = false) => {
     if (recording || transcribing) return;
-    if (isChatStreamingNow()) {
+    if (isAssistantBusyNow()) {
       if (autoSend || voiceModeRef.current) {
         await interruptAssistantTurn();
       } else {
         return;
       }
     }
-    if (isChatStreamingNow()) return;
+    if (isAssistantBusyNow()) return;
     if (voiceSettings.sttProvider === "browser") {
       try {
         await startBrowserRecognition(autoSend);
@@ -775,7 +782,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       toast.error("Microphone access denied");
       if (autoSend) clearAwaitingReply();
     }
-  }, [clearAwaitingReply, interruptAssistantTurn, isChatStreamingNow, markAwaitingReply, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttProvider]);
+  }, [clearAwaitingReply, interruptAssistantTurn, isAssistantBusyNow, markAwaitingReply, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttProvider]);
 
   const toggleVoiceMode = useCallback(async () => {
     if (voiceModeRef.current) {
@@ -825,10 +832,16 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     }
 
     let cancelled = false;
-    let speechStart = 0;
-    const THRESHOLD = 24;
-    const MIN_SPEECH_MS = 320;
-    const COOLDOWN_MS = 1800;
+    let speechAccumMs = 0;
+    let lastTickAt = 0;
+    let detectWindowStart = 0;
+    let calibrationUntil = 0;
+    let noiseRms = 0.008;
+    const CALIBRATION_MS = 900;
+    const MIN_SPEECH_MS = 850;
+    const COOLDOWN_MS = 2500;
+    const MIN_RMS_FLOOR = 0.02;
+    const SPEECH_BAND_MIN = 12;
 
     (async () => {
       try {
@@ -847,33 +860,73 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 512;
         source.connect(analyser);
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const freqArray = new Uint8Array(analyser.frequencyBinCount);
+        const timeArray = new Uint8Array(analyser.fftSize);
 
         const tick = () => {
           if (cancelled) return;
+          const now = Date.now();
+          const dt = lastTickAt ? Math.min(120, now - lastTickAt) : 16;
+          lastTickAt = now;
 
           const canDetect =
             voiceModeRef.current &&
             voiceAwaitingReplyRef.current &&
             voiceSettingsRef.current.bargeIn &&
-            chatStreamingRef.current &&
+            (chatStreamingRef.current || ttsPlayingRef.current || streamSpeechLoopActiveRef.current || Boolean(activeAudioRef.current)) &&
             !recordingRef.current &&
-            !transcribingRef.current &&
-            !ttsPlayingRef.current;
+            !transcribingRef.current;
 
           if (!canDetect) {
-            speechStart = 0;
+            speechAccumMs = 0;
+            detectWindowStart = 0;
+            calibrationUntil = 0;
             bargeInMonitorFrameRef.current = requestAnimationFrame(tick);
             return;
           }
 
-          analyser.getByteFrequencyData(dataArray);
-          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-          if (avg > THRESHOLD) {
-            if (!speechStart) speechStart = Date.now();
-            if (Date.now() - speechStart >= MIN_SPEECH_MS && Date.now() - bargeInCooldownRef.current >= COOLDOWN_MS) {
-              bargeInCooldownRef.current = Date.now();
-              speechStart = 0;
+          if (!detectWindowStart) {
+            detectWindowStart = now;
+            calibrationUntil = now + CALIBRATION_MS;
+            speechAccumMs = 0;
+          }
+
+          analyser.getByteTimeDomainData(timeArray);
+          let sqSum = 0;
+          for (let i = 0; i < timeArray.length; i++) {
+            const centered = (timeArray[i] - 128) / 128;
+            sqSum += centered * centered;
+          }
+          const rms = Math.sqrt(sqSum / timeArray.length);
+
+          analyser.getByteFrequencyData(freqArray);
+          let speechBandSum = 0;
+          let speechBandCount = 0;
+          // Roughly 350Hz-3200Hz region where speech presence is stronger than breathing.
+          for (let i = 4; i <= 38 && i < freqArray.length; i++) {
+            speechBandSum += freqArray[i];
+            speechBandCount++;
+          }
+          const speechBandAvg = speechBandCount ? speechBandSum / speechBandCount : 0;
+
+          if (now < calibrationUntil) {
+            noiseRms = noiseRms * 0.92 + rms * 0.08;
+            speechAccumMs = 0;
+            bargeInMonitorFrameRef.current = requestAnimationFrame(tick);
+            return;
+          }
+
+          const duringPlayback = ttsPlayingRef.current || streamSpeechLoopActiveRef.current || Boolean(activeAudioRef.current);
+          const dynamicRmsThreshold = Math.max(MIN_RMS_FLOOR, noiseRms * (duringPlayback ? 4.2 : 2.8));
+          const speechBandThreshold = duringPlayback ? SPEECH_BAND_MIN + 10 : SPEECH_BAND_MIN;
+          const isSpeechLike = rms > dynamicRmsThreshold && speechBandAvg > speechBandThreshold;
+
+          if (isSpeechLike) {
+            speechAccumMs += dt;
+            const requiredMs = duringPlayback ? Math.max(1200, MIN_SPEECH_MS) : MIN_SPEECH_MS;
+            if (speechAccumMs >= requiredMs && now - bargeInCooldownRef.current >= COOLDOWN_MS) {
+              bargeInCooldownRef.current = now;
+              speechAccumMs = 0;
               void (async () => {
                 await interruptAssistantTurn();
                 if (voiceModeRef.current) {
@@ -882,7 +935,8 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               })();
             }
           } else {
-            speechStart = 0;
+            speechAccumMs = Math.max(0, speechAccumMs - dt * 2);
+            noiseRms = noiseRms * 0.97 + rms * 0.03;
           }
 
           bargeInMonitorFrameRef.current = requestAnimationFrame(tick);
