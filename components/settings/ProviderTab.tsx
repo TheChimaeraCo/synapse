@@ -23,9 +23,25 @@ interface ProviderDraft {
   provider: string;
   apiKey: string;
   authMethod?: string;
+  oauthProvider?: string;
+  oauthCredentials?: string;
   baseUrl?: string;
   accountId?: string;
+  projectId?: string;
+  location?: string;
   defaultModel?: string;
+}
+
+function defaultAuthMethod(provider: string): string | undefined {
+  if (provider === "anthropic") return "api_key";
+  if (provider === "openai-codex" || provider === "google-gemini-cli" || provider === "google-antigravity") return "oauth";
+  if (provider === "google-vertex") return "vertex_adc";
+  return undefined;
+}
+
+function defaultOAuthProvider(provider: string): string | undefined {
+  if (provider === "openai-codex" || provider === "google-gemini-cli" || provider === "google-antigravity") return provider;
+  return undefined;
 }
 
 function toDraft(profile: ProviderProfile): ProviderDraft {
@@ -35,8 +51,12 @@ function toDraft(profile: ProviderProfile): ProviderDraft {
     provider: profile.provider,
     apiKey: profile.apiKey || "",
     authMethod: profile.authMethod,
+    oauthProvider: profile.oauthProvider,
+    oauthCredentials: profile.oauthCredentials,
     baseUrl: profile.baseUrl,
     accountId: profile.accountId,
+    projectId: profile.projectId,
+    location: profile.location,
     defaultModel: profile.defaultModel,
   };
 }
@@ -46,9 +66,13 @@ function newDraft(provider = "anthropic"): ProviderDraft {
     name: "",
     provider,
     apiKey: "",
-    authMethod: provider === "anthropic" ? "api_key" : undefined,
+    authMethod: defaultAuthMethod(provider),
+    oauthProvider: defaultOAuthProvider(provider),
+    oauthCredentials: "",
     baseUrl: "",
     accountId: "",
+    projectId: "",
+    location: "",
     defaultModel: PROVIDERS.find((p) => p.slug === provider)?.defaultModel || "",
   };
 }
@@ -66,8 +90,12 @@ function normalizeProfile(profile: ProviderDraft, fallbackId: string): ProviderP
     provider,
     apiKey: clean(profile.apiKey),
     authMethod: clean(profile.authMethod),
+    oauthProvider: clean(profile.oauthProvider),
+    oauthCredentials: clean(profile.oauthCredentials),
     baseUrl: clean(profile.baseUrl),
     accountId: clean(profile.accountId),
+    projectId: clean(profile.projectId),
+    location: clean(profile.location),
     defaultModel,
     enabled: true,
   };
@@ -90,8 +118,12 @@ export function ProviderTab() {
       provider: legacyProvider,
       apiKey: configData?.ai_api_key || "",
       authMethod: configData?.ai_auth_method || undefined,
+      oauthProvider: configData?.ai_oauth_provider || undefined,
+      oauthCredentials: configData?.ai_oauth_credentials || undefined,
       baseUrl: configData?.ai_base_url || undefined,
       accountId: configData?.ai_account_id || undefined,
+      projectId: configData?.ai_project_id || undefined,
+      location: configData?.ai_location || undefined,
       defaultModel: legacyModel || undefined,
       enabled: true,
     } satisfies ProviderProfile];
@@ -126,16 +158,25 @@ export function ProviderTab() {
 
   const setDraftField = (key: string, value: string) => {
     if (key === "api_key" || key === "setup_token") setDraft((d) => ({ ...d, apiKey: value }));
+    else if (key === "oauth_credentials") setDraft((d) => ({ ...d, oauthCredentials: value }));
+    else if (key === "oauth_provider") setDraft((d) => ({ ...d, oauthProvider: value }));
     else if (key === "base_url") setDraft((d) => ({ ...d, baseUrl: value }));
     else if (key === "account_id") setDraft((d) => ({ ...d, accountId: value }));
+    else if (key === "project_id") setDraft((d) => ({ ...d, projectId: value }));
+    else if (key === "location") setDraft((d) => ({ ...d, location: value }));
   };
 
   const getDraftField = (key: string) => {
     if (key === "api_key" || key === "setup_token") return draft.apiKey || "";
+    if (key === "oauth_credentials") return draft.oauthCredentials || "";
+    if (key === "oauth_provider") return draft.oauthProvider || "";
     if (key === "base_url") return draft.baseUrl || "";
     if (key === "account_id") return draft.accountId || "";
+    if (key === "project_id") return draft.projectId || "";
+    if (key === "location") return draft.location || "";
     return "";
   };
+  const missingRequiredField = fields.some((field) => field.required && !clean(getDraftField(field.key)));
 
   const persistProfiles = async (nextProfiles: ProviderProfile[], nextDefaultId: string) => {
     setSaving(true);
@@ -152,8 +193,12 @@ export function ProviderTab() {
         payload.ai_api_key = defaultProfile.apiKey || "";
         payload.ai_model = defaultProfile.defaultModel || PROVIDERS.find((p) => p.slug === defaultProfile.provider)?.defaultModel || "";
         payload.ai_auth_method = defaultProfile.authMethod || "";
+        payload.ai_oauth_provider = defaultProfile.oauthProvider || "";
+        payload.ai_oauth_credentials = defaultProfile.oauthCredentials || "";
         payload.ai_base_url = defaultProfile.baseUrl || "";
         payload.ai_account_id = defaultProfile.accountId || "";
+        payload.ai_project_id = defaultProfile.projectId || "";
+        payload.ai_location = defaultProfile.location || "";
         if (defaultProfile.provider === "anthropic" && defaultProfile.apiKey) {
           payload.anthropic_api_key = defaultProfile.apiKey;
         }
@@ -178,8 +223,9 @@ export function ProviderTab() {
   };
 
   const onTest = async () => {
-    if (!clean(draft.apiKey)) {
-      toast.error("Enter credentials first");
+    const missingFields = fields.filter((f) => f.required && !clean(getDraftField(f.key)));
+    if (missingFields.length > 0) {
+      toast.error(`Missing required field: ${missingFields[0].label}`);
       return;
     }
 
@@ -192,8 +238,12 @@ export function ProviderTab() {
         body: JSON.stringify({
           provider: draft.provider,
           apiKey: draft.apiKey,
+          oauthProvider: clean(draft.oauthProvider) || defaultOAuthProvider(draft.provider),
+          oauthCredentials: draft.oauthCredentials,
+          projectId: draft.projectId,
+          location: draft.location,
           baseUrl: draft.baseUrl,
-          authMethod: isAnthropic ? anthropicAuthMethod : undefined,
+          authMethod: isAnthropic ? anthropicAuthMethod : draft.authMethod,
         }),
       });
       const result = await res.json();
@@ -209,8 +259,14 @@ export function ProviderTab() {
   };
 
   const onSaveDraft = async () => {
-    if (!clean(draft.provider) || !clean(draft.apiKey)) {
-      toast.error("Provider and key are required");
+    if (!clean(draft.provider)) {
+      toast.error("Provider is required");
+      return;
+    }
+
+    const missingFields = fields.filter((f) => f.required && !clean(getDraftField(f.key)));
+    if (missingFields.length > 0) {
+      toast.error(`Missing required field: ${missingFields[0].label}`);
       return;
     }
 
@@ -218,6 +274,7 @@ export function ProviderTab() {
     const normalized = normalizeProfile({
       ...draft,
       authMethod: isAnthropic ? anthropicAuthMethod : draft.authMethod,
+      oauthProvider: clean(draft.oauthProvider) || defaultOAuthProvider(draft.provider),
     }, fallbackId);
 
     const next = [...profiles];
@@ -316,7 +373,9 @@ export function ProviderTab() {
                 setDraft((d) => ({
                   ...d,
                   provider: nextProvider,
-                  authMethod: nextProvider === "anthropic" ? "api_key" : undefined,
+                  authMethod: defaultAuthMethod(nextProvider),
+                  oauthProvider: defaultOAuthProvider(nextProvider),
+                  oauthCredentials: "",
                   defaultModel: PROVIDERS.find((p) => p.slug === nextProvider)?.defaultModel || "",
                 }));
                 setTestResult(null);
@@ -339,19 +398,29 @@ export function ProviderTab() {
           {fields.map((field) => (
             <div key={field.key}>
               <label className="text-sm text-zinc-400 mb-1 block">{field.label}</label>
-              <div className="relative">
-                <Input
-                  type={field.type === "password" && !showFields[field.key] ? "password" : "text"}
+              {field.type === "textarea" ? (
+                <textarea
                   value={getDraftField(field.key)}
                   onChange={(e) => { setDraftField(field.key, e.target.value); setTestResult(null); }}
-                  className="bg-white/[0.06] border-white/[0.08] text-white pr-16"
+                  rows={5}
+                  className="w-full rounded-md border border-white/[0.08] bg-white/[0.06] px-3 py-2 text-sm text-white focus:outline-none"
+                  placeholder='{"access":"...","refresh":"...","expires":1735689600000}'
                 />
-                {field.type === "password" && (
-                  <button type="button" onClick={() => setShowFields((prev) => ({ ...prev, [field.key]: !prev[field.key] }))} className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-white">
-                    {showFields[field.key] ? "Hide" : "Show"}
-                  </button>
-                )}
-              </div>
+              ) : (
+                <div className="relative">
+                  <Input
+                    type={field.type === "password" && !showFields[field.key] ? "password" : "text"}
+                    value={getDraftField(field.key)}
+                    onChange={(e) => { setDraftField(field.key, e.target.value); setTestResult(null); }}
+                    className="bg-white/[0.06] border-white/[0.08] text-white pr-16"
+                  />
+                  {field.type === "password" && (
+                    <button type="button" onClick={() => setShowFields((prev) => ({ ...prev, [field.key]: !prev[field.key] }))} className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-white">
+                      {showFields[field.key] ? "Hide" : "Show"}
+                    </button>
+                  )}
+                </div>
+              )}
               {field.helpText && <p className="text-zinc-600 text-xs mt-1">{field.helpText}</p>}
             </div>
           ))}
@@ -367,7 +436,7 @@ export function ProviderTab() {
           </div>
 
           <div className="flex gap-2 items-center">
-            <Button variant="outline" onClick={onTest} disabled={testing || !clean(draft.apiKey)} className="border-white/[0.08] text-zinc-300">
+            <Button variant="outline" onClick={onTest} disabled={testing || missingRequiredField} className="border-white/[0.08] text-zinc-300">
               {testing ? "Testing..." : "Test Connection"}
             </Button>
             {testResult === true && <Badge className="bg-green-900 text-green-300">Valid</Badge>}
@@ -376,7 +445,7 @@ export function ProviderTab() {
 
           <div className="flex gap-2">
             <Button variant="outline" onClick={startCreate} className="border-white/[0.08] text-zinc-300">Reset</Button>
-            <Button onClick={onSaveDraft} disabled={saving || !clean(draft.apiKey)} className="flex-1">
+            <Button onClick={onSaveDraft} disabled={saving || missingRequiredField} className="flex-1">
               {saving ? "Saving..." : (editingIndex !== null ? "Update Profile" : "Save Profile")}
             </Button>
           </div>

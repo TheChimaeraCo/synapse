@@ -1,7 +1,7 @@
 export interface AuthField {
   key: string;
   label: string;
-  type: "password" | "text" | "url";
+  type: "password" | "text" | "url" | "textarea";
   required: boolean;
   helpText?: string;
   helpUrl?: string;
@@ -36,6 +36,25 @@ export const PROVIDERS: ProviderConfig[] = [
     testable: true,
   },
   {
+    slug: "openai-codex",
+    name: "OpenAI Codex (ChatGPT Subscription)",
+    description: "Use ChatGPT Plus/Pro OAuth credentials for Codex models",
+    authFields: [
+      {
+        key: "oauth_credentials",
+        label: "OAuth Credentials JSON",
+        type: "textarea",
+        required: true,
+        helpText: "Run: npx @mariozechner/pi-ai login openai-codex, then paste the provider credentials JSON.",
+      },
+    ],
+    defaultModel: "gpt-5.3-codex",
+    models: ["gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini"],
+    apiBase: "https://chatgpt.com/backend-api",
+    helpUrl: "https://chatgpt.com",
+    testable: true,
+  },
+  {
     slug: "anthropic",
     name: "Anthropic",
     description: "Claude Sonnet, Opus, Haiku",
@@ -60,6 +79,58 @@ export const PROVIDERS: ProviderConfig[] = [
     models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
     apiBase: "https://generativelanguage.googleapis.com/v1beta",
     helpUrl: "https://aistudio.google.com/apikey",
+    testable: true,
+  },
+  {
+    slug: "google-gemini-cli",
+    name: "Google Gemini CLI (OAuth)",
+    description: "Use Google subscription via Cloud Code Assist OAuth",
+    authFields: [
+      {
+        key: "oauth_credentials",
+        label: "OAuth Credentials JSON",
+        type: "textarea",
+        required: true,
+        helpText: "Run: npx @mariozechner/pi-ai login google-gemini-cli, then paste the provider credentials JSON.",
+      },
+    ],
+    defaultModel: "gemini-2.5-pro",
+    models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3-pro-preview", "gemini-3-flash-preview"],
+    apiBase: "https://cloudcode-pa.googleapis.com",
+    helpUrl: "https://cloud.google.com",
+    testable: true,
+  },
+  {
+    slug: "google-antigravity",
+    name: "Google Antigravity (OAuth)",
+    description: "Google OAuth provider for Gemini 3 and partner model flavors",
+    authFields: [
+      {
+        key: "oauth_credentials",
+        label: "OAuth Credentials JSON",
+        type: "textarea",
+        required: true,
+        helpText: "Run: npx @mariozechner/pi-ai login google-antigravity, then paste the provider credentials JSON.",
+      },
+    ],
+    defaultModel: "gemini-3-pro-high",
+    models: ["gemini-3-pro-high", "gemini-3-pro-low", "gemini-3-flash", "claude-sonnet-4-5-thinking", "gpt-oss-120b-medium"],
+    apiBase: "https://daily-cloudcode-pa.sandbox.googleapis.com",
+    helpUrl: "https://cloud.google.com",
+    testable: true,
+  },
+  {
+    slug: "google-vertex",
+    name: "Google Vertex AI (ADC)",
+    description: "Google Cloud ADC-based auth (no API key)",
+    authFields: [
+      { key: "project_id", label: "Project ID", type: "text", required: true, helpText: "Google Cloud project ID" },
+      { key: "location", label: "Location", type: "text", required: true, helpText: "e.g. us-central1" },
+    ],
+    defaultModel: "gemini-2.5-flash",
+    models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-pro-preview", "gemini-3-flash-preview"],
+    apiBase: "https://aiplatform.googleapis.com",
+    helpUrl: "https://cloud.google.com/vertex-ai/docs/authentication",
     testable: true,
   },
   {

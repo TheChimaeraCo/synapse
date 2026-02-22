@@ -5,6 +5,7 @@ const SENSITIVE_KEY_RE =
   /(^|[_\-.])(api_key|access_token|refresh_token|token|secret|password|private_key|signing_secret|app_secret|bot_token|webhook_secret)([_\-.]|$)/i;
 const SENSITIVE_EXACT_KEYS = new Set([
   "ai.provider_profiles",
+  "ai_oauth_credentials",
 ]);
 
 const textEncoder = new TextEncoder();

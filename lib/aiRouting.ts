@@ -41,8 +41,12 @@ const AI_CONFIG_KEYS = [
   "ai_api_key",
   "ai_model",
   "ai_auth_method",
+  "ai_oauth_provider",
+  "ai_oauth_credentials",
   "ai_base_url",
   "ai_account_id",
+  "ai_project_id",
+  "ai_location",
   "models.allowlist",
   "models.aliases",
   "models.fallback_chain",
@@ -107,6 +111,81 @@ function findProfileByProvider(profiles: ProviderProfile[], provider?: string): 
   return profiles.find((p) => p.provider === provider && p.enabled !== false) || null;
 }
 
+function inferOAuthProviderFromModelProvider(provider: string): string | null {
+  if (provider === "openai-codex") return "openai-codex";
+  if (provider === "google-gemini-cli") return "google-gemini-cli";
+  if (provider === "google-antigravity") return "google-antigravity";
+  if (provider === "anthropic") return "anthropic";
+  if (provider === "github-copilot" || provider === "copilot") return "github-copilot";
+  return null;
+}
+
+function parseOAuthCredentials(raw?: string): Record<string, unknown> | null {
+  const value = clean(raw);
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractCredentialsObject(
+  parsed: Record<string, unknown> | null,
+  oauthProvider: string,
+): Record<string, unknown> | null {
+  if (!parsed) return null;
+  const nested = parsed[oauthProvider];
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const obj = { ...(nested as Record<string, unknown>) };
+    if (obj.type === "oauth") delete obj.type;
+    return obj;
+  }
+  if (parsed.access && parsed.refresh && parsed.expires) {
+    const obj = { ...parsed };
+    if (obj.type === "oauth") delete obj.type;
+    return obj;
+  }
+  return null;
+}
+
+async function resolveApiKeyFromOAuth(
+  provider: string,
+  authMethod?: string,
+  oauthProvider?: string,
+  oauthCredentialsRaw?: string,
+): Promise<string> {
+  if (clean(authMethod) !== "oauth") return "";
+  const oauthId = clean(oauthProvider) || inferOAuthProviderFromModelProvider(provider);
+  if (!oauthId) return "";
+  const parsed = parseOAuthCredentials(oauthCredentialsRaw);
+  const credentials = extractCredentialsObject(parsed, oauthId);
+  if (!credentials) return "";
+
+  try {
+    const { getOAuthApiKey } = await import("@mariozechner/pi-ai");
+    const result = await getOAuthApiKey(oauthId as any, {
+      [oauthId]: credentials as any,
+    });
+    return clean(result?.apiKey) || "";
+  } catch {
+    return "";
+  }
+}
+
+async function resolveApiKeyFromEnv(provider: string): Promise<string> {
+  const existing = clean(getProviderApiKey(provider));
+  if (existing) return existing;
+  try {
+    const { getEnvApiKey } = await import("@mariozechner/pi-ai");
+    return clean(getEnvApiKey(provider as any)) || "";
+  } catch {
+    return "";
+  }
+}
+
 export interface LoadedAiRoutingConfig {
   values: Record<string, string>;
   providerProfiles: ProviderProfile[];
@@ -140,8 +219,12 @@ export async function loadAiRoutingConfig(
     ai_api_key: values.ai_api_key,
     ai_model: values.ai_model,
     ai_auth_method: values.ai_auth_method,
+    ai_oauth_provider: values.ai_oauth_provider,
+    ai_oauth_credentials: values.ai_oauth_credentials,
     ai_base_url: values.ai_base_url,
     ai_account_id: values.ai_account_id,
+    ai_project_id: values.ai_project_id,
+    ai_location: values.ai_location,
   });
   const parsedProfiles = parseProviderProfiles(values[AI_PROVIDER_PROFILES_KEY]);
   const providerProfiles = mergeLegacyProfile(parsedProfiles, legacyProfile);
@@ -180,8 +263,11 @@ export interface ResolvedAiSelection {
   model: string;
   apiKey: string;
   authMethod?: string;
+  oauthProvider?: string;
   baseUrl?: string;
   accountId?: string;
+  projectId?: string;
+  location?: string;
   providerProfileId?: string;
   capabilityRoutes: CapabilityRoutes;
   providerProfiles: ProviderProfile[];
@@ -250,20 +336,47 @@ export async function resolveAiSelection(
   let model = clean(resolvedRoute.model) || clean(selectedByRouter) || fallbackModel;
   model = constrainModel(model || fallbackModel, loaded.modelConstraints);
 
-  const apiKey = clean(selectedProfile?.apiKey)
+  const authMethod = clean(selectedProfile?.authMethod) || clean(loaded.values.ai_auth_method);
+  const oauthProvider = clean(selectedProfile?.oauthProvider) || clean(loaded.values.ai_oauth_provider);
+  const oauthCredentialsRaw = clean(selectedProfile?.oauthCredentials) || clean(loaded.values.ai_oauth_credentials);
+
+  const oauthApiKey = await resolveApiKeyFromOAuth(
+    provider,
+    authMethod,
+    oauthProvider,
+    oauthCredentialsRaw,
+  );
+
+  const envApiKey = await resolveApiKeyFromEnv(provider);
+
+  const apiKey = oauthApiKey
+    || clean(selectedProfile?.apiKey)
     || clean(loaded.values.ai_api_key)
-    || getProviderApiKey(provider)
+    || envApiKey
     || "";
 
   if (apiKey) hydrateProviderEnv(provider, apiKey);
+
+  const projectId = clean(selectedProfile?.projectId) || clean(loaded.values.ai_project_id);
+  const location = clean(selectedProfile?.location) || clean(loaded.values.ai_location);
+  if (provider === "google-vertex") {
+    if (projectId) {
+      process.env.GOOGLE_CLOUD_PROJECT = projectId;
+      process.env.GCLOUD_PROJECT = projectId;
+    }
+    if (location) process.env.GOOGLE_CLOUD_LOCATION = location;
+  }
 
   return {
     provider,
     model,
     apiKey,
-    authMethod: clean(selectedProfile?.authMethod) || clean(loaded.values.ai_auth_method),
+    authMethod,
+    oauthProvider,
     baseUrl: clean(selectedProfile?.baseUrl) || clean(loaded.values.ai_base_url),
     accountId: clean(selectedProfile?.accountId) || clean(loaded.values.ai_account_id),
+    projectId,
+    location,
     providerProfileId: selectedProfile?.id,
     capabilityRoutes: loaded.capabilityRoutes,
     providerProfiles: loaded.providerProfiles,

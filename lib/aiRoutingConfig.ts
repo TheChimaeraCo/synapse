@@ -23,8 +23,12 @@ export interface ProviderProfile {
   provider: string;
   apiKey?: string;
   authMethod?: string;
+  oauthProvider?: string;
+  oauthCredentials?: string;
   baseUrl?: string;
   accountId?: string;
+  projectId?: string;
+  location?: string;
   defaultModel?: string;
   enabled?: boolean;
 }
@@ -94,8 +98,12 @@ export function parseProviderProfiles(raw?: string | null): ProviderProfile[] {
         provider,
         apiKey: cleanString(obj.apiKey),
         authMethod: cleanString(obj.authMethod),
+        oauthProvider: cleanString(obj.oauthProvider),
+        oauthCredentials: cleanString(obj.oauthCredentials),
         baseUrl: cleanString(obj.baseUrl),
         accountId: cleanString(obj.accountId),
+        projectId: cleanString(obj.projectId),
+        location: cleanString(obj.location),
         defaultModel: cleanString(obj.defaultModel),
         enabled: obj.enabled === false ? false : true,
       });
@@ -119,8 +127,12 @@ export function serializeProviderProfiles(profiles: ProviderProfile[]): string {
       provider,
       apiKey: cleanString(profile.apiKey),
       authMethod: cleanString(profile.authMethod),
+      oauthProvider: cleanString(profile.oauthProvider),
+      oauthCredentials: cleanString(profile.oauthCredentials),
       baseUrl: cleanString(profile.baseUrl),
       accountId: cleanString(profile.accountId),
+      projectId: cleanString(profile.projectId),
+      location: cleanString(profile.location),
       defaultModel: cleanString(profile.defaultModel),
       enabled: profile.enabled === false ? false : true,
     });
@@ -139,8 +151,12 @@ export function buildLegacyProfile(config: Record<string, string | undefined>): 
     provider: provider || "anthropic",
     apiKey,
     authMethod: cleanString(config.ai_auth_method),
+    oauthProvider: cleanString(config.ai_oauth_provider),
+    oauthCredentials: cleanString(config.ai_oauth_credentials),
     baseUrl: cleanString(config.ai_base_url),
     accountId: cleanString(config.ai_account_id),
+    projectId: cleanString(config.ai_project_id),
+    location: cleanString(config.ai_location),
     defaultModel: model,
     enabled: true,
   };
@@ -245,4 +261,3 @@ export function capabilityToTaskType(capability: AiCapability): TaskType {
   if (capability === "voice_tts" || capability === "voice_stt" || capability === "onboarding") return "chat";
   return capability;
 }
-

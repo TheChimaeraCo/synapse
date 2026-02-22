@@ -5,11 +5,15 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { logAudit } from "@/lib/auditLog";
 
-const SENSITIVE_KEYS = ["api_key", "token", "secret", "provider_profiles"];
+const SENSITIVE_KEYS = ["api_key", "token", "secret", "provider_profiles", "oauth_credentials"];
 const CONFIG_KEYS = [
   "ai_provider",
   "ai_model",
   "ai_auth_method",
+  "ai_oauth_provider",
+  "ai_oauth_credentials",
+  "ai_project_id",
+  "ai_location",
   "ai.provider_profiles",
   "ai.default_profile_id",
   "ai.capability_routes",

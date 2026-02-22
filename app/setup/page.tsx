@@ -62,6 +62,31 @@ function clearCache() {
   try { localStorage.removeItem(CACHE_KEY); } catch {}
 }
 
+function defaultAuthMethodForProvider(provider: string): string | undefined {
+  if (provider === "anthropic") return "api_key";
+  if (provider === "openai-codex" || provider === "google-gemini-cli" || provider === "google-antigravity") return "oauth";
+  if (provider === "google-vertex") return "vertex_adc";
+  return undefined;
+}
+
+function defaultOAuthProviderForProvider(provider: string): string | undefined {
+  if (provider === "openai-codex" || provider === "google-gemini-cli" || provider === "google-antigravity") return provider;
+  return undefined;
+}
+
+function getProviderFields(provider: string, anthropicAuthMethod: AnthropicAuthMethod) {
+  const providerDef = PROVIDERS.find((p) => p.slug === provider);
+  if (!providerDef) return [];
+  if (provider === "anthropic" && anthropicAuthMethod === "setup_token") {
+    return [{ key: "setup_token", label: "Setup Token", type: "password" as const, required: true, helpText: 'Run "claude setup-token" in another terminal, then paste the token here' }];
+  }
+  return providerDef.authFields;
+}
+
+function getAuthValue(authValues: Record<string, string>, key: string): string {
+  return (authValues[key] || "").trim();
+}
+
 export default function SetupPage() {
   const router = useRouter();
   const { data: setupData } = useFetch<{ complete: boolean }>("/api/config/setup-complete");
@@ -255,8 +280,17 @@ export default function SetupPage() {
   };
 
   const handleTestProvider = async () => {
-    const key = authValues["api_key"] || authValues["setup_token"] || "";
-    if (!key) return;
+    const fields = getProviderFields(selectedProvider, anthropicAuthMethod);
+    const missing = fields.find((f) => f.required && !getAuthValue(authValues, f.key));
+    if (missing) {
+      toast.error(`Missing required field: ${missing.label}`);
+      return;
+    }
+    const key = getAuthValue(authValues, "api_key") || getAuthValue(authValues, "setup_token");
+    const oauthCredentials = getAuthValue(authValues, "oauth_credentials");
+    const oauthProvider = getAuthValue(authValues, "oauth_provider") || defaultOAuthProviderForProvider(selectedProvider);
+    const projectId = getAuthValue(authValues, "project_id");
+    const location = getAuthValue(authValues, "location");
     setLoading(true);
     setApiKeyValid(null);
     setTestUnverified(false);
@@ -267,8 +301,12 @@ export default function SetupPage() {
         body: JSON.stringify({
           provider: selectedProvider,
           apiKey: key,
+          oauthCredentials,
+          oauthProvider,
+          projectId,
+          location,
           baseUrl: authValues["base_url"],
-          authMethod: selectedProvider === "anthropic" ? anthropicAuthMethod : undefined,
+          authMethod: selectedProvider === "anthropic" ? anthropicAuthMethod : defaultAuthMethodForProvider(selectedProvider),
         }),
       });
       const result = await res.json();
@@ -288,11 +326,18 @@ export default function SetupPage() {
       setStep(4);
       return;
     }
-    const key = authValues["api_key"] || authValues["setup_token"] || "";
-    if (!key) {
-      toast.error("Please enter your credentials");
+    const fields = getProviderFields(selectedProvider, anthropicAuthMethod);
+    const missing = fields.find((f) => f.required && !getAuthValue(authValues, f.key));
+    if (missing) {
+      toast.error(`Missing required field: ${missing.label}`);
       return;
     }
+    const key = getAuthValue(authValues, "api_key") || getAuthValue(authValues, "setup_token");
+    const oauthCredentials = getAuthValue(authValues, "oauth_credentials");
+    const oauthProvider = getAuthValue(authValues, "oauth_provider") || defaultOAuthProviderForProvider(selectedProvider);
+    const projectId = getAuthValue(authValues, "project_id");
+    const location = getAuthValue(authValues, "location");
+    const authMethod = selectedProvider === "anthropic" ? anthropicAuthMethod : defaultAuthMethodForProvider(selectedProvider) || "";
     setLoading(true);
     try {
       let effectiveKey = key;
@@ -314,9 +359,13 @@ export default function SetupPage() {
       const saves: [string, string][] = [
         ["ai_provider", selectedProvider],
         ["ai_api_key", effectiveKey],
+        ["ai_auth_method", authMethod],
+        ["ai_oauth_provider", oauthProvider || ""],
+        ["ai_oauth_credentials", oauthCredentials || ""],
+        ["ai_project_id", projectId || ""],
+        ["ai_location", location || ""],
       ];
-      if (selectedProvider === "anthropic") {
-        saves.push(["ai_auth_method", anthropicAuthMethod]);
+      if (selectedProvider === "anthropic" && effectiveKey) {
         saves.push(["anthropic_api_key", effectiveKey]);
       }
       // Save selected model (or provider default)
@@ -332,10 +381,14 @@ export default function SetupPage() {
           id: defaultProfileId,
           name: `${provider?.name || selectedProvider} Default`,
           provider: selectedProvider,
-          apiKey: effectiveKey,
-          authMethod: selectedProvider === "anthropic" ? anthropicAuthMethod : undefined,
-          baseUrl: authValues["base_url"] || undefined,
-          accountId: authValues["account_id"] || undefined,
+          apiKey: effectiveKey || undefined,
+          authMethod,
+          oauthProvider: oauthProvider || undefined,
+          oauthCredentials: oauthCredentials || undefined,
+          baseUrl: getAuthValue(authValues, "base_url") || undefined,
+          accountId: getAuthValue(authValues, "account_id") || undefined,
+          projectId: projectId || undefined,
+          location: location || undefined,
           defaultModel: model || undefined,
           enabled: true,
         }]),
@@ -353,8 +406,8 @@ export default function SetupPage() {
           }),
         ]);
       }
-      if (authValues["base_url"]) saves.push(["ai_base_url", authValues["base_url"]]);
-      if (authValues["account_id"]) saves.push(["ai_account_id", authValues["account_id"]]);
+      if (getAuthValue(authValues, "base_url")) saves.push(["ai_base_url", getAuthValue(authValues, "base_url")]);
+      if (getAuthValue(authValues, "account_id")) saves.push(["ai_account_id", getAuthValue(authValues, "account_id")]);
 
       for (const [k, v] of saves) {
         await saveGatewayConfig(k, v);
@@ -612,7 +665,17 @@ export default function SetupPage() {
             </div>
             <Button onClick={() => {
               if (selectedProvider === "skip") { handleSaveProvider(); }
-              else { setAuthValues({}); setShowFields({}); setApiKeyValid(null); setTestUnverified(false); setSelectedModel(""); setProviderPhase("auth"); }
+              else {
+                const nextAuthValues: Record<string, string> = {};
+                const oauthProvider = defaultOAuthProviderForProvider(selectedProvider);
+                if (oauthProvider) nextAuthValues.oauth_provider = oauthProvider;
+                setAuthValues(nextAuthValues);
+                setShowFields({});
+                setApiKeyValid(null);
+                setTestUnverified(false);
+                setSelectedModel("");
+                setProviderPhase("auth");
+              }
             }} className="w-full">
               {selectedProvider === "skip" ? "Skip" : "Next"}
             </Button>
@@ -627,6 +690,7 @@ export default function SetupPage() {
         const fields = isAnthropic && anthropicAuthMethod === "setup_token"
           ? [{ key: "setup_token", label: "Setup Token", type: "password" as const, required: true, helpText: 'Run "claude setup-token" in another terminal, then paste the token here' }]
           : provider.authFields;
+        const missingRequiredField = fields.some((f) => f.required && !getAuthValue(authValues, f.key));
 
         return (
           <div className="w-full max-w-md bg-white/[0.07] backdrop-blur-xl border border-white/10 rounded-xl p-6">
@@ -660,19 +724,29 @@ export default function SetupPage() {
               {fields.map((field) => (
                 <div key={field.key}>
                   <label className="text-sm text-zinc-400 mb-1 block">{field.label}</label>
-                  <div className="relative">
-                    <Input type={field.type === "password" && !showFields[field.key] ? "password" : "text"}
+                  {field.type === "textarea" ? (
+                    <textarea
                       value={authValues[field.key] || ""}
                       onChange={(e) => { setAuthValues((prev) => ({ ...prev, [field.key]: e.target.value })); setApiKeyValid(null); setTestUnverified(false); }}
-                      placeholder={field.type === "url" ? "https://..." : ""}
-                      className="bg-white/[0.04] border-white/10 text-zinc-200 pr-16 rounded-xl" />
-                    {field.type === "password" && (
-                      <button type="button" onClick={() => setShowFields((prev) => ({ ...prev, [field.key]: !prev[field.key] }))}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-white">
-                        {showFields[field.key] ? "Hide" : "Show"}
-                      </button>
-                    )}
-                  </div>
+                      rows={5}
+                      className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                      placeholder='{"access":"...","refresh":"...","expires":1735689600000}'
+                    />
+                  ) : (
+                    <div className="relative">
+                      <Input type={field.type === "password" && !showFields[field.key] ? "password" : "text"}
+                        value={authValues[field.key] || ""}
+                        onChange={(e) => { setAuthValues((prev) => ({ ...prev, [field.key]: e.target.value })); setApiKeyValid(null); setTestUnverified(false); }}
+                        placeholder={field.type === "url" ? "https://..." : ""}
+                        className="bg-white/[0.04] border-white/10 text-zinc-200 pr-16 rounded-xl" />
+                      {field.type === "password" && (
+                        <button type="button" onClick={() => setShowFields((prev) => ({ ...prev, [field.key]: !prev[field.key] }))}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-white">
+                          {showFields[field.key] ? "Hide" : "Show"}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {field.helpText && <p className="text-zinc-600 text-xs mt-1">{field.helpText}</p>}
                 </div>
               ))}
@@ -692,7 +766,7 @@ export default function SetupPage() {
               )}
               <div className="flex gap-2 items-center">
                 <Button variant="outline" onClick={handleTestProvider}
-                  disabled={loading || !(authValues["api_key"] || authValues["setup_token"])}
+                  disabled={loading || missingRequiredField}
                   className="border-white/10 text-zinc-300 hover:text-white rounded-xl">
                   {loading ? "Testing..." : "Test Connection"}
                 </Button>
@@ -703,7 +777,7 @@ export default function SetupPage() {
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => { setProviderPhase("select"); setApiKeyValid(null); }}
                   className="border-white/10 text-zinc-300 hover:text-white rounded-xl">Back</Button>
-                <Button onClick={handleSaveProvider} disabled={loading || !(authValues["api_key"] || authValues["setup_token"])}
+                <Button onClick={handleSaveProvider} disabled={loading || missingRequiredField}
                   className="flex-1">
                   {loading ? "Saving..." : "Next"}
                 </Button>
