@@ -62,6 +62,10 @@ function withDefaults(routes: CapabilityRoutes): CapabilityRoutes {
   if (!out.summary?.model) out.summary = { ...(out.summary || {}), model: DEFAULT_ROUTING.summary };
   if (!out.code?.model) out.code = { ...(out.code || {}), model: DEFAULT_ROUTING.code };
   if (!out.analysis?.model) out.analysis = { ...(out.analysis || {}), model: DEFAULT_ROUTING.analysis };
+  if (!out.file_read?.model) out.file_read = { ...(out.file_read || {}), model: DEFAULT_ROUTING.analysis };
+  if (!out.pdf_read?.model) out.pdf_read = { ...(out.pdf_read || {}), model: DEFAULT_ROUTING.analysis };
+  if (!out.image_read?.model) out.image_read = { ...(out.image_read || {}), model: DEFAULT_ROUTING.analysis };
+  if (!out.excel_read?.model) out.excel_read = { ...(out.excel_read || {}), model: DEFAULT_ROUTING.analysis };
   return out;
 }
 

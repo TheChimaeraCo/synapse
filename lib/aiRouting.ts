@@ -111,6 +111,15 @@ function findProfileByProvider(profiles: ProviderProfile[], provider?: string): 
   return profiles.find((p) => p.provider === provider && p.enabled !== false) || null;
 }
 
+function resolveLegacyCapabilityRoute(
+  capability: AiCapability,
+  routes: CapabilityRoutes,
+): RouteTarget | undefined {
+  if (capability === "pdf_read") return routes.parse_pdf;
+  if (capability === "parse_pdf") return routes.pdf_read;
+  return undefined;
+}
+
 function inferOAuthProviderFromModelProvider(provider: string): string | null {
   if (provider === "openai-codex") return "openai-codex";
   if (provider === "google-gemini-cli") return "google-gemini-cli";
@@ -280,6 +289,7 @@ export async function resolveAiSelection(
   const loaded = await loadAiRoutingConfig(options.gatewayId);
   const taskType = capabilityToTaskType(options.capability);
   const baseCapabilityRoute = loaded.capabilityRoutes[options.capability]
+    || resolveLegacyCapabilityRoute(options.capability, loaded.capabilityRoutes)
     || loaded.capabilityRoutes[taskType]
     || loaded.capabilityRoutes.chat
     || {};

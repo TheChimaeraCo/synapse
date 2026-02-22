@@ -26,7 +26,7 @@ async function getAiConfig(gatewayId?: string) {
   }
   const selection = await resolveAiSelection({
     gatewayId: resolvedGatewayId,
-    capability: "parse_pdf",
+    capability: "pdf_read",
   });
   return {
     provider: selection.provider,

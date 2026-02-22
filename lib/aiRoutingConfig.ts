@@ -12,6 +12,10 @@ export type AiCapability =
   | TaskType
   | "classifier"
   | "reflection"
+  | "file_read"
+  | "pdf_read"
+  | "image_read"
+  | "excel_read"
   | "parse_pdf"
   | "voice_tts"
   | "voice_stt"
@@ -257,7 +261,15 @@ export function buildLegacyRoutingFromCapabilities(routes: CapabilityRoutes): Re
 }
 
 export function capabilityToTaskType(capability: AiCapability): TaskType {
-  if (capability === "classifier" || capability === "reflection" || capability === "parse_pdf") return "analysis";
+  if (
+    capability === "classifier"
+    || capability === "reflection"
+    || capability === "parse_pdf"
+    || capability === "file_read"
+    || capability === "pdf_read"
+    || capability === "image_read"
+    || capability === "excel_read"
+  ) return "analysis";
   if (capability === "voice_tts" || capability === "voice_stt" || capability === "onboarding") return "chat";
   return capability;
 }

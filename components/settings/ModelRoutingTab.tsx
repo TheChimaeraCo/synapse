@@ -40,6 +40,10 @@ const CAPABILITIES = [
   { key: "summary", label: "Summary" },
   { key: "code", label: "Code" },
   { key: "analysis", label: "Analysis" },
+  { key: "file_read", label: "File Reading (General)" },
+  { key: "pdf_read", label: "PDF Reading" },
+  { key: "image_read", label: "Image Reading" },
+  { key: "excel_read", label: "Excel Reading" },
 ] as const;
 
 function RouteEditor({
