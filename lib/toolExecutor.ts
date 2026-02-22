@@ -12,7 +12,6 @@ const TOOL_CACHE_TTLS: Record<string, number> = {
   code_execute: 5 * 60 * 1000,      // 5 minutes
 };
 
-const PRIVILEGED_TOOL_ROLES = new Set(["owner", "admin"]);
 const DANGEROUS_TOOLS = new Set([
   "shell_exec",
   "convex_deploy",
@@ -24,6 +23,16 @@ const DANGEROUS_TOOLS = new Set([
   "pm2_delete",
 ]);
 const NETWORK_TOOLS = new Set(["web_search", "http_request"]);
+const SECRET_SINK_TOOLS = new Set([
+  "shell_exec",
+  "convex_deploy",
+  "create_tool",
+  "http_request",
+  "file_write",
+]);
+const SENSITIVE_KEY_NAME_RE =
+  /(^|[_\-.])(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|private[_-]?key|authorization|bearer|cookie|session)([_\-.]|$)/i;
+const SENSITIVE_VALUE_RE = /(sk-[a-z0-9][a-z0-9._-]{16,}|ghp_[a-z0-9]{20,}|xox[baprs]-[a-z0-9-]{10,}|AIza[0-9A-Za-z\-_]{20,}|eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,})/i;
 
 type ToolPolicyMode = "allowlist" | "blocklist" | "all";
 type ExecApprovalMode = "none" | "destructive" | "all";
@@ -196,9 +205,46 @@ function isToolBlockedByPolicy(
 }
 
 function canBypassApproval(context: ToolContext): boolean {
-  if (process.env.SYNAPSE_AUTO_APPROVE_TOOLS === "true") return true;
-  const role = (context.userRole || "").toLowerCase();
-  return PRIVILEGED_TOOL_ROLES.has(role);
+  // Security default: require explicit approvals for dangerous tools, even for owner/admin.
+  // To opt into legacy behavior in trusted local setups, set SYNAPSE_AUTO_APPROVE_TOOLS=true.
+  return process.env.SYNAPSE_AUTO_APPROVE_TOOLS === "true";
+}
+
+function hasLikelySecretEntropy(value: string): boolean {
+  const v = value.trim();
+  if (v.length < 24 || v.length > 4096) return false;
+  if (/\s/.test(v)) return false;
+  const upper = /[A-Z]/.test(v);
+  const lower = /[a-z]/.test(v);
+  const digit = /[0-9]/.test(v);
+  const symbol = /[_\-=.:/+]/.test(v);
+  if (!lower || !digit) return false;
+  const classes = [upper, lower, digit, symbol].filter(Boolean).length;
+  return classes >= 3;
+}
+
+function hasSensitivePayload(value: any, path = "", depth = 0): boolean {
+  if (depth > 6 || value === null || value === undefined) return false;
+  if (typeof value === "string") {
+    if (SENSITIVE_VALUE_RE.test(value)) return true;
+    return hasLikelySecretEntropy(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") return false;
+  if (Array.isArray(value)) {
+    return value.some((item, i) => hasSensitivePayload(item, `${path}[${i}]`, depth + 1));
+  }
+  if (typeof value === "object") {
+    for (const [key, v] of Object.entries(value)) {
+      const nextPath = path ? `${path}.${key}` : key;
+      if (SENSITIVE_KEY_NAME_RE.test(key)) {
+        if (typeof v === "string" && v.trim()) return true;
+        if (v && typeof v === "object") return true;
+      }
+      if (typeof v === "string" && SENSITIVE_KEY_NAME_RE.test(nextPath) && v.trim()) return true;
+      if (hasSensitivePayload(v, nextPath, depth + 1)) return true;
+    }
+  }
+  return false;
 }
 
 async function createApprovalRequest(
@@ -376,6 +422,15 @@ export async function executeTools(
 
     try {
       const handler = TOOL_REGISTRY.get(call.name);
+      if (SECRET_SINK_TOOLS.has(call.name) && hasSensitivePayload(call.arguments)) {
+        results.push({
+          toolCallId: call.id,
+          toolName: call.name,
+          content: `Tool "${call.name}" blocked: sensitive credential-like values detected in arguments. Save secrets in Settings instead of sending them through tool calls.`,
+          isError: true,
+        });
+        continue;
+      }
       const blockedReason = isToolBlockedByPolicy(call.name, call.arguments, sandboxPolicy);
       if (blockedReason) {
         results.push({
