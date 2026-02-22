@@ -556,9 +556,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         let silenceStart = 0;
         let speechDetected = false;
-        const SILENCE_THRESHOLD = 15;
-        const SILENCE_DURATION = 1500; // ms of silence before auto-stop
-        const MIN_RECORD_TIME = 500; // minimum recording time before checking silence
+        const SILENCE_THRESHOLD = 12;
+        const SILENCE_DURATION = 2500; // ms of silence before auto-stop
+        const MIN_RECORD_TIME = 1000; // minimum recording time before checking silence
 
         const checkSilence = () => {
           if (mediaRecorder.state !== "recording") {
@@ -623,13 +623,16 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       const detail = (event as CustomEvent).detail as { content?: string; sessionId?: string } | undefined;
       if (!detail?.content) return;
       if (detail.sessionId && detail.sessionId !== sessionId) return;
-      if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
+      console.log("[Voice] handler fired, voiceMode:", voiceModeRef.current, "autoRead:", voiceSettings.autoRead, "autoTranscribe:", voiceSettings.autoTranscribe);
+      if (!voiceModeRef.current) return;
 
       setVoiceAwaitingReply(false);
-      try {
-        await playTts(detail.content);
-      } catch (err: any) {
-        toast.error("Voice playback failed: " + (err.message || "unknown error"));
+      if (voiceSettings.autoRead) {
+        try {
+          await playTts(detail.content);
+        } catch (err: any) {
+          toast.error("Voice playback failed: " + (err.message || "unknown error"));
+        }
       }
 
       if (voiceModeRef.current && voiceSettings.autoTranscribe) {

@@ -199,6 +199,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
 
     if (latestAssistant._id !== lastAssistantIdRef.current) {
       lastAssistantIdRef.current = latestAssistant._id;
+      console.log("[Voice] Dispatching assistant_message event", latestAssistant._id);
       window.dispatchEvent(
         new CustomEvent("synapse:assistant_message", {
           detail: {
