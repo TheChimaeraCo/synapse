@@ -43,10 +43,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState({
     autoRead: true,
+    streamTts: true,
+    bargeIn: true,
     autoTranscribe: true,
     maxTextLength: 5000,
     sttProvider: "groq",
     sttLanguage: "en-US",
+    ttsSpeed: 1.2,
   });
   const [agents, setAgents] = useState<Array<{ _id: string; name: string; slug: string; isActive: boolean }>>([]);
   const [currentAgentId, setCurrentAgentId] = useState<string | null>(null);
@@ -61,8 +64,20 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const audioChunksRef = useRef<Blob[]>([]);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceModeRef = useRef(false);
+  const voiceAwaitingReplyRef = useRef(false);
+  const recordingRef = useRef(false);
+  const transcribingRef = useRef(false);
+  const ttsPlayingRef = useRef(false);
   const chatStreamingRef = useRef(false);
   const awaitingReplyTimerRef = useRef<number | null>(null);
+  const streamSpeechBufferRef = useRef("");
+  const streamSpeechQueueRef = useRef<string[]>([]);
+  const streamSpeechLoopActiveRef = useRef(false);
+  const streamSpeechUsedRef = useRef(false);
+  const bargeInMonitorStreamRef = useRef<MediaStream | null>(null);
+  const bargeInMonitorAudioCtxRef = useRef<AudioContext | null>(null);
+  const bargeInMonitorFrameRef = useRef<number | null>(null);
+  const bargeInCooldownRef = useRef(0);
   const sessionIdRef = useRef(sessionId);
   const voiceSettingsRef = useRef(voiceSettings);
   const playTtsRef = useRef<(text: string) => Promise<void>>(async () => {});
@@ -74,6 +89,22 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     voiceModeRef.current = voiceMode;
   }, [voiceMode]);
+
+  useEffect(() => {
+    voiceAwaitingReplyRef.current = voiceAwaitingReply;
+  }, [voiceAwaitingReply]);
+
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
+
+  useEffect(() => {
+    transcribingRef.current = transcribing;
+  }, [transcribing]);
+
+  useEffect(() => {
+    ttsPlayingRef.current = ttsPlaying;
+  }, [ttsPlaying]);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -103,18 +134,22 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await gatewayFetch("/api/config/bulk?keys=voice.auto_read,voice.auto_transcribe,voice.max_text_length,voice.stt_provider,voice.stt_language");
+        const res = await gatewayFetch("/api/config/bulk?keys=voice.auto_read,voice.stream_tts,voice.barge_in,voice.auto_transcribe,voice.max_text_length,voice.stt_provider,voice.stt_language,voice.tts_speed,voice.speed");
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
         const maxTextRaw = Number.parseInt(data["voice.max_text_length"] || "", 10);
         const sttProviderRaw = String(data["voice.stt_provider"] || "groq").toLowerCase();
+        const ttsSpeedRaw = Number.parseFloat(String(data["voice.tts_speed"] || data["voice.speed"] || "1.2"));
         setVoiceSettings({
           autoRead: data["voice.auto_read"] !== "false",
+          streamTts: data["voice.stream_tts"] !== "false",
+          bargeIn: data["voice.barge_in"] !== "false",
           autoTranscribe: data["voice.auto_transcribe"] !== "false",
           maxTextLength: Number.isFinite(maxTextRaw) && maxTextRaw > 0 ? maxTextRaw : 5000,
           sttProvider: sttProviderRaw || "groq",
           sttLanguage: data["voice.stt_language"] || navigator.language || "en-US",
+          ttsSpeed: Number.isFinite(ttsSpeedRaw) ? Math.max(0.7, Math.min(2, ttsSpeedRaw)) : 1.2,
         });
       } catch {}
     })();
@@ -326,6 +361,15 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
   const handleStop = () => {
     (window as any).__synapse_chat?.stopStreaming?.();
+    if (voiceModeRef.current) {
+      clearAwaitingReply();
+      resetLiveSpeechState();
+      if (voiceSettingsRef.current.autoTranscribe) {
+        window.setTimeout(() => {
+          if (voiceModeRef.current) void startRecordingRef.current(true);
+        }, 200);
+      }
+    }
   };
 
   const sendTextDirect = useCallback(async (text: string) => {
@@ -348,26 +392,120 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     return !isChatStreamingNow();
   }, [isChatStreamingNow]);
 
+  const stopBargeInMonitor = useCallback(() => {
+    if (typeof window !== "undefined" && bargeInMonitorFrameRef.current != null) {
+      window.cancelAnimationFrame(bargeInMonitorFrameRef.current);
+      bargeInMonitorFrameRef.current = null;
+    }
+    if (bargeInMonitorAudioCtxRef.current) {
+      void bargeInMonitorAudioCtxRef.current.close().catch(() => {});
+      bargeInMonitorAudioCtxRef.current = null;
+    }
+    if (bargeInMonitorStreamRef.current) {
+      bargeInMonitorStreamRef.current.getTracks().forEach((t) => t.stop());
+      bargeInMonitorStreamRef.current = null;
+    }
+  }, []);
+
+  const resetLiveSpeechState = useCallback(() => {
+    streamSpeechBufferRef.current = "";
+    streamSpeechQueueRef.current = [];
+    streamSpeechLoopActiveRef.current = false;
+    streamSpeechUsedRef.current = false;
+  }, []);
+
+  const splitSpeakableChunks = useCallback((value: string): { chunks: string[]; remainder: string } => {
+    const chunks: string[] = [];
+    const regex = /([.!?]+(?:["')\]]+)?\s+|[,;:]\s+|\n{2,})/g;
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(value)) !== null) {
+      const end = regex.lastIndex;
+      const rawChunk = value.slice(cursor, end).trim();
+      if (rawChunk.length > 1) chunks.push(rawChunk);
+      cursor = end;
+    }
+    let remainder = value.slice(cursor);
+    const MAX_PENDING_CHARS = 90;
+    if (remainder.length >= MAX_PENDING_CHARS) {
+      const lastWhitespace = Math.max(remainder.lastIndexOf(" "), remainder.lastIndexOf("\n"));
+      const splitAt = lastWhitespace > 40 ? lastWhitespace : MAX_PENDING_CHARS;
+      const earlyChunk = remainder.slice(0, splitAt).trim();
+      if (earlyChunk.length > 1) chunks.push(earlyChunk);
+      remainder = remainder.slice(splitAt);
+    }
+    return { chunks, remainder };
+  }, []);
+
+  const runLiveSpeechQueue = useCallback(async () => {
+    if (streamSpeechLoopActiveRef.current) return;
+    streamSpeechLoopActiveRef.current = true;
+    try {
+      while (voiceModeRef.current && streamSpeechQueueRef.current.length > 0) {
+        const next = streamSpeechQueueRef.current.shift();
+        if (!next) continue;
+        await playTtsRef.current(next);
+      }
+    } finally {
+      streamSpeechLoopActiveRef.current = false;
+    }
+  }, []);
+
+  const waitForLiveSpeechDrain = useCallback(async (timeoutMs = 20000) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (!streamSpeechLoopActiveRef.current && streamSpeechQueueRef.current.length === 0) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return !streamSpeechLoopActiveRef.current && streamSpeechQueueRef.current.length === 0;
+  }, []);
+
+  const enqueueLiveSpeechChunks = useCallback((chunks: string[]) => {
+    if (chunks.length === 0) return;
+    streamSpeechUsedRef.current = true;
+    streamSpeechQueueRef.current.push(...chunks);
+    void runLiveSpeechQueue();
+  }, [runLiveSpeechQueue]);
+
   const clearAwaitingReply = useCallback(() => {
     if (typeof window !== "undefined" && awaitingReplyTimerRef.current != null) {
       window.clearTimeout(awaitingReplyTimerRef.current);
       awaitingReplyTimerRef.current = null;
     }
+    voiceAwaitingReplyRef.current = false;
     setVoiceAwaitingReply(false);
   }, []);
 
   const markAwaitingReply = useCallback(() => {
+    resetLiveSpeechState();
     if (typeof window !== "undefined") {
       if (awaitingReplyTimerRef.current != null) {
         window.clearTimeout(awaitingReplyTimerRef.current);
       }
       awaitingReplyTimerRef.current = window.setTimeout(() => {
+        voiceAwaitingReplyRef.current = false;
         setVoiceAwaitingReply(false);
         awaitingReplyTimerRef.current = null;
       }, 20000);
     }
+    voiceAwaitingReplyRef.current = true;
     setVoiceAwaitingReply(true);
-  }, []);
+  }, [resetLiveSpeechState]);
+
+  const interruptAssistantTurn = useCallback(async () => {
+    (window as any).__synapse_chat?.stopStreaming?.();
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      activeAudioRef.current = null;
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setTtsPlaying(false);
+    clearAwaitingReply();
+    resetLiveSpeechState();
+    await waitForChatIdle(2500);
+  }, [clearAwaitingReply, resetLiveSpeechState, waitForChatIdle]);
 
   const playBrowserTts = useCallback(async (text: string) => {
     const spokenText = text.slice(0, voiceSettings.maxTextLength).trim();
@@ -383,6 +521,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     await new Promise<void>((resolve, reject) => {
       const utterance = new SpeechSynthesisUtterance(spokenText);
       utterance.lang = voiceSettings.sttLanguage || navigator.language || "en-US";
+      utterance.rate = Math.max(0.7, Math.min(2, voiceSettings.ttsSpeed || 1.2));
       utterance.onend = () => {
         setTtsPlaying(false);
         resolve();
@@ -393,7 +532,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       };
       synth.speak(utterance);
     });
-  }, [voiceSettings.maxTextLength, voiceSettings.sttLanguage]);
+  }, [voiceSettings.maxTextLength, voiceSettings.sttLanguage, voiceSettings.ttsSpeed]);
 
   const playTts = useCallback(async (text: string) => {
     const spokenText = text.slice(0, voiceSettings.maxTextLength).trim();
@@ -417,6 +556,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       await new Promise<void>((resolve, reject) => {
         const audio = new Audio(url);
         activeAudioRef.current = audio;
+        audio.playbackRate = Math.max(0.7, Math.min(2, voiceSettings.ttsSpeed || 1.2));
         audio.onended = () => {
           URL.revokeObjectURL(url);
           activeAudioRef.current = null;
@@ -439,7 +579,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     } catch {
       await playBrowserTts(spokenText);
     }
-  }, [playBrowserTts, voiceSettings.maxTextLength]);
+  }, [playBrowserTts, voiceSettings.maxTextLength, voiceSettings.ttsSpeed]);
 
   const getBrowserSpeechCtor = useCallback((): BrowserSpeechRecognitionCtor | null => {
     if (typeof window === "undefined") return null;
@@ -452,7 +592,15 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     if (!SpeechCtor) {
       throw new Error("Browser speech recognition is not supported in this browser.");
     }
-    if (recording || transcribing || isChatStreamingNow()) return;
+    if (recording || transcribing) return;
+    if (isChatStreamingNow()) {
+      if (autoSend || voiceModeRef.current) {
+        await interruptAssistantTurn();
+      } else {
+        return;
+      }
+    }
+    if (isChatStreamingNow()) return;
 
     setRecording(true);
     setTranscribing(true);
@@ -503,7 +651,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     };
 
     recognition.start();
-  }, [clearAwaitingReply, getBrowserSpeechCtor, isChatStreamingNow, markAwaitingReply, recording, sendTextDirect, transcribing, voiceSettings.sttLanguage]);
+  }, [clearAwaitingReply, getBrowserSpeechCtor, interruptAssistantTurn, isChatStreamingNow, markAwaitingReply, recording, sendTextDirect, transcribing, voiceSettings.sttLanguage]);
 
   const stopRecording = useCallback(() => {
     const speech = speechRecognitionRef.current;
@@ -518,7 +666,15 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   }, [recording]);
 
   const startRecording = useCallback(async (autoSend = false) => {
-    if (recording || transcribing || isChatStreamingNow()) return;
+    if (recording || transcribing) return;
+    if (isChatStreamingNow()) {
+      if (autoSend || voiceModeRef.current) {
+        await interruptAssistantTurn();
+      } else {
+        return;
+      }
+    }
+    if (isChatStreamingNow()) return;
     if (voiceSettings.sttProvider === "browser") {
       try {
         await startBrowserRecognition(autoSend);
@@ -619,12 +775,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       toast.error("Microphone access denied");
       if (autoSend) clearAwaitingReply();
     }
-  }, [clearAwaitingReply, isChatStreamingNow, markAwaitingReply, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttProvider]);
+  }, [clearAwaitingReply, interruptAssistantTurn, isChatStreamingNow, markAwaitingReply, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttProvider]);
 
   const toggleVoiceMode = useCallback(async () => {
     if (voiceModeRef.current) {
       setVoiceMode(false);
       clearAwaitingReply();
+      resetLiveSpeechState();
       stopRecording();
       if (activeAudioRef.current) {
         activeAudioRef.current.pause();
@@ -640,12 +797,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
     setVoiceMode(true);
     clearAwaitingReply();
+    resetLiveSpeechState();
     toast.success("Voice mode on");
 
     if (voiceSettings.autoTranscribe && !isChatStreamingNow() && !recording && !transcribing) {
       await startRecording(true);
     }
-  }, [clearAwaitingReply, isChatStreamingNow, recording, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
+  }, [clearAwaitingReply, isChatStreamingNow, recording, resetLiveSpeechState, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
 
   useEffect(() => {
     playTtsRef.current = playTts;
@@ -659,6 +817,128 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     waitForChatIdleRef.current = waitForChatIdle;
   }, [waitForChatIdle]);
 
+  // Barge-in monitor: if user starts speaking while assistant is generating, interrupt and listen.
+  useEffect(() => {
+    if (!voiceMode || !voiceSettings.bargeIn || !voiceSettings.autoTranscribe || recording || transcribing) {
+      stopBargeInMonitor();
+      return;
+    }
+
+    let cancelled = false;
+    let speechStart = 0;
+    const THRESHOLD = 24;
+    const MIN_SPEECH_MS = 320;
+    const COOLDOWN_MS = 1800;
+
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        bargeInMonitorStreamRef.current = stream;
+
+        const audioCtx = new AudioContext();
+        bargeInMonitorAudioCtxRef.current = audioCtx;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        const tick = () => {
+          if (cancelled) return;
+
+          const canDetect =
+            voiceModeRef.current &&
+            voiceAwaitingReplyRef.current &&
+            voiceSettingsRef.current.bargeIn &&
+            chatStreamingRef.current &&
+            !recordingRef.current &&
+            !transcribingRef.current &&
+            !ttsPlayingRef.current;
+
+          if (!canDetect) {
+            speechStart = 0;
+            bargeInMonitorFrameRef.current = requestAnimationFrame(tick);
+            return;
+          }
+
+          analyser.getByteFrequencyData(dataArray);
+          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+          if (avg > THRESHOLD) {
+            if (!speechStart) speechStart = Date.now();
+            if (Date.now() - speechStart >= MIN_SPEECH_MS && Date.now() - bargeInCooldownRef.current >= COOLDOWN_MS) {
+              bargeInCooldownRef.current = Date.now();
+              speechStart = 0;
+              void (async () => {
+                await interruptAssistantTurn();
+                if (voiceModeRef.current) {
+                  await startRecordingRef.current(true);
+                }
+              })();
+            }
+          } else {
+            speechStart = 0;
+          }
+
+          bargeInMonitorFrameRef.current = requestAnimationFrame(tick);
+        };
+
+        bargeInMonitorFrameRef.current = requestAnimationFrame(tick);
+      } catch {
+        // no-op: barge-in remains available via mic button/manual interrupt
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      stopBargeInMonitor();
+    };
+  }, [interruptAssistantTurn, recording, stopBargeInMonitor, transcribing, voiceMode, voiceSettings.autoTranscribe, voiceSettings.bargeIn]);
+
+  // Stream assistant speech sentence-by-sentence while tokens arrive.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { sessionId?: string; delta?: string } | undefined;
+      if (detail?.sessionId && detail.sessionId !== sessionIdRef.current) return;
+      if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
+      if (!voiceSettingsRef.current.autoRead || !voiceSettingsRef.current.streamTts) return;
+      if (typeof detail?.delta !== "string" || detail.delta.length === 0) return;
+
+      streamSpeechBufferRef.current += detail.delta;
+      const { chunks, remainder } = splitSpeakableChunks(streamSpeechBufferRef.current);
+      streamSpeechBufferRef.current = remainder;
+      enqueueLiveSpeechChunks(chunks);
+    };
+
+    window.addEventListener("synapse:assistant_stream_delta", handler);
+    return () => window.removeEventListener("synapse:assistant_stream_delta", handler);
+  }, [enqueueLiveSpeechChunks, splitSpeakableChunks]);
+
+  // If a response is aborted, return to listening mode immediately.
+  useEffect(() => {
+    const handler = async (event: Event) => {
+      const detail = (event as CustomEvent).detail as { sessionId?: string; aborted?: boolean } | undefined;
+      if (detail?.sessionId && detail.sessionId !== sessionIdRef.current) return;
+      if (!detail?.aborted) return;
+      if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
+
+      clearAwaitingReply();
+      resetLiveSpeechState();
+      if (voiceSettingsRef.current.autoTranscribe) {
+        await waitForChatIdleRef.current(1500);
+        await startRecordingRef.current(true);
+      }
+    };
+
+    window.addEventListener("synapse:assistant_stream_done", handler);
+    return () => window.removeEventListener("synapse:assistant_stream_done", handler);
+  }, [clearAwaitingReply, resetLiveSpeechState]);
+
   // Voice mode turn-taking: when a new assistant message arrives, speak it then listen again.
   useEffect(() => {
     const handler = async (event: Event) => {
@@ -667,11 +947,25 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       if (detail.sessionId && detail.sessionId !== sessionIdRef.current) return;
       if (!voiceModeRef.current) return;
 
-      clearAwaitingReply();
       try {
-        await playTtsRef.current(detail.content);
+        if (voiceSettingsRef.current.autoRead) {
+          if (streamSpeechUsedRef.current) {
+            const tail = streamSpeechBufferRef.current.trim();
+            if (tail) {
+              streamSpeechQueueRef.current.push(tail);
+              streamSpeechBufferRef.current = "";
+            }
+            void runLiveSpeechQueue();
+            await waitForLiveSpeechDrain();
+          } else {
+            await playTtsRef.current(detail.content);
+          }
+        }
       } catch (err: any) {
         toast.error("Voice playback failed: " + (err.message || "unknown error"));
+      } finally {
+        clearAwaitingReply();
+        resetLiveSpeechState();
       }
 
       if (voiceModeRef.current && voiceSettingsRef.current.autoTranscribe) {
@@ -682,7 +976,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
     window.addEventListener("synapse:assistant_message", handler);
     return () => window.removeEventListener("synapse:assistant_message", handler);
-  }, [clearAwaitingReply]);
+  }, [clearAwaitingReply, resetLiveSpeechState, runLiveSpeechQueue, waitForLiveSpeechDrain]);
 
   useEffect(() => {
     return () => {
@@ -704,8 +998,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         window.clearTimeout(awaitingReplyTimerRef.current);
         awaitingReplyTimerRef.current = null;
       }
+      stopBargeInMonitor();
+      resetLiveSpeechState();
     };
-  }, []);
+  }, [resetLiveSpeechState, stopBargeInMonitor]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showSuggestions) {
@@ -796,7 +1092,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         : voiceStatus === "thinking"
           ? {
               label: "Thinking",
-              hint: "Generating the next response.",
+              hint: "Generating response. Start speaking to interrupt.",
               glowClass: "bg-blue-500/30",
               ringClass: "border-blue-300/60 animate-pulse",
               coreClass: "from-blue-300 via-indigo-300 to-cyan-500 animate-pulse",
@@ -937,14 +1233,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             variant="ghost"
             size="icon"
             className={`shrink-0 self-end min-w-[44px] min-h-[44px] hidden sm:inline-flex ${recording ? "text-red-400 animate-pulse" : "text-zinc-400 hover:text-zinc-200"}`}
-            onMouseDown={() => { void startRecording(false); }}
+            onMouseDown={() => { void startRecording(voiceMode || chatStreaming); }}
             onMouseUp={stopRecording}
             onMouseLeave={() => recording && stopRecording()}
-            onTouchStart={() => { void startRecording(false); }}
+            onTouchStart={() => { void startRecording(voiceMode || chatStreaming); }}
             onTouchEnd={stopRecording}
-            disabled={isDisabled || transcribing}
+            disabled={transcribing || uploading}
             aria-label={recording ? "Stop recording" : "Hold to record voice"}
-            title="Hold to record voice"
+            title={chatStreaming ? "Hold to interrupt and speak" : "Hold to record voice"}
           >
             {transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> : recording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
           </Button>

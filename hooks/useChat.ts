@@ -91,6 +91,7 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    let accumulated = "";
 
     try {
       const res = await fetch("/api/chat/stream", {
@@ -110,7 +111,6 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
 
       const decoder = new TextDecoder();
       let buffer = "";
-      let accumulated = "";
       let commandResult: any = null;
 
       while (true) {
@@ -132,6 +132,11 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
               setIsTyping(false);
               accumulated += data.content;
               setStreamingContent(accumulated);
+              window.dispatchEvent(
+                new CustomEvent("synapse:assistant_stream_delta", {
+                  detail: { sessionId, delta: data.content, accumulated },
+                })
+              );
             } else if (data.type === "command") {
               commandResult = data;
             } else if (data.type === "tool_use") {
@@ -153,6 +158,11 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
       if (commandResult?.action === "new_session") {
         setIsStreaming(false);
         setIsTyping(false);
+        window.dispatchEvent(
+          new CustomEvent("synapse:assistant_stream_done", {
+            detail: { sessionId, content: accumulated, aborted: false },
+          })
+        );
         return { action: "new_session" };
       }
 
@@ -167,14 +177,29 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
             _creationTime: Date.now(),
           },
         ]);
+        window.dispatchEvent(
+          new CustomEvent("synapse:assistant_stream_done", {
+            detail: { sessionId, content: accumulated, aborted: false },
+          })
+        );
       } else {
         // Refresh messages from server to get the saved versions
         // Small delay to ensure Convex has written the assistant message
         await new Promise(r => setTimeout(r, 500));
         await fetchMessages();
+        window.dispatchEvent(
+          new CustomEvent("synapse:assistant_stream_done", {
+            detail: { sessionId, content: accumulated, aborted: false },
+          })
+        );
       }
     } catch (err: any) {
       if (err.name === "AbortError") {
+        window.dispatchEvent(
+          new CustomEvent("synapse:assistant_stream_done", {
+            detail: { sessionId, content: accumulated, aborted: true },
+          })
+        );
         // User cancelled - not an error
       } else {
         console.error("Chat stream error:", err);
@@ -191,6 +216,11 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
             _creationTime: Date.now(),
           },
         ]);
+        window.dispatchEvent(
+          new CustomEvent("synapse:assistant_stream_done", {
+            detail: { sessionId, content: accumulated, aborted: false },
+          })
+        );
       }
     } finally {
       setIsStreaming(false);

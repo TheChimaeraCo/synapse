@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useCallback } from "react";
+import { use, useState, useCallback, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatWindow } from "@/components/chat/ChatWindow";
@@ -25,6 +25,12 @@ export default function ChatSessionPage({
   const handleSelectConversation = useCallback((_id: string, startSeq?: number) => {
     setScrollToSeq(startSeq ?? null);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("synapse-popout-session-id", sessionId);
+    window.dispatchEvent(new CustomEvent("synapse:active-session", { detail: { sessionId } }));
+  }, [sessionId]);
 
   return (
     <AppShell title="Chat">

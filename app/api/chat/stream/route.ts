@@ -44,6 +44,13 @@ function sseEvent(data: Record<string, any>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
+class ClientAbortError extends Error {
+  constructor() {
+    super("Client disconnected");
+    this.name = "ClientAbortError";
+  }
+}
+
 export async function POST(req: NextRequest) {
   let ctx;
   try {
@@ -188,7 +195,14 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
+      let clientAborted = req.signal.aborted;
+      const abortHandler = () => { clientAborted = true; };
+      req.signal.addEventListener("abort", abortHandler);
+      const throwIfAborted = () => {
+        if (clientAborted || req.signal.aborted) throw new ClientAbortError();
+      };
       try {
+        throwIfAborted();
         controller.enqueue(encoder.encode(sseEvent({ type: "typing", status: true })));
         let responseConversationId = conversationId;
 
@@ -343,6 +357,7 @@ export async function POST(req: NextRequest) {
         };
 
         const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key, ...thinkingParams };
+        options.signal = req.signal;
         if (agent.temperature !== undefined) options.temperature = agent.temperature;
 
         // Cache check
@@ -380,11 +395,18 @@ export async function POST(req: NextRequest) {
         const MAX_TOOL_ROUNDS = 5;
 
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+          throwIfAborted();
           const toolCalls: Array<{ type: "toolCall"; id: string; name: string; arguments: Record<string, any> }> = [];
           let roundText = "";
 
           const aiStream = streamSimple(model, context, options);
           for await (const event of aiStream) {
+            if (clientAborted || req.signal.aborted) {
+              if (typeof (aiStream as any).return === "function") {
+                try { await (aiStream as any).return(); } catch {}
+              }
+              throw new ClientAbortError();
+            }
             if (event.type === "text_delta") {
               // Post-process: replace em dashes with hyphens
               const cleanDelta = event.delta.replace(/—/g, " - ");
@@ -408,6 +430,7 @@ export async function POST(req: NextRequest) {
           fullContent += roundText;
 
           if (toolCalls.length === 0) break;
+          throwIfAborted();
 
           // Stream individual tool call notifications
           for (const tc of toolCalls) {
@@ -439,6 +462,7 @@ export async function POST(req: NextRequest) {
             userRole: ctx.role,
           };
           const toolResults = await executeTools(toolCalls, toolContext, enabledTools as any);
+          throwIfAborted();
           const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
           if (switchedConvoId) {
             responseConversationId = switchedConvoId;
@@ -487,6 +511,7 @@ export async function POST(req: NextRequest) {
         }
 
         const latencyMs = Date.now() - startMs;
+        throwIfAborted();
 
         // === Prompt Defense: Output validation ===
         if (defenseConfig.enabled && fullContent) {
@@ -535,9 +560,16 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId, tokens: usage, cost })));
 
       } catch (err: any) {
+        if (err instanceof ClientAbortError || req.signal.aborted) {
+          console.log("[ChatStream] Client aborted request; stopping generation early.");
+          return;
+        }
         console.error("SSE stream error:", err);
-        controller.enqueue(encoder.encode(sseEvent({ type: "error", message: err.message || "Stream error" })));
+        try {
+          controller.enqueue(encoder.encode(sseEvent({ type: "error", message: err.message || "Stream error" })));
+        } catch {}
       } finally {
+        req.signal.removeEventListener("abort", abortHandler);
         try { controller.close(); } catch {}
       }
     },

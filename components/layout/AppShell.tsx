@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useKeyboardShortcuts, SHORTCUTS } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { OnboardingTour } from "@/components/OnboardingTour";
+import { ChatPopout } from "@/components/chat/ChatPopout";
 
 function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
@@ -103,6 +104,9 @@ export function AppShell({
 
       {/* Onboarding tour */}
       <OnboardingTour />
+
+      {/* Global chat popout */}
+      <ChatPopout />
     </div>
   );
 }

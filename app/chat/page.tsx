@@ -118,6 +118,13 @@ export default function ChatPage() {
     return () => { cancelled = true; };
   }, [gatewayId, activeChannelId]);
 
+  // Persist active session for global chat popout continuity.
+  useEffect(() => {
+    if (!sessionId || typeof window === "undefined") return;
+    localStorage.setItem("synapse-popout-session-id", sessionId);
+    window.dispatchEvent(new CustomEvent("synapse:active-session", { detail: { sessionId } }));
+  }, [sessionId]);
+
   const handleSelectConversation = useCallback((id: string, startSeq?: number) => {
     if (startSeq) setScrollToSeq(startSeq);
   }, []);
