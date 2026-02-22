@@ -18,8 +18,8 @@ importers:
         specifier: ^1.2.1
         version: 1.2.1(grammy@1.40.0)
       '@mariozechner/pi-ai':
-        specifier: ^0.52.9
-        version: 0.52.12(@modelcontextprotocol/sdk@1.26.0(zod@3.25.76))(ws@8.19.0)(zod@3.25.76)
+        specifier: ^0.54.0
+        version: 0.54.0(@modelcontextprotocol/sdk@1.26.0(zod@3.25.76))(ws@8.19.0)(zod@3.25.76)
       '@radix-ui/react-avatar':
         specifier: ^1.1.11
         version: 1.1.11(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -1073,8 +1073,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@mariozechner/pi-ai@0.52.12':
-    resolution: {integrity: sha512-oF7OMJu1aUx7MXJeJoJ/3JDXzD2a5SqK9nHVK3mCA8DRQaykv9g+wcFZaANcCl0vAR2QSDr5KN3ZMARlFNWiVg==}
+  '@mariozechner/pi-ai@0.54.0':
+    resolution: {integrity: sha512-XHhMIbFFHCa4mbiYdttfhVg6r3VmFD5tAiW4tjnmf33FhLUCRd76bGMQRc4kLWXPKCi/U4nqAErvaGiZUY4B8A==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
@@ -6001,7 +6001,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@mariozechner/pi-ai@0.52.12(@modelcontextprotocol/sdk@1.26.0(zod@3.25.76))(ws@8.19.0)(zod@3.25.76)':
+  '@mariozechner/pi-ai@0.54.0(@modelcontextprotocol/sdk@1.26.0(zod@3.25.76))(ws@8.19.0)(zod@3.25.76)':
     dependencies:
       '@anthropic-ai/sdk': 0.73.0(zod@3.25.76)
       '@aws-sdk/client-bedrock-runtime': 3.995.0

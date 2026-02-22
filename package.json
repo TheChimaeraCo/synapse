@@ -34,7 +34,7 @@
     "@auth/core": "^0.41.0",
     "@grammyjs/runner": "^2.0.3",
     "@grammyjs/transformer-throttler": "^1.2.1",
-    "@mariozechner/pi-ai": "^0.52.9",
+    "@mariozechner/pi-ai": "^0.54.0",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",

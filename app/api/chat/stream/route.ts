@@ -245,7 +245,7 @@ export async function POST(req: NextRequest) {
         };
         const selection = await resolveAiSelection({
           gatewayId: gatewayId as Id<"gateways">,
-          capability: "tool_use",
+          capability: "chat",
           message: sanitizedContent,
           agentModel: agent.model || undefined,
           budget: budgetState,
@@ -255,6 +255,7 @@ export async function POST(req: NextRequest) {
         const key = selection.apiKey;
         if (!key) throw new Error("No API key configured");
         const modelId = selection.model;
+        console.log(`[Chat] Using provider=${provider} model=${modelId} agent=${agent.name}`);
         const model = getModel(provider as any, modelId as any);
         if (!model) throw new Error(`Model "${modelId}" not found`);
 
@@ -341,10 +342,12 @@ export async function POST(req: NextRequest) {
           const aiStream = streamSimple(model, context, options);
           for await (const event of aiStream) {
             if (event.type === "text_delta") {
-              roundText += event.delta;
+              // Post-process: replace em dashes with hyphens
+              const cleanDelta = event.delta.replace(/—/g, " - ");
+              roundText += cleanDelta;
               // Rough token estimate: ~4 chars per token
-              streamedTokenEstimate += Math.ceil(event.delta.length / 4);
-              controller.enqueue(encoder.encode(sseEvent({ type: "token", content: event.delta })));
+              streamedTokenEstimate += Math.ceil(cleanDelta.length / 4);
+              controller.enqueue(encoder.encode(sseEvent({ type: "token", content: cleanDelta })));
               // Send token count update every ~20 tokens
               if (streamedTokenEstimate % 20 < 5) {
                 controller.enqueue(encoder.encode(sseEvent({ type: "token_count", estimated: streamedTokenEstimate })));

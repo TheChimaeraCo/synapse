@@ -29,5 +29,5 @@ export function buildDefaultSystemPrompt(): string {
   const soul = getSoulTemplate();
   const agents = getAgentsTemplate();
   
-  return `${soul}\n\n---\n\n${agents}`;
+  return `${soul}\n\n---\n\n${agents}\n\n---\n\n# FORMATTING REMINDER\nNEVER use em dashes (—) in your responses. Use hyphens (-), commas, or rewrite instead.`;
 }

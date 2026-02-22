@@ -188,6 +188,7 @@ async function processAIResponse(
     const key = selection.apiKey;
     if (!key) throw new Error("No API key configured");
     const modelId = selection.model;
+    console.log(`[Chat] Using provider=${selection.provider} model=${modelId}`);
     const model = getModel(provider as any, modelId as any);
     if (!model) throw new Error(`Model "${modelId}" not found`);
 
@@ -237,8 +238,9 @@ async function processAIResponse(
       const stream = streamSimple(model, context, options);
       for await (const event of stream) {
         if (event.type === "text_delta") {
-          roundText += event.delta;
-          await convexClient.mutation(api.functions.activeRuns.appendStream, { id: runId, chunk: event.delta });
+          const cleanDelta = event.delta.replace(/—/g, " - ");
+          roundText += cleanDelta;
+          await convexClient.mutation(api.functions.activeRuns.appendStream, { id: runId, chunk: cleanDelta });
         } else if (event.type === "toolcall_end") {
           toolCalls.push(event.toolCall);
         } else if (event.type === "done") {

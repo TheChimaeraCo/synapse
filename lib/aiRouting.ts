@@ -334,6 +334,7 @@ export async function resolveAiSelection(
   );
 
   let model = clean(resolvedRoute.model) || clean(selectedByRouter) || fallbackModel;
+  console.log(`[aiRouting] capability=${options.capability} resolvedRoute.model=${resolvedRoute.model} selectedByRouter=${selectedByRouter} fallbackModel=${fallbackModel} agentModel=${options.agentModel} final=${model} provider=${provider}`);
   model = constrainModel(model || fallbackModel, loaded.modelConstraints);
 
   const authMethod = clean(selectedProfile?.authMethod) || clean(loaded.values.ai_auth_method);

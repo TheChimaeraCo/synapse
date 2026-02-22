@@ -2,7 +2,7 @@ module.exports={
   "apps": [
     {
       "name": "synapse",
-      "script": "node_modules/.bin/next",
+      "script": "node_modules/next/dist/bin/next",
       "args": "start -p 3009",
       "cwd": "/root/clawd/projects/chimera-gateway",
       "env": {
@@ -16,7 +16,8 @@ module.exports={
         "NEXTAUTH_SECRET": "d0e76566a10bd232a7fec0dab34f70d7591d4eca774465e39c6bbf79c2527ebe",
         "NEXTAUTH_URL": "https://synapse.chimaeraco.dev",
         "NEXT_PUBLIC_CONVEX_URL": "http://127.0.0.1:3220",
-        "TELEGRAM_BOT_TOKEN": "8464630126:AAGizvoIp55_DSRL5-4JFObmyY9rn26jEeY"
+        "TELEGRAM_BOT_TOKEN": "8464630126:AAGizvoIp55_DSRL5-4JFObmyY9rn26jEeY",
+        "BRAVE_SEARCH_API_KEY": "BSAa180Xn4iCC4mx8hIUDmNFMIBV_gM"
       }
     }
   ]

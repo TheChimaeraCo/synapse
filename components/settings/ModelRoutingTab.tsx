@@ -219,6 +219,44 @@ export function ModelRoutingTab() {
   const [loading, setLoading] = useState(true);
   const [savingCapabilities, setSavingCapabilities] = useState(false);
 
+  // Cache of fetched models per provider/profile
+  const [modelCache, setModelCache] = useState<Record<string, string[]>>({});
+  const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
+
+  const fetchModelsForProfile = async (profileId: string, provider: string) => {
+    const cacheKey = profileId || provider || "_default";
+    if (modelCache[cacheKey] || loadingModels[cacheKey]) return;
+    setLoadingModels((prev) => ({ ...prev, [cacheKey]: true }));
+    try {
+      const params = new URLSearchParams();
+      if (profileId) params.set("profileId", profileId);
+      if (provider) params.set("provider", provider);
+      const res = await gatewayFetch(`/api/config/models?${params}`);
+      if (res.ok) {
+        const data = await res.json();
+        setModelCache((prev) => ({ ...prev, [cacheKey]: data.models || [] }));
+      }
+    } catch {}
+    setLoadingModels((prev) => ({ ...prev, [cacheKey]: false }));
+  };
+
+  // Fetch models for all capability profiles on load + when profiles change
+  useEffect(() => {
+    // Fetch default models
+    fetchModelsForProfile("", "");
+    // Fetch for each configured capability
+    for (const { key } of CAPABILITIES) {
+      const cap = capabilityRoutes[key];
+      if (cap?.providerProfileId || cap?.provider) {
+        fetchModelsForProfile(cap.providerProfileId || "", cap.provider || "");
+      }
+    }
+    // Fetch for each profile option
+    for (const p of profileOptions) {
+      fetchModelsForProfile(p.id, p.provider);
+    }
+  }, [capabilityRoutes, profileOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadRoutes = async () => {
     try {
       const [ruleRes, capabilityRes] = await Promise.all([
@@ -330,8 +368,13 @@ export function ModelRoutingTab() {
                       ...(prev[key] || {}),
                       providerProfileId: profileId || "",
                       provider: profile?.provider || "",
+                      model: "", // Reset model when provider changes
                     },
                   }));
+                  // Fetch models for the new profile
+                  if (profileId && profile) {
+                    fetchModelsForProfile(profileId, profile.provider);
+                  }
                 }}
                 className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
               >
@@ -340,18 +383,39 @@ export function ModelRoutingTab() {
                   <option key={profile.id} value={profile.id}>{profile.name} ({profile.provider})</option>
                 ))}
               </select>
-              <input
-                value={capabilityRoutes[key]?.model || ""}
-                onChange={(e) => setCapabilityRoutes((prev) => ({
-                  ...prev,
-                  [key]: {
-                    ...(prev[key] || {}),
-                    model: e.target.value,
-                  },
-                }))}
-                placeholder="Model ID"
-                className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-              />
+              {(() => {
+                const cap = capabilityRoutes[key];
+                const cacheKey = cap?.providerProfileId || cap?.provider || "_default";
+                const models = modelCache[cacheKey] || modelCache["_default"] || [];
+                const currentValue = cap?.model || "";
+                return (
+                  <div className="relative">
+                    <select
+                      value={models.includes(currentValue) ? currentValue : "__custom__"}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "__custom__") return;
+                        setCapabilityRoutes((prev) => ({
+                          ...prev,
+                          [key]: { ...(prev[key] || {}), model: val },
+                        }));
+                      }}
+                      className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                    >
+                      <option value="">Select model...</option>
+                      {currentValue && !models.includes(currentValue) && (
+                        <option value="__custom__">{currentValue} (custom)</option>
+                      )}
+                      {models.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    {loadingModels[cacheKey] && (
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-500">Loading...</div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>

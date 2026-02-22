@@ -111,11 +111,17 @@ export default function ProjectsPage() {
     // Fetch conversations and agents linked to projects
     try {
       const cRes = await gatewayFetch("/api/conversations?withProject=true");
-      if (cRes.ok) setConversations(await cRes.json());
+      if (cRes.ok) {
+        const cData = await cRes.json();
+        setConversations(Array.isArray(cData) ? cData : cData.conversations || []);
+      }
     } catch {}
     try {
       const aRes = await gatewayFetch("/api/agents/workers?recent=true");
-      if (aRes.ok) setAgents(await aRes.json());
+      if (aRes.ok) {
+        const aData = await aRes.json();
+        setAgents(Array.isArray(aData) ? aData : aData.agents || []);
+      }
     } catch {}
     finally { setLoading(false); }
   }, []);
