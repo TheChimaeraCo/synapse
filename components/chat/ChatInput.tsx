@@ -61,8 +61,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const audioChunksRef = useRef<Blob[]>([]);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceModeRef = useRef(false);
-  const voiceAwaitingReplyRef = useRef(false);
   const chatStreamingRef = useRef(false);
+  const awaitingReplyTimerRef = useRef<number | null>(null);
+  const sessionIdRef = useRef(sessionId);
+  const voiceSettingsRef = useRef(voiceSettings);
+  const playTtsRef = useRef<(text: string) => Promise<void>>(async () => {});
+  const startRecordingRef = useRef<(autoSend?: boolean) => Promise<void>>(async () => {});
+  const waitForChatIdleRef = useRef<(timeoutMs?: number) => Promise<boolean>>(async () => true);
 
   const isDisabled = sending || chatStreaming;
 
@@ -71,8 +76,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   }, [voiceMode]);
 
   useEffect(() => {
-    voiceAwaitingReplyRef.current = voiceAwaitingReply;
-  }, [voiceAwaitingReply]);
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    voiceSettingsRef.current = voiceSettings;
+  }, [voiceSettings]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -339,6 +348,27 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     return !isChatStreamingNow();
   }, [isChatStreamingNow]);
 
+  const clearAwaitingReply = useCallback(() => {
+    if (typeof window !== "undefined" && awaitingReplyTimerRef.current != null) {
+      window.clearTimeout(awaitingReplyTimerRef.current);
+      awaitingReplyTimerRef.current = null;
+    }
+    setVoiceAwaitingReply(false);
+  }, []);
+
+  const markAwaitingReply = useCallback(() => {
+    if (typeof window !== "undefined") {
+      if (awaitingReplyTimerRef.current != null) {
+        window.clearTimeout(awaitingReplyTimerRef.current);
+      }
+      awaitingReplyTimerRef.current = window.setTimeout(() => {
+        setVoiceAwaitingReply(false);
+        awaitingReplyTimerRef.current = null;
+      }, 20000);
+    }
+    setVoiceAwaitingReply(true);
+  }, []);
+
   const playBrowserTts = useCallback(async (text: string) => {
     const spokenText = text.slice(0, voiceSettings.maxTextLength).trim();
     if (!spokenText) return;
@@ -446,7 +476,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       const code = String(event?.error || "");
       if (code === "no-speech" || code === "aborted") return;
       toast.error(`Voice transcription failed: ${code || "unknown error"}`);
-      if (autoSend) setVoiceAwaitingReply(false);
+      if (autoSend) clearAwaitingReply();
     };
 
     recognition.onend = () => {
@@ -460,20 +490,20 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         try {
           if (autoSend) {
             if (!voiceModeRef.current) return;
-            setVoiceAwaitingReply(true);
+            markAwaitingReply();
             await sendTextDirect(transcript);
           } else {
             setContent((prev) => (prev ? `${prev} ${transcript}` : transcript));
           }
         } catch (err: any) {
           toast.error("Voice transcription failed: " + (err.message || "unknown error"));
-          if (autoSend) setVoiceAwaitingReply(false);
+          if (autoSend) clearAwaitingReply();
         }
       })();
     };
 
     recognition.start();
-  }, [getBrowserSpeechCtor, isChatStreamingNow, recording, sendTextDirect, transcribing, voiceSettings.sttLanguage]);
+  }, [clearAwaitingReply, getBrowserSpeechCtor, isChatStreamingNow, markAwaitingReply, recording, sendTextDirect, transcribing, voiceSettings.sttLanguage]);
 
   const stopRecording = useCallback(() => {
     const speech = speechRecognitionRef.current;
@@ -530,14 +560,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
           if (autoSend) {
             if (!voiceModeRef.current) return;
-            setVoiceAwaitingReply(true);
+            markAwaitingReply();
             await sendTextDirect(transcript);
           } else {
             setContent((prev) => (prev ? `${prev} ${transcript}` : transcript));
           }
         } catch (err: any) {
           toast.error("Voice transcription failed: " + (err.message || "unknown error"));
-          if (autoSend) setVoiceAwaitingReply(false);
+          if (autoSend) clearAwaitingReply();
         } finally {
           setTranscribing(false);
         }
@@ -587,14 +617,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       }
     } catch {
       toast.error("Microphone access denied");
-      if (autoSend) setVoiceAwaitingReply(false);
+      if (autoSend) clearAwaitingReply();
     }
-  }, [isChatStreamingNow, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttProvider]);
+  }, [clearAwaitingReply, isChatStreamingNow, markAwaitingReply, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttProvider]);
 
   const toggleVoiceMode = useCallback(async () => {
     if (voiceModeRef.current) {
       setVoiceMode(false);
-      setVoiceAwaitingReply(false);
+      clearAwaitingReply();
       stopRecording();
       if (activeAudioRef.current) {
         activeAudioRef.current.pause();
@@ -609,41 +639,50 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     }
 
     setVoiceMode(true);
-    setVoiceAwaitingReply(false);
+    clearAwaitingReply();
     toast.success("Voice mode on");
 
     if (voiceSettings.autoTranscribe && !isChatStreamingNow() && !recording && !transcribing) {
       await startRecording(true);
     }
-  }, [isChatStreamingNow, recording, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
+  }, [clearAwaitingReply, isChatStreamingNow, recording, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
+
+  useEffect(() => {
+    playTtsRef.current = playTts;
+  }, [playTts]);
+
+  useEffect(() => {
+    startRecordingRef.current = startRecording;
+  }, [startRecording]);
+
+  useEffect(() => {
+    waitForChatIdleRef.current = waitForChatIdle;
+  }, [waitForChatIdle]);
 
   // Voice mode turn-taking: when a new assistant message arrives, speak it then listen again.
   useEffect(() => {
     const handler = async (event: Event) => {
       const detail = (event as CustomEvent).detail as { content?: string; sessionId?: string } | undefined;
-      if (!detail?.content) return;
-      if (detail.sessionId && detail.sessionId !== sessionId) return;
-      console.log("[Voice] handler fired, voiceMode:", voiceModeRef.current, "autoRead:", voiceSettings.autoRead, "autoTranscribe:", voiceSettings.autoTranscribe);
+      if (typeof detail?.content !== "string" || !detail.content.trim()) return;
+      if (detail.sessionId && detail.sessionId !== sessionIdRef.current) return;
       if (!voiceModeRef.current) return;
 
-      setVoiceAwaitingReply(false);
-      if (voiceSettings.autoRead) {
-        try {
-          await playTts(detail.content);
-        } catch (err: any) {
-          toast.error("Voice playback failed: " + (err.message || "unknown error"));
-        }
+      clearAwaitingReply();
+      try {
+        await playTtsRef.current(detail.content);
+      } catch (err: any) {
+        toast.error("Voice playback failed: " + (err.message || "unknown error"));
       }
 
-      if (voiceModeRef.current && voiceSettings.autoTranscribe) {
-        await waitForChatIdle();
-        await startRecording(true);
+      if (voiceModeRef.current && voiceSettingsRef.current.autoTranscribe) {
+        await waitForChatIdleRef.current();
+        await startRecordingRef.current(true);
       }
     };
 
     window.addEventListener("synapse:assistant_message", handler);
     return () => window.removeEventListener("synapse:assistant_message", handler);
-  }, [playTts, sessionId, startRecording, voiceSettings.autoTranscribe, waitForChatIdle]);
+  }, [clearAwaitingReply]);
 
   useEffect(() => {
     return () => {
@@ -660,6 +699,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       }
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
         window.speechSynthesis.cancel();
+      }
+      if (typeof window !== "undefined" && awaitingReplyTimerRef.current != null) {
+        window.clearTimeout(awaitingReplyTimerRef.current);
+        awaitingReplyTimerRef.current = null;
       }
     };
   }, []);
