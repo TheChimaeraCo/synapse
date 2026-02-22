@@ -46,19 +46,18 @@ function CodeBlock({ language, children }: { language?: string; children: string
   );
 }
 
-const FILE_REF_REGEX = /\[file:([^\]:]+):([^\]]+)\]/g;
-
 function extractFileRefs(content: string): { id: string; filename: string }[] {
   const refs: { id: string; filename: string }[] = [];
+  const re = /\[file:([^\]:]+):([^\]]+)\]/g;
   let match;
-  while ((match = FILE_REF_REGEX.exec(content)) !== null) {
+  while ((match = re.exec(content)) !== null) {
     refs.push({ id: match[1], filename: match[2] });
   }
   return refs;
 }
 
 function stripFileRefs(content: string): string {
-  return content.replace(FILE_REF_REGEX, "").trim();
+  return content.replace(/\[file:([^\]:]+):([^\]]+)\]/g, "").trim();
 }
 
 function FileAttachment({ id, filename }: { id: string; filename: string }) {

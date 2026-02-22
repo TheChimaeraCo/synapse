@@ -149,10 +149,24 @@ export async function runFileReaderModel(opts: {
 
   const messages: any[] = [];
   if (opts.extracted?.mode === "image") {
+    // Fetch image and send as base64 (URL-based won't work for auth-protected storage)
+    let imagePart: any;
+    try {
+      const imgRes = await fetch(opts.fileUrl);
+      if (imgRes.ok) {
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const b64 = buf.toString("base64");
+        const mime = imgRes.headers.get("content-type") || opts.mimeType || "image/png";
+        imagePart = { type: "image", source: { type: "base64", media_type: mime, data: b64 } };
+      }
+    } catch {}
+    if (!imagePart) {
+      return { provider: selection.provider, model: selection.model, text: "Failed to load image from storage.", tokens: 0 };
+    }
     messages.push({
       role: "user",
       content: [
-        { type: "image", source: { type: "url", url: opts.fileUrl } },
+        imagePart,
         { type: "text", text: `Filename: ${opts.filename}\nMIME: ${opts.mimeType}\nQuestion: ${question}` },
       ],
       timestamp: Date.now(),

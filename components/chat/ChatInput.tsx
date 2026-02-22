@@ -233,43 +233,48 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     if ((!trimmed && !attachedFile) || isDisabled) return;
 
     const fileToUpload = attachedFile;
-    setSending(true);
+    const sendMessage = (window as any).__synapse_chat?.sendMessage;
+    if (!sendMessage) { toast.error("Chat not initialized"); return; }
+
+    // Clear input immediately so user can keep typing
     setContent("");
     setShowSuggestions(false);
     setAttachedFile(null);
 
-    try {
-      const sendMessage = (window as any).__synapse_chat?.sendMessage;
-      console.log("[ChatInput] __synapse_chat:", { hasSendMessage: !!sendMessage, isStreaming: (window as any).__synapse_chat?.isStreaming });
-      if (!sendMessage) throw new Error("Chat not initialized");
+    let messageToSend = trimmed;
 
-      let messageToSend = trimmed;
-
-      if (fileToUpload) {
-        setUploading(true);
-        try {
-          const uploaded = await uploadFile(fileToUpload.file);
-          if (uploaded) {
-            const fileRef = `[file:${uploaded.id}:${uploaded.filename}]`;
-            messageToSend = messageToSend ? `${fileRef}\n${messageToSend}` : fileRef;
-          }
-        } finally {
-          setUploading(false);
-          if (fileToUpload.preview) URL.revokeObjectURL(fileToUpload.preview);
+    // Upload file first (UI stays interactive, just shows uploading indicator)
+    if (fileToUpload) {
+      setUploading(true);
+      try {
+        const uploaded = await uploadFile(fileToUpload.file);
+        if (uploaded) {
+          const fileRef = `[file:${uploaded.id}:${uploaded.filename}]`;
+          messageToSend = messageToSend ? `${fileRef}\n${messageToSend}` : fileRef;
         }
+      } catch (err: any) {
+        toast.error("Failed to upload file");
+        setContent(trimmed);
+        setAttachedFile(fileToUpload);
+        setUploading(false);
+        return;
+      } finally {
+        setUploading(false);
+        if (fileToUpload.preview) URL.revokeObjectURL(fileToUpload.preview);
       }
+    }
 
-      if (!messageToSend) return;
+    if (!messageToSend) return;
 
-      const result = await sendMessage(messageToSend);
-
-      // new_session action no longer used - single session per user
+    // Now send the message
+    setSending(true);
+    try {
+      await sendMessage(messageToSend);
     } catch (err: any) {
       toast.error(err.message || "Failed to send message");
       setContent(trimmed);
     } finally {
       setSending(false);
-      // Delay focus to ensure React has re-rendered after state updates
       requestAnimationFrame(() => {
         textareaRef.current?.focus();
       });
@@ -469,6 +474,25 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     }
   };
 
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        // Generate a readable name from the mime type
+        const ext = file.type.split("/")[1] || "png";
+        const namedFile = new File([file], `pasted-image.${ext}`, { type: file.type });
+        const preview = URL.createObjectURL(namedFile);
+        setAttachedFile({ file: namedFile, preview });
+        toast.success("Image pasted!");
+        return;
+      }
+    }
+  };
+
   return (
     <div className="border-t border-white/[0.06] p-2 sm:p-5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-white/[0.02] backdrop-blur-2xl">
       <div className="relative">
@@ -503,6 +527,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             <button onClick={removeAttachment} aria-label="Remove attachment" className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-zinc-300 transition shrink-0">
               <X className="h-3.5 w-3.5" />
             </button>
+          </div>
+        )}
+
+        {/* Upload in progress indicator */}
+        {uploading && !attachedFile && (
+          <div className="mb-3 flex items-center gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.06] backdrop-blur-2xl px-4 py-3">
+            <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />
+            <span className="text-sm text-blue-300">Uploading file...</span>
           </div>
         )}
 
@@ -617,6 +649,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             value={content}
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder="Type a message..."
             className="min-h-[44px] max-h-32 resize-none bg-card text-base sm:text-sm"
             rows={1}
@@ -634,7 +667,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           ) : (
             <Button
               onClick={handleSend}
-              disabled={isDisabled || !content.trim()}
+              disabled={isDisabled || uploading || (!content.trim() && !attachedFile)}
               size="icon"
               className="shrink-0 self-end min-w-[44px] min-h-[44px]"
               aria-label="Send message"

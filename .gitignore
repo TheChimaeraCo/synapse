@@ -50,3 +50,7 @@ lib/license/keys/private.pem
 REFACTOR_PLAN.md
 workspace/
 workspace/
+
+# PM2 secrets
+.env.pm2
+ecosystem.config.cjs

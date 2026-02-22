@@ -264,10 +264,32 @@ export async function POST(req: NextRequest) {
         const thinkingLevel: ThinkingLevel = isValidThinkingLevel(requestedThinking) ? requestedThinking : "off";
         const thinkingParams = getThinkingParams(thinkingLevel, provider);
 
-        // Transform messages, converting file references to vision content for images
+        // Transform messages, converting file references to inline vision content for images
         const FILE_REF_RE = /\[file:([^\]:]+):([^\]]+)\]/g;
         const IMAGE_EXTS = /\.(jpg|jpeg|png|gif|webp|svg)$/i;
-        const transformMessage = (m: any) => {
+        const IMAGE_MIMES: Record<string, string> = {
+          jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+          gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
+        };
+
+        // Pre-fetch image files from Convex storage for inline vision
+        const fetchImageAsBase64 = async (fileId: string): Promise<{ b64: string; mime: string } | null> => {
+          try {
+            const { getFileWithFreshUrl } = await import("@/lib/uploadedFileReader");
+            const resolved = await getFileWithFreshUrl(fileId as any);
+            if (!resolved?.url) return null;
+            const imgRes = await fetch(resolved.url);
+            if (!imgRes.ok) return null;
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            const mime = imgRes.headers.get("content-type") || resolved.file?.mimeType || "image/png";
+            return { b64: buf.toString("base64"), mime };
+          } catch (e) {
+            console.error(`[Chat] Failed to fetch image ${fileId}:`, e);
+            return null;
+          }
+        };
+
+        const transformMessage = async (m: any) => {
           if (m.role !== "user") {
             return { role: "assistant" as const, content: [{ type: "text" as const, text: m.content }], timestamp: Date.now() };
           }
@@ -280,29 +302,43 @@ export async function POST(req: NextRequest) {
           const textContent = m.content.replace(FILE_REF_RE, "").trim();
           const imageRefs = fileRefs.filter(f => IMAGE_EXTS.test(f.filename));
           const nonImageRefs = fileRefs.filter(f => !IMAGE_EXTS.test(f.filename));
-          const fileContextLines: string[] = [];
-          if (imageRefs.length > 0) {
-            fileContextLines.push(...imageRefs.map(f => `Attached image: ${f.filename} (id: ${f.id})`));
+
+          // If no image refs, return simple text message
+          if (imageRefs.length === 0) {
+            const fileContextLines = nonImageRefs.map(f => `Attached file: ${f.filename} (id: ${f.id})`);
+            const mergedText = [textContent, fileContextLines.join("\n")].filter(Boolean).join("\n\n").trim();
+            return { role: "user" as const, content: mergedText || m.content, timestamp: Date.now() };
           }
-          if (nonImageRefs.length > 0) {
-            fileContextLines.push(...nonImageRefs.map(f => `Attached file: ${f.filename} (id: ${f.id})`));
-          }
-          const mergedText = [textContent, fileContextLines.join("\n")].filter(Boolean).join("\n\n").trim();
-          if (imageRefs.length > 0) {
-            const parts: any[] = [];
-            for (const img of imageRefs) {
-              const fileUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/files/${img.id}`;
-              parts.push({ type: "image", source: { type: "url", url: fileUrl } });
+
+          // Fetch images and build multimodal content blocks
+          const contentParts: any[] = [];
+          for (const imgRef of imageRefs) {
+            const img = await fetchImageAsBase64(imgRef.id);
+            if (img) {
+              contentParts.push({
+                type: "image",
+                data: img.b64,
+                mimeType: img.mime,
+              });
+              console.log(`[Chat] Inlined image: ${imgRef.filename} (${Math.round(img.b64.length / 1024)}KB b64)`);
+            } else {
+              contentParts.push({ type: "text", text: `[Failed to load image: ${imgRef.filename}]` });
             }
-            if (mergedText) parts.push({ type: "text", text: mergedText });
-            return { role: "user" as const, content: parts, timestamp: Date.now() };
           }
-          return { role: "user" as const, content: mergedText || m.content, timestamp: Date.now() };
+
+          // Add non-image file references as text
+          const fileContextLines = nonImageRefs.map(f => `Attached file: ${f.filename} (id: ${f.id})`);
+          const finalText = [textContent, fileContextLines.join("\n")].filter(Boolean).join("\n\n").trim();
+          if (finalText) {
+            contentParts.push({ type: "text", text: finalText });
+          }
+
+          return { role: "user" as const, content: contentParts, timestamp: Date.now() };
         };
 
         const context: any = {
           systemPrompt,
-          messages: claudeMessages.map(transformMessage),
+          messages: await Promise.all(claudeMessages.map(transformMessage)),
           ...(providerTools ? { tools: providerTools } : {}),
         };
 

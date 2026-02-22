@@ -11,6 +11,7 @@
 import type * as actions_ai from "../actions/ai.js";
 import type * as actions_embeddings from "../actions/embeddings.js";
 import type * as actions_heartbeat from "../actions/heartbeat.js";
+import type * as actions_proactive from "../actions/proactive.js";
 import type * as actions_router from "../actions/router.js";
 import type * as actions_telegram from "../actions/telegram.js";
 import type * as actions_watchdog from "../actions/watchdog.js";
@@ -43,6 +44,7 @@ import type * as functions_notifications from "../functions/notifications.js";
 import type * as functions_onboarding from "../functions/onboarding.js";
 import type * as functions_parseHistory from "../functions/parseHistory.js";
 import type * as functions_presence from "../functions/presence.js";
+import type * as functions_proactive from "../functions/proactive.js";
 import type * as functions_projects from "../functions/projects.js";
 import type * as functions_pushSubscriptions from "../functions/pushSubscriptions.js";
 import type * as functions_responseCache from "../functions/responseCache.js";
@@ -79,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   "actions/ai": typeof actions_ai;
   "actions/embeddings": typeof actions_embeddings;
   "actions/heartbeat": typeof actions_heartbeat;
+  "actions/proactive": typeof actions_proactive;
   "actions/router": typeof actions_router;
   "actions/telegram": typeof actions_telegram;
   "actions/watchdog": typeof actions_watchdog;
@@ -111,6 +114,7 @@ declare const fullApi: ApiFromModules<{
   "functions/onboarding": typeof functions_onboarding;
   "functions/parseHistory": typeof functions_parseHistory;
   "functions/presence": typeof functions_presence;
+  "functions/proactive": typeof functions_proactive;
   "functions/projects": typeof functions_projects;
   "functions/pushSubscriptions": typeof functions_pushSubscriptions;
   "functions/responseCache": typeof functions_responseCache;

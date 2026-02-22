@@ -428,7 +428,7 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
         const lines = allFiles.map((f) =>
           `- [file:${f._id}:${f.filename}] (${f.mimeType}, ${Math.max(1, Math.round((f.size || 0) / 1024))} KB)`
         );
-        conversationFilesSection = `\n\n## Files Available In This Thread\nUse \`read_uploaded_file\` to inspect these before answering file-specific questions.\n${lines.join("\n")}\n`;
+        conversationFilesSection = `\n\n## Files Available In This Thread\nIMPORTANT: If any file below is an image, you MUST call \`read_uploaded_file\` immediately to see it. Do not ask the user what's in the image - look at it yourself. For non-image files, use the tool to read their contents before answering questions about them.\n${lines.join("\n")}\n`;
       }
     } catch (err) {
       console.error("[Context] Failed to load conversation files:", err);

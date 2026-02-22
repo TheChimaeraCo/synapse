@@ -19,11 +19,29 @@ export async function GET(
       return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
 
-    if (file.url) {
-      return NextResponse.redirect(file.url);
+    let url = file.url;
+    if (!url && file.storageId) {
+      url = (await convexClient.query(api.functions.files.getUrl, { storageId: file.storageId })) || "";
+    }
+    if (!url) {
+      return NextResponse.json({ error: "File has no URL" }, { status: 404 });
     }
 
-    return NextResponse.json({ error: "File has no URL" }, { status: 404 });
+    // Proxy the file instead of redirecting (Convex storage may be on localhost)
+    const fileRes = await fetch(url);
+    if (!fileRes.ok) {
+      return NextResponse.json({ error: "Failed to fetch file from storage" }, { status: 502 });
+    }
+
+    const headers = new Headers();
+    const contentType = fileRes.headers.get("content-type") || file.mimeType || "application/octet-stream";
+    headers.set("Content-Type", contentType);
+    headers.set("Cache-Control", "public, max-age=3600, immutable");
+    if (fileRes.headers.get("content-length")) {
+      headers.set("Content-Length", fileRes.headers.get("content-length")!);
+    }
+
+    return new NextResponse(fileRes.body, { status: 200, headers });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
