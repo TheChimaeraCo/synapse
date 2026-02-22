@@ -15,6 +15,12 @@ export async function POST(req: NextRequest) {
 
     const config = await getVoiceConfigFromDb(gatewayId as Id<"gateways">);
     console.log("[STT] provider:", config.sttProvider, "hasKey:", !!config.sttApiKey, "fileType:", file.type, "fileSize:", file.size);
+    if (config.sttProvider === "browser") {
+      return NextResponse.json(
+        { error: "Browser STT is client-side only. Use web speech recognition in the chat UI." },
+        { status: 400 },
+      );
+    }
     if (config.sttProvider === "none") {
       return NextResponse.json({ error: "STT is not configured" }, { status: 400 });
     }

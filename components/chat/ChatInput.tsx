@@ -9,9 +9,25 @@ import { toast } from "sonner";
 import { useSession } from "next-auth/react";
 import { getCommandSuggestions } from "@/lib/slashCommands";
 
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: any) => void) | null;
+  onerror: ((event: any) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type BrowserSpeechRecognitionCtor = new () => BrowserSpeechRecognition;
+
 export function ChatInput({ sessionId }: { sessionId: string }) {
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
+  const [chatStreaming, setChatStreaming] = useState(false);
   const [suggestions, setSuggestions] = useState<Array<{ name: string; description: string; usage: string }>>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -24,10 +40,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [transcribing, setTranscribing] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceAwaitingReply, setVoiceAwaitingReply] = useState(false);
+  const [ttsPlaying, setTtsPlaying] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState({
     autoRead: true,
     autoTranscribe: true,
     maxTextLength: 5000,
+    sttProvider: "groq",
+    sttLanguage: "en-US",
   });
   const [agents, setAgents] = useState<Array<{ _id: string; name: string; slug: string; isActive: boolean }>>([]);
   const [currentAgentId, setCurrentAgentId] = useState<string | null>(null);
@@ -38,14 +57,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceModeRef = useRef(false);
   const voiceAwaitingReplyRef = useRef(false);
+  const chatStreamingRef = useRef(false);
 
-  const chatState = typeof window !== "undefined" ? (window as any).__synapse_chat : null;
-  const isStreaming = chatState?.isStreaming || false;
-  const isDisabled = sending || isStreaming;
+  const isDisabled = sending || chatStreaming;
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
@@ -56,6 +75,18 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   }, [voiceAwaitingReply]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => {
+      const next = Boolean((window as any).__synapse_chat?.isStreaming);
+      chatStreamingRef.current = next;
+      setChatStreaming((prev) => (prev === next ? prev : next));
+    };
+    sync();
+    const interval = window.setInterval(sync, 150);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     textareaRef.current?.focus();
   }, [sessionId]);
 
@@ -63,15 +94,18 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await gatewayFetch("/api/config/bulk?keys=voice.auto_read,voice.auto_transcribe,voice.max_text_length");
+        const res = await gatewayFetch("/api/config/bulk?keys=voice.auto_read,voice.auto_transcribe,voice.max_text_length,voice.stt_provider,voice.stt_language");
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
         const maxTextRaw = Number.parseInt(data["voice.max_text_length"] || "", 10);
+        const sttProviderRaw = String(data["voice.stt_provider"] || "groq").toLowerCase();
         setVoiceSettings({
           autoRead: data["voice.auto_read"] !== "false",
           autoTranscribe: data["voice.auto_transcribe"] !== "false",
           maxTextLength: Number.isFinite(maxTextRaw) && maxTextRaw > 0 ? maxTextRaw : 5000,
+          sttProvider: sttProviderRaw || "groq",
+          sttLanguage: data["voice.stt_language"] || navigator.language || "en-US",
         });
       } catch {}
     })();
@@ -291,37 +325,162 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     await sendMessage(text);
   }, []);
 
-  const playTts = useCallback(async (text: string) => {
-    const response = await gatewayFetch("/api/voice/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.slice(0, voiceSettings.maxTextLength) }),
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || "TTS failed");
+  const isChatStreamingNow = useCallback(() => {
+    if (typeof window === "undefined") return false;
+    return Boolean((window as any).__synapse_chat?.isStreaming);
+  }, []);
+
+  const waitForChatIdle = useCallback(async (timeoutMs = 6000) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (!isChatStreamingNow()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    return !isChatStreamingNow();
+  }, [isChatStreamingNow]);
+
+  const playBrowserTts = useCallback(async (text: string) => {
+    const spokenText = text.slice(0, voiceSettings.maxTextLength).trim();
+    if (!spokenText) return;
+    if (typeof window === "undefined" || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+      throw new Error("Browser speech synthesis is not supported in this browser.");
     }
 
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    setTtsPlaying(true);
+
     await new Promise<void>((resolve, reject) => {
-      const audio = new Audio(url);
-      activeAudioRef.current = audio;
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        activeAudioRef.current = null;
+      const utterance = new SpeechSynthesisUtterance(spokenText);
+      utterance.lang = voiceSettings.sttLanguage || navigator.language || "en-US";
+      utterance.onend = () => {
+        setTtsPlaying(false);
         resolve();
       };
-      audio.onerror = () => {
-        URL.revokeObjectURL(url);
-        activeAudioRef.current = null;
-        reject(new Error("Audio playback failed"));
+      utterance.onerror = () => {
+        setTtsPlaying(false);
+        reject(new Error("Browser speech playback failed"));
       };
-      audio.play().catch(reject);
+      synth.speak(utterance);
     });
-  }, [voiceSettings.maxTextLength]);
+  }, [voiceSettings.maxTextLength, voiceSettings.sttLanguage]);
+
+  const playTts = useCallback(async (text: string) => {
+    const spokenText = text.slice(0, voiceSettings.maxTextLength).trim();
+    if (!spokenText) return;
+
+    try {
+      const response = await gatewayFetch("/api/voice/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: spokenText }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "TTS failed");
+      }
+
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("TTS returned empty audio");
+      const url = URL.createObjectURL(blob);
+      setTtsPlaying(true);
+      await new Promise<void>((resolve, reject) => {
+        const audio = new Audio(url);
+        activeAudioRef.current = audio;
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          activeAudioRef.current = null;
+          setTtsPlaying(false);
+          resolve();
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          activeAudioRef.current = null;
+          setTtsPlaying(false);
+          reject(new Error("Audio playback failed"));
+        };
+        audio.play().catch((err) => {
+          URL.revokeObjectURL(url);
+          activeAudioRef.current = null;
+          setTtsPlaying(false);
+          reject(err);
+        });
+      });
+    } catch {
+      await playBrowserTts(spokenText);
+    }
+  }, [playBrowserTts, voiceSettings.maxTextLength]);
+
+  const getBrowserSpeechCtor = useCallback((): BrowserSpeechRecognitionCtor | null => {
+    if (typeof window === "undefined") return null;
+    const ctor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    return (ctor as BrowserSpeechRecognitionCtor) || null;
+  }, []);
+
+  const startBrowserRecognition = useCallback(async (autoSend = false) => {
+    const SpeechCtor = getBrowserSpeechCtor();
+    if (!SpeechCtor) {
+      throw new Error("Browser speech recognition is not supported in this browser.");
+    }
+    if (recording || transcribing || isChatStreamingNow()) return;
+
+    setRecording(true);
+    setTranscribing(true);
+    let finalTranscript = "";
+
+    const recognition = new SpeechCtor();
+    speechRecognitionRef.current = recognition;
+    recognition.lang = voiceSettings.sttLanguage || navigator.language || "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: any) => {
+      const result = event?.results?.[0]?.[0]?.transcript;
+      if (typeof result === "string") {
+        finalTranscript = result.trim();
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      const code = String(event?.error || "");
+      if (code === "no-speech" || code === "aborted") return;
+      toast.error(`Voice transcription failed: ${code || "unknown error"}`);
+      if (autoSend) setVoiceAwaitingReply(false);
+    };
+
+    recognition.onend = () => {
+      speechRecognitionRef.current = null;
+      setRecording(false);
+      setTranscribing(false);
+      const transcript = finalTranscript.trim();
+      if (!transcript) return;
+
+      void (async () => {
+        try {
+          if (autoSend) {
+            if (!voiceModeRef.current) return;
+            setVoiceAwaitingReply(true);
+            await sendTextDirect(transcript);
+          } else {
+            setContent((prev) => (prev ? `${prev} ${transcript}` : transcript));
+          }
+        } catch (err: any) {
+          toast.error("Voice transcription failed: " + (err.message || "unknown error"));
+          if (autoSend) setVoiceAwaitingReply(false);
+        }
+      })();
+    };
+
+    recognition.start();
+  }, [getBrowserSpeechCtor, isChatStreamingNow, recording, sendTextDirect, transcribing, voiceSettings.sttLanguage]);
 
   const stopRecording = useCallback(() => {
+    const speech = speechRecognitionRef.current;
+    if (speech) {
+      speech.stop();
+      return;
+    }
     if (mediaRecorderRef.current && recording) {
       mediaRecorderRef.current.stop();
       setRecording(false);
@@ -329,7 +488,15 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   }, [recording]);
 
   const startRecording = useCallback(async (autoSend = false) => {
-    if (recording || transcribing || isDisabled) return;
+    if (recording || transcribing || isChatStreamingNow()) return;
+    if (voiceSettings.sttProvider === "browser") {
+      try {
+        await startBrowserRecognition(autoSend);
+      } catch (err: any) {
+        toast.error(err.message || "Browser speech recognition is unavailable.");
+      }
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
@@ -420,8 +587,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       }
     } catch {
       toast.error("Microphone access denied");
+      if (autoSend) setVoiceAwaitingReply(false);
     }
-  }, [isDisabled, recording, sendTextDirect, transcribing]);
+  }, [isChatStreamingNow, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttProvider]);
 
   const toggleVoiceMode = useCallback(async () => {
     if (voiceModeRef.current) {
@@ -432,6 +600,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         activeAudioRef.current.pause();
         activeAudioRef.current = null;
       }
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      setTtsPlaying(false);
       toast.success("Voice mode off");
       return;
     }
@@ -440,10 +612,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     setVoiceAwaitingReply(false);
     toast.success("Voice mode on");
 
-    if (voiceSettings.autoTranscribe && !isDisabled && !recording && !transcribing) {
+    if (voiceSettings.autoTranscribe && !isChatStreamingNow() && !recording && !transcribing) {
       await startRecording(true);
     }
-  }, [isDisabled, recording, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
+  }, [isChatStreamingNow, recording, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
 
   // Voice mode turn-taking: when a new assistant message arrives, speak it then listen again.
   useEffect(() => {
@@ -454,31 +626,37 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
 
       setVoiceAwaitingReply(false);
-      if (voiceSettings.autoRead) {
-        try {
-          await playTts(detail.content);
-        } catch (err: any) {
-          toast.error("Voice playback failed: " + (err.message || "unknown error"));
-        }
+      try {
+        await playTts(detail.content);
+      } catch (err: any) {
+        toast.error("Voice playback failed: " + (err.message || "unknown error"));
       }
 
-      if (voiceModeRef.current && !isDisabled && voiceSettings.autoTranscribe) {
+      if (voiceModeRef.current && voiceSettings.autoTranscribe) {
+        await waitForChatIdle();
         await startRecording(true);
       }
     };
 
     window.addEventListener("synapse:assistant_message", handler);
     return () => window.removeEventListener("synapse:assistant_message", handler);
-  }, [isDisabled, playTts, sessionId, startRecording, voiceSettings.autoRead, voiceSettings.autoTranscribe]);
+  }, [playTts, sessionId, startRecording, voiceSettings.autoTranscribe, waitForChatIdle]);
 
   useEffect(() => {
     return () => {
+      if (speechRecognitionRef.current) {
+        speechRecognitionRef.current.abort();
+        speechRecognitionRef.current = null;
+      }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
       if (activeAudioRef.current) {
         activeAudioRef.current.pause();
         activeAudioRef.current = null;
+      }
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
       }
     };
   }, []);
@@ -533,6 +711,58 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     }
   };
 
+  const voiceStatus = !voiceMode
+    ? "off"
+    : recording
+      ? "listening"
+      : transcribing
+        ? "transcribing"
+        : ttsPlaying
+          ? "speaking"
+          : voiceAwaitingReply || chatStreaming
+            ? "thinking"
+            : "ready";
+
+  const voiceStatusMeta = voiceStatus === "listening"
+    ? {
+        label: "Listening",
+        hint: "Speak naturally. I will send when you pause.",
+        glowClass: "bg-emerald-500/30",
+        ringClass: "border-emerald-300/60 animate-pulse",
+        coreClass: "from-emerald-300 via-cyan-300 to-teal-500 animate-pulse",
+      }
+    : voiceStatus === "transcribing"
+      ? {
+          label: "Transcribing",
+          hint: "Converting your speech to text.",
+          glowClass: "bg-amber-500/30",
+          ringClass: "border-amber-300/60",
+          coreClass: "from-amber-300 via-orange-300 to-amber-500 animate-pulse",
+        }
+      : voiceStatus === "speaking"
+        ? {
+            label: "Responding",
+            hint: "Playing assistant voice reply.",
+            glowClass: "bg-fuchsia-500/30",
+            ringClass: "border-fuchsia-300/60 animate-pulse",
+            coreClass: "from-fuchsia-300 via-violet-300 to-indigo-500 animate-pulse",
+          }
+        : voiceStatus === "thinking"
+          ? {
+              label: "Thinking",
+              hint: "Generating the next response.",
+              glowClass: "bg-blue-500/30",
+              ringClass: "border-blue-300/60 animate-pulse",
+              coreClass: "from-blue-300 via-indigo-300 to-cyan-500 animate-pulse",
+            }
+          : {
+              label: "Voice Mode Ready",
+              hint: "I will keep the conversation going turn-by-turn.",
+              glowClass: "bg-cyan-500/20",
+              ringClass: "border-cyan-200/30",
+              coreClass: "from-cyan-300 via-sky-300 to-blue-500 animate-pulse-glow",
+            };
+
   return (
     <div className="border-t border-white/[0.06] p-2 sm:p-5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-white/[0.02] backdrop-blur-2xl">
       <div className="relative">
@@ -551,6 +781,22 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
                 <span className="text-muted-foreground truncate">{s.description}</span>
               </button>
             ))}
+          </div>
+        )}
+
+        {voiceMode && (
+          <div className="mb-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-2xl px-4 py-3">
+            <div className="flex items-center gap-4">
+              <div className="relative h-16 w-16 shrink-0">
+                <span className={`absolute inset-0 rounded-full blur-2xl transition-all ${voiceStatusMeta.glowClass}`} />
+                <span className={`absolute inset-1 rounded-full border ${voiceStatusMeta.ringClass}`} />
+                <span className={`absolute inset-3 rounded-full bg-gradient-to-br ${voiceStatusMeta.coreClass}`} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-zinc-200">{voiceStatusMeta.label}</p>
+                <p className="text-xs text-zinc-500">{voiceStatusMeta.hint}</p>
+              </div>
+            </div>
           </div>
         )}
 
@@ -694,7 +940,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             className="min-h-[44px] max-h-32 resize-none bg-card text-base sm:text-sm"
             rows={1}
           />
-          {isStreaming ? (
+          {chatStreaming ? (
             <Button
               onClick={handleStop}
               size="icon"

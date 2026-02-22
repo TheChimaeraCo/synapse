@@ -13,7 +13,7 @@ export interface VoiceConfig {
   ttsSimilarity?: number;
   ttsStyle?: number;
   ttsSpeed?: number;
-  sttProvider: "openai" | "google" | "groq" | "none";
+  sttProvider: "openai" | "google" | "groq" | "browser" | "none";
   sttApiKey?: string;
 }
 
@@ -187,6 +187,10 @@ export async function speechToText(
   config: VoiceConfig,
   inputOptions?: SpeechInputOptions
 ): Promise<string> {
+  if (config.sttProvider === "browser") {
+    throw new Error("Browser STT must run client-side; server STT route is disabled for provider=browser");
+  }
+
   if (config.sttProvider === "none") {
     throw new Error("STT is disabled");
   }
@@ -324,7 +328,7 @@ export async function getVoiceConfigFromDb(gatewayId?: Id<"gateways">): Promise<
     const ttsProviderRaw = firstValue(configs, ["voice.tts_provider", "voice_tts_provider"]) || "none";
     const sttProviderRaw = firstValue(configs, ["voice.stt_provider", "voice_stt_provider"]) || "groq";
     const ttsProvider = (["elevenlabs", "openai", "google", "none"].includes(ttsProviderRaw) ? ttsProviderRaw : "none") as VoiceConfig["ttsProvider"];
-    const sttProvider = (["openai", "google", "groq", "none"].includes(sttProviderRaw) ? sttProviderRaw : "groq") as VoiceConfig["sttProvider"];
+    const sttProvider = (["openai", "google", "groq", "browser", "none"].includes(sttProviderRaw) ? sttProviderRaw : "groq") as VoiceConfig["sttProvider"];
 
     const ttsApiKey =
       firstValue(configs, ["voice.tts_api_key", "voice_tts_api_key", "ai_api_key"]) ||

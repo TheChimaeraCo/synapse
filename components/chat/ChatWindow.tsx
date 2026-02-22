@@ -27,6 +27,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   const prevCountRef = useRef(0);
   const prevStreamRef = useRef("");
   const lastAssistantIdRef = useRef<string | null>(null);
+  const assistantEventInitializedRef = useRef(false);
   const initialScrollDone = useRef(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const userScrolledUp = useRef(false);
@@ -176,19 +177,25 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     prevStreamRef.current = newStream;
   }, [messages.length, streamingContent]);
 
+  // Initialize assistant event baseline from loaded history once.
+  useEffect(() => {
+    if (!loaded || assistantEventInitializedRef.current) return;
+    assistantEventInitializedRef.current = true;
+    const latestAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant" && m.content?.trim());
+    if (latestAssistant) {
+      lastAssistantIdRef.current = latestAssistant._id;
+    }
+  }, [loaded, messages]);
+
   // Emit assistant message events for voice-mode orchestration.
-  // Initialize once from loaded history without dispatching.
   useEffect(() => {
     if (!loaded || messages.length === 0) return;
     const latestAssistant = [...messages]
       .reverse()
       .find((m) => m.role === "assistant" && m.content?.trim());
     if (!latestAssistant) return;
-
-    if (lastAssistantIdRef.current == null) {
-      lastAssistantIdRef.current = latestAssistant._id;
-      return;
-    }
 
     if (latestAssistant._id !== lastAssistantIdRef.current) {
       lastAssistantIdRef.current = latestAssistant._id;

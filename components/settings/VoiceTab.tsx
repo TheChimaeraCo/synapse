@@ -147,13 +147,23 @@ export function VoiceTab() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Disabled</SelectItem>
+                <SelectItem value="browser">Browser Native (Free, local)</SelectItem>
                 <SelectItem value="groq">Groq Whisper (Free)</SelectItem>
                 <SelectItem value="openai">OpenAI Whisper</SelectItem>
                 <SelectItem value="google">Google Cloud</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          {get("stt_provider", "groq") !== "none" && (
+          <div>
+            <label className="text-sm text-zinc-400 mb-1 block">STT Language</label>
+            <Input
+              value={get("stt_language", "en-US")}
+              onChange={(e) => set("stt_language", e.target.value)}
+              placeholder="e.g. en-US"
+              className="bg-white/[0.06] border-white/[0.08] text-white"
+            />
+          </div>
+          {get("stt_provider", "groq") !== "none" && get("stt_provider", "groq") !== "browser" && (
             <div>
               <label className="text-sm text-zinc-400 mb-1 block">STT API Key (leave blank to use TTS key)</label>
               <Input
@@ -164,6 +174,11 @@ export function VoiceTab() {
                 className="bg-white/[0.06] border-white/[0.08] text-white"
               />
             </div>
+          )}
+          {get("stt_provider", "groq") === "browser" && (
+            <p className="text-xs text-zinc-500">
+              Browser-native recognition runs locally in supported browsers (Chrome/Edge). No STT API key required.
+            </p>
           )}
         </CardContent>
       </Card>
