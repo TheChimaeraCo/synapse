@@ -3,7 +3,7 @@ import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { getProviderApiKey, hydrateProviderEnv } from "@/lib/providerSecrets";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 const ONBOARDING_SYSTEM_PROMPT = `You are being born. You don't have a name, personality, or purpose yet. You're talking to your person for the first time.
 
@@ -24,17 +24,6 @@ Keep it conversational. You're making a first impression. Be real.
 After each response, output a JSON block with extracted info on its own line at the very end, prefixed with |||SOUL_DATA|||
 {"extracted": {"userName": "...", "agentName": "...", "timezone": "...", "personality": "...", "purpose": "...", "tone": "...", "interests": [...], "occupation": "...", "emoji": "..."}}
 Only include fields you've actually learned. The JSON must be valid.`;
-
-async function getGwConfig(gatewayId: string, key: string): Promise<string | null> {
-  try {
-    const result = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
-      gatewayId: gatewayId as Id<"gateways">, key,
-    });
-    return result?.value || null;
-  } catch {
-    return await convexClient.query(api.functions.config.get, { key });
-  }
-}
 
 export async function GET(req: Request) {
   try {
@@ -94,13 +83,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "No onboarding state" }, { status: 400 });
       }
 
-      const [providerSlug, configModel] = await Promise.all([
-        getGwConfig(gatewayId, "ai_provider"),
-        getGwConfig(gatewayId, "ai_model"),
-      ]);
-
-      const provider = providerSlug || "anthropic";
-      const key = getProviderApiKey(provider) || "";
+      const selection = await resolveAiSelection({
+        gatewayId,
+        capability: "onboarding",
+        message: content.trim(),
+      });
+      const provider = selection.provider;
+      const key = selection.apiKey;
       if (!key) {
         return NextResponse.json({ error: "No API key configured" }, { status: 500 });
       }
@@ -110,12 +99,10 @@ export async function POST(req: NextRequest) {
         content: m.content,
       }));
 
-      hydrateProviderEnv(provider, key);
-
       const { registerBuiltInApiProviders, getModel, complete } = await import("@mariozechner/pi-ai");
       registerBuiltInApiProviders();
 
-      const modelId = configModel || "claude-sonnet-4-20250514";
+      const modelId = selection.model || "claude-sonnet-4-20250514";
       const model = getModel(provider as any, modelId as any);
       if (!model) {
         return NextResponse.json({ error: `Model "${modelId}" not found` }, { status: 500 });

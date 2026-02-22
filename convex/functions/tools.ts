@@ -42,6 +42,9 @@ export const create = mutation({
     requiresApproval: v.boolean(),
     parameters: v.any(),
     handlerCode: v.optional(v.string()),
+    providerProfileId: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    model: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Upsert - if exists, skip
@@ -63,6 +66,9 @@ export const update = mutation({
     id: v.id("tools"),
     enabled: v.optional(v.boolean()),
     requiresApproval: v.optional(v.boolean()),
+    providerProfileId: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    model: v.optional(v.string()),
   },
   handler: async (ctx, { id, ...fields }) => {
     const existing = await ctx.db.get(id);
@@ -70,6 +76,9 @@ export const update = mutation({
     const updates: Record<string, any> = {};
     if (fields.enabled !== undefined) updates.enabled = fields.enabled;
     if (fields.requiresApproval !== undefined) updates.requiresApproval = fields.requiresApproval;
+    if (fields.providerProfileId !== undefined) updates.providerProfileId = fields.providerProfileId;
+    if (fields.provider !== undefined) updates.provider = fields.provider;
+    if (fields.model !== undefined) updates.model = fields.model;
     await ctx.db.patch(id, updates);
   },
 });

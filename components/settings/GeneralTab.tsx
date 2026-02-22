@@ -13,6 +13,7 @@ import { useFetch } from "@/lib/hooks";
 import { useConfigSettings } from "@/lib/useConfigSettings";
 import { Slider } from "@/components/ui/slider";
 import { Toggle } from "@/components/ui/toggle";
+import { parseProviderProfiles, pickDefaultProfileId } from "@/lib/aiRoutingConfig";
 
 const COMMON_EMOJIS = ["🤖", "🧠", "⚡", "🔮", "🎯", "🌟", "💎", "🦊", "🐙", "👾", "🚀", "🔥", "💡", "🎭", "🌀", "✨"];
 
@@ -29,10 +30,20 @@ export function GeneralTab() {
   const { get, set, save: saveConfig, saving: savingConfig } = useConfigSettings("identity.");
 
   const agent = agents?.[0];
-  const { data: modelsData } = useFetch<{ models: string[]; provider: string }>("/api/config/models");
-  const currentProvider = configData?.ai_provider || "anthropic";
+  const providerProfiles = parseProviderProfiles(configData?.["ai.provider_profiles"]);
+  const preferredProfileId = configData?.["ai.default_profile_id"] || "";
+  const activeProfileId = pickDefaultProfileId(providerProfiles, preferredProfileId) || "";
+  const activeProfile = providerProfiles.find((p) => p.id === activeProfileId) || null;
+  const modelsEndpoint = activeProfileId
+    ? `/api/config/models?profileId=${encodeURIComponent(activeProfileId)}`
+    : "/api/config/models";
+  const { data: modelsData } = useFetch<{ models: string[]; provider: string }>(modelsEndpoint);
+  const currentProvider = activeProfile?.provider || configData?.ai_provider || "anthropic";
   const provider = PROVIDERS.find((p) => p.slug === currentProvider);
-  const models = modelsData?.models?.length ? modelsData.models : (provider?.models || ["claude-sonnet-4-20250514"]);
+  const profileDefaultModel = activeProfile?.defaultModel || "";
+  const models = modelsData?.models?.length
+    ? modelsData.models
+    : (provider?.models || [profileDefaultModel || "claude-sonnet-4-20250514"]).filter(Boolean);
 
   const [form, setForm] = useState({
     name: "Synapse",
@@ -319,6 +330,17 @@ function PresenceSettings() {
     if (res.ok) setTopics(await res.json());
   };
 
+  const updateTopicWeight = async (id: string, personalWeight: number) => {
+    setTopics((prev) => prev.map((tp) => tp._id === id ? { ...tp, personalWeight } : tp));
+    try {
+      await gatewayFetch("/api/topics", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, personalWeight }),
+      });
+    } catch {}
+  };
+
   return (
     <>
       <Card className="bg-white/[0.04] border-white/[0.06]">
@@ -362,9 +384,7 @@ function PresenceSettings() {
                 <Slider
                   min={0} max={1} step={0.1}
                   value={t.personalWeight}
-                  onChange={(weight) => {
-                    setTopics((prev) => prev.map((tp) => tp._id === t._id ? { ...tp, personalWeight: weight } : tp));
-                  }}
+                  onChange={(weight) => updateTopicWeight(t._id, weight)}
                   className="w-20"
                 />
                 <span className="text-xs text-zinc-400 w-6">{t.personalWeight.toFixed(1)}</span>

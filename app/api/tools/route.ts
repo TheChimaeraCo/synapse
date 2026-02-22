@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     await getGatewayContext(req);
-    const { id, enabled, requiresApproval } = await req.json();
+    const { id, enabled, requiresApproval, providerProfileId, provider, model } = await req.json();
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
@@ -50,6 +50,9 @@ export async function PUT(req: NextRequest) {
       id: id as Id<"tools">,
       ...(enabled !== undefined ? { enabled } : {}),
       ...(requiresApproval !== undefined ? { requiresApproval } : {}),
+      ...(providerProfileId !== undefined ? { providerProfileId } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(model !== undefined ? { model } : {}),
     });
     return NextResponse.json({ success: true });
   } catch (err) {

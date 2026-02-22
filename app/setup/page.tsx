@@ -325,6 +325,34 @@ export default function SetupPage() {
       if (model) {
         saves.push(["ai_model", model]);
       }
+      const defaultProfileId = `${selectedProvider}-default`;
+      saves.push([
+        "ai.provider_profiles",
+        JSON.stringify([{
+          id: defaultProfileId,
+          name: `${provider?.name || selectedProvider} Default`,
+          provider: selectedProvider,
+          apiKey: effectiveKey,
+          authMethod: selectedProvider === "anthropic" ? anthropicAuthMethod : undefined,
+          baseUrl: authValues["base_url"] || undefined,
+          accountId: authValues["account_id"] || undefined,
+          defaultModel: model || undefined,
+          enabled: true,
+        }]),
+      ]);
+      saves.push(["ai.default_profile_id", defaultProfileId]);
+      if (model) {
+        saves.push([
+          "ai.capability_routes",
+          JSON.stringify({
+            chat: { providerProfileId: defaultProfileId, provider: selectedProvider, model },
+            tool_use: { providerProfileId: defaultProfileId, provider: selectedProvider, model },
+            summary: { providerProfileId: defaultProfileId, provider: selectedProvider, model },
+            code: { providerProfileId: defaultProfileId, provider: selectedProvider, model },
+            analysis: { providerProfileId: defaultProfileId, provider: selectedProvider, model },
+          }),
+        ]);
+      }
       if (authValues["base_url"]) saves.push(["ai_base_url", authValues["base_url"]]);
       if (authValues["account_id"]) saves.push(["ai_account_id", authValues["account_id"]]);
 

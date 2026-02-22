@@ -9,6 +9,7 @@ import { safeEqualSecret } from "../security";
 import { executeTools, toProviderTools } from "../toolExecutor";
 import { BUILTIN_TOOLS } from "../builtinTools";
 import { resolveConversation } from "../conversationManager";
+import { applyResponsePrefix, normalizeChunkMode, parseChunkLimit } from "@/lib/messageFormatting";
 
 const CONVEX_URL = process.env.CONVEX_URL || process.env.CONVEX_SELF_HOSTED_URL || process.env.NEXT_PUBLIC_CONVEX_URL || "http://127.0.0.1:3220";
 
@@ -205,32 +206,37 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
 
     // Get AI config
     const gwId = channelDoc.gatewayId;
-    let providerSlug: string | null, apiKey: string | null, configModel: string | null;
+    let responsePrefix: string | null, chunkLimitRaw: string | null, chunkModeRaw: string | null;
 
     const { getGatewayConfig, getConfig } = await import("./config");
     if (gwId) {
-      [providerSlug, apiKey, configModel] = await Promise.all([
-        getGatewayConfig(gwId, "ai_provider"),
-        getGatewayConfig(gwId, "ai_api_key"),
-        getGatewayConfig(gwId, "ai_model"),
+      [responsePrefix, chunkLimitRaw, chunkModeRaw] = await Promise.all([
+        getGatewayConfig(gwId, "messages.response_prefix"),
+        getGatewayConfig(gwId, "messages.chunk_limit"),
+        getGatewayConfig(gwId, "messages.chunk_mode"),
       ]);
     } else {
-      providerSlug = apiKey = configModel = null;
+      responsePrefix = chunkLimitRaw = chunkModeRaw = null;
     }
-    if (!providerSlug) providerSlug = await getConfig("ai_provider");
-    if (!apiKey) apiKey = await getConfig("ai_api_key");
-    if (!configModel) configModel = await getConfig("ai_model");
-
-    const provider = providerSlug || "anthropic";
-    const { getProviderApiKey, hydrateProviderEnv } = await import("../providerSecrets");
-    const key = apiKey || getProviderApiKey(provider) || "";
-    if (!key) throw new Error("No API key configured");
-    hydrateProviderEnv(provider, key);
+    if (!responsePrefix) responsePrefix = await getConfig("messages.response_prefix");
+    if (!chunkLimitRaw) chunkLimitRaw = await getConfig("messages.chunk_limit");
+    if (!chunkModeRaw) chunkModeRaw = await getConfig("messages.chunk_mode");
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
-
-    const modelId = agent.model || configModel || "claude-sonnet-4-20250514";
+    const customRoutes = await convex.query(api.functions.modelRoutes.list, { gatewayId });
+    const { resolveAiSelection } = await import("../aiRouting");
+    const selection = await resolveAiSelection({
+      gatewayId,
+      capability: "tool_use",
+      message: text,
+      agentModel: agent.model,
+      customRoutes: customRoutes as any,
+    });
+    const provider = selection.provider;
+    const key = selection.apiKey;
+    if (!key) throw new Error("No API key configured");
+    const modelId = selection.model;
     const model = getModel(provider as any, modelId as any);
     if (!model) throw new Error(`Model "${modelId}" not found`);
 
@@ -356,13 +362,17 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     const costs = MODEL_COSTS[modelId] || { inputPerMillion: 3, outputPerMillion: 15 };
     const cost = (usage.input / 1_000_000 * costs.inputPerMillion) + (usage.output / 1_000_000 * costs.outputPerMillion);
 
+    const chunkLimit = parseChunkLimit(chunkLimitRaw, 4096);
+    const chunkMode = normalizeChunkMode(chunkModeRaw);
+    const finalContent = applyResponsePrefix(fullContent, responsePrefix);
+
     // Store assistant message
     const msgId = await convex.mutation(api.functions.messages.create, {
       gatewayId,
       sessionId,
       agentId,
       role: "assistant",
-      content: fullContent,
+      content: finalContent,
       tokens: usage,
       cost,
       model: modelId,
@@ -383,7 +393,10 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     });
 
     // Send response via WhatsApp
-    const result = await sendTextMessage(effectivePhoneId, waConfig.accessToken, userId, fullContent);
+    const result = await sendTextMessage(effectivePhoneId, waConfig.accessToken, userId, finalContent, {
+      chunkLimit,
+      chunkMode,
+    });
     if (!result.ok) {
       console.error("[whatsapp] Failed to send response:", result.error);
     }
@@ -396,7 +409,7 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     // Push notification
     try {
       const { sendPushToAll } = await import("../pushService");
-      const preview = fullContent.length > 100 ? fullContent.slice(0, 100) + "..." : fullContent;
+      const preview = finalContent.length > 100 ? finalContent.slice(0, 100) + "..." : finalContent;
       await sendPushToAll({ title: "Synapse - New Message", body: preview, url: "/chat" });
     } catch {}
 

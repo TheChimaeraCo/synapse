@@ -5,15 +5,15 @@ import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { checkFeature, getCurrentTier } from "@/lib/license";
 import { buildContext } from "@/lib/contextBuilder";
 import { extractKnowledge } from "@/lib/knowledgeExtractor";
 import { executeTools, toProviderTools } from "@/lib/toolExecutor";
-import { selectModel, DEFAULT_ROUTING } from "@/lib/modelRouter";
-import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
+import type { TaskType } from "@/lib/modelRouter";
 import { createHash } from "crypto";
 import { fireWebhook } from "@/lib/webhooks";
 import { resolveConversation } from "@/lib/conversationManager";
+import { applyResponsePrefix } from "@/lib/messageFormatting";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 // Simple request deduplication
 const recentRequests = new Map<string, number>();
@@ -153,26 +153,13 @@ async function processAIResponse(
       }
     };
 
-    const [providerSlug, apiKey, configModel, authMethod] = await Promise.all([
-      getConfig("ai_provider"),
-      getConfig("ai_api_key"),
-      getConfig("ai_model"),
-      getConfig("ai_auth_method"),
-    ]);
-
-    const provider = providerSlug || "anthropic";
-    const { getProviderApiKey, hydrateProviderEnv } = await import("@/lib/providerSecrets");
-    const key = apiKey || getProviderApiKey(provider) || "";
-    if (!key) throw new Error("No API key configured");
-    hydrateProviderEnv(provider, key);
+    const responsePrefix = await getConfig("messages.response_prefix");
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
 
-    const routingRaw = await getConfig("model_routing");
-    const routingConfig: ModelRoutingConfig | null = routingRaw ? JSON.parse(routingRaw) : null;
-
     const enabledTools = await convexClient.query(api.functions.tools.getEnabled, { gatewayId });
+    const customRoutes = await convexClient.query(api.functions.modelRoutes.list, { gatewayId });
     const { BUILTIN_TOOLS } = await import("@/lib/builtinTools");
     const builtinToolDefs = BUILTIN_TOOLS.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
     const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
@@ -188,8 +175,19 @@ async function processAIResponse(
       suggestedModel,
       remainingUsd: undefined as number | undefined,
     };
-
-    const modelId = selectModel(taskType, routingConfig, budgetState, agent.model || configModel || undefined);
+    const lastUserContent = claudeMessages.filter((m: any) => m.role === "user").pop()?.content;
+    const selection = await resolveAiSelection({
+      gatewayId,
+      capability: taskType,
+      message: lastUserContent,
+      agentModel: agent.model || undefined,
+      budget: budgetState,
+      customRoutes: customRoutes as any,
+    });
+    const provider = selection.provider;
+    const key = selection.apiKey;
+    if (!key) throw new Error("No API key configured");
+    const modelId = selection.model;
     const model = getModel(provider as any, modelId as any);
     if (!model) throw new Error(`Model "${modelId}" not found`);
 
@@ -293,9 +291,10 @@ async function processAIResponse(
     const latencyMs = Date.now() - startMs;
     const cost = calculateCost(modelId, usage.input, usage.output);
 
+    const formattedContent = applyResponsePrefix(fullContent, responsePrefix);
     const msgId = await convexClient.mutation(api.functions.messages.create, {
       gatewayId, sessionId, agentId,
-      role: "assistant", content: fullContent, tokens: usage, cost, model: modelId, latencyMs,
+      role: "assistant", content: formattedContent, tokens: usage, cost, model: modelId, latencyMs,
       conversationId: responseConversationId,
     });
 
@@ -306,7 +305,7 @@ async function processAIResponse(
 
     if (cacheHash && enabledTools.length === 0) {
       await convexClient.mutation(api.functions.responseCache.setCache, {
-        hash: cacheHash, response: fullContent, model: modelId, tokens: usage, cost,
+        hash: cacheHash, response: formattedContent, model: modelId, tokens: usage, cost,
       });
     }
 

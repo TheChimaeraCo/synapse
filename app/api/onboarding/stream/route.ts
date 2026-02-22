@@ -3,7 +3,7 @@ import { getGatewayContext, GatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { getProviderApiKey } from "@/lib/providerSecrets";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 const ONBOARDING_SYSTEM_PROMPT = `You are being born. You don't have a name, personality, or purpose yet. You're talking to your person for the first time.
 
@@ -24,17 +24,6 @@ Keep it conversational. You're making a first impression. Be real.
 After each response, output a JSON block with extracted info on its own line at the very end, prefixed with |||SOUL_DATA|||
 {"extracted": {"userName": "...", "agentName": "...", "timezone": "...", "personality": "...", "purpose": "...", "tone": "...", "interests": [...], "occupation": "...", "emoji": "..."}}
 Only include fields you've actually learned. The JSON must be valid.`;
-
-async function getGwConfig(gatewayId: string, key: string): Promise<string | null> {
-  try {
-    const result = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
-      gatewayId: gatewayId as Id<"gateways">, key,
-    });
-    return result?.value || null;
-  } catch {
-    return await convexClient.query(api.functions.config.get, { key });
-  }
-}
 
 export async function POST(req: NextRequest) {
   let ctx;
@@ -69,120 +58,84 @@ export async function POST(req: NextRequest) {
       return new Response("No onboarding state", { status: 400 });
     }
 
-    const [providerSlug, configModel] = await Promise.all([
-      getGwConfig(gatewayId, "ai_provider"),
-      getGwConfig(gatewayId, "ai_model"),
-    ]);
-
-    const provider = providerSlug || "anthropic";
-    const key = getProviderApiKey(provider) || "";
-    if (!key) {
+    const selection = await resolveAiSelection({
+      gatewayId,
+      capability: "onboarding",
+      message: content.trim(),
+    });
+    if (!selection.apiKey) {
       return new Response("No API key configured", { status: 500 });
     }
 
-    const isSetupToken = key.startsWith("sk-ant-oat");
-    const modelId = configModel || "claude-sonnet-4-20250514";
+    const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
+    registerBuiltInApiProviders();
 
-    const aiMessages = state.messages.map((m: any) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
+    const model = getModel(selection.provider as any, selection.model as any);
+    if (!model) {
+      return new Response(`Model \"${selection.model}\" not found`, { status: 500 });
+    }
 
-    const headers: Record<string, string> = {
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
+    const aiMessages = state.messages.map((m: any) =>
+      m.role === "user"
+        ? { role: "user" as const, content: m.content, timestamp: Date.now() }
+        : { role: "assistant" as const, content: [{ type: "text" as const, text: m.content }], timestamp: Date.now() }
+    );
+
+    const context: any = {
+      systemPrompt: ONBOARDING_SYSTEM_PROMPT,
+      messages: aiMessages,
     };
-    if (isSetupToken) {
-      headers["authorization"] = `Bearer ${key}`;
-      headers["anthropic-beta"] = "oauth-2025-04-20";
-    } else {
-      headers["x-api-key"] = key;
-    }
-
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: modelId,
-        max_tokens: 1024,
-        system: ONBOARDING_SYSTEM_PROMPT,
-        messages: aiMessages,
-        stream: true,
-      }),
-    });
-
-    if (!anthropicRes.ok || !anthropicRes.body) {
-      const errText = await anthropicRes.text();
-      return new Response(`AI error: ${anthropicRes.status} - ${errText}`, { status: 502 });
-    }
 
     const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    let fullText = "";
 
     const stream = new ReadableStream({
       async start(controller) {
-        const reader = anthropicRes.body!.getReader();
-        let buffer = "";
-
+        let fullText = "";
         try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          const aiStream = streamSimple(model, context, {
+            maxTokens: 1024,
+            apiKey: selection.apiKey,
+          });
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              if (!line.startsWith("data: ")) continue;
-              const data = line.slice(6).trim();
-              if (data === "[DONE]") continue;
-
-              try {
-                const event = JSON.parse(data);
-                if (event.type === "content_block_delta" && event.delta?.text) {
-                  const chunk = event.delta.text;
-                  fullText += chunk;
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`));
-                }
-                if (event.type === "message_stop") {
-                  let soulData = null;
-                  let displayText = fullText;
-                  const soulMatch = fullText.match(/\|\|\|SOUL_DATA\|\|\|\s*(\{[\s\S]*\})\s*$/);
-                  if (soulMatch) {
-                    try {
-                      const parsed = JSON.parse(soulMatch[1]);
-                      soulData = parsed.extracted || parsed;
-                      displayText = fullText.substring(0, soulMatch.index).trim();
-                    } catch {}
-                  }
-
-                  const readyToLive = displayText.toLowerCase().includes("ready to come alive") ||
-                                      displayText.toLowerCase().includes("come alive") ||
-                                      displayText.toLowerCase().includes("ready to be born");
-
-                  await convexClient.mutation(api.functions.onboarding.saveMessage, {
-                    gatewayId: gatewayId as Id<"gateways">,
-                    userId: userId as Id<"authUsers">,
-                    role: "assistant",
-                    content: displayText,
-                  });
-
-                  if (soulData) {
-                    await convexClient.mutation(api.functions.onboarding.updateSoulData, {
-                      gatewayId: gatewayId as Id<"gateways">,
-                      userId: userId as Id<"authUsers">,
-                      soulData,
-                    });
-                  }
-
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", soulData, readyToLive, displayText })}\n\n`));
-                }
-              } catch {}
+          for await (const event of aiStream) {
+            if (event.type === "text_delta") {
+              fullText += event.delta;
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "chunk", text: event.delta })}\n\n`));
             }
           }
-        } catch (err) {
+
+          let soulData = null;
+          let displayText = fullText;
+          const soulMatch = fullText.match(/\|\|\|SOUL_DATA\|\|\|\s*(\{[\s\S]*\})\s*$/);
+          if (soulMatch) {
+            try {
+              const parsed = JSON.parse(soulMatch[1]);
+              soulData = parsed.extracted || parsed;
+              displayText = fullText.substring(0, soulMatch.index).trim();
+            } catch {}
+          }
+
+          const readyToLive = displayText.toLowerCase().includes("ready to come alive")
+            || displayText.toLowerCase().includes("come alive")
+            || displayText.toLowerCase().includes("ready to be born");
+
+          await convexClient.mutation(api.functions.onboarding.saveMessage, {
+            gatewayId: gatewayId as Id<"gateways">,
+            userId: userId as Id<"authUsers">,
+            role: "assistant",
+            content: displayText,
+          });
+
+          if (soulData) {
+            await convexClient.mutation(api.functions.onboarding.updateSoulData, {
+              gatewayId: gatewayId as Id<"gateways">,
+              userId: userId as Id<"authUsers">,
+              soulData,
+            });
+          }
+
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", soulData, readyToLive, displayText })}\n\n`));
+        } catch {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", message: "Stream interrupted" })}\n\n`));
         } finally {
           controller.close();

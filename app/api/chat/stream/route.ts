@@ -6,13 +6,13 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { buildContext } from "@/lib/contextBuilder";
 import { extractKnowledge } from "@/lib/knowledgeExtractor";
 import { executeTools, toProviderTools } from "@/lib/toolExecutor";
-import { selectModel, DEFAULT_ROUTING } from "@/lib/modelRouter";
-import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { parseSlashCommand } from "@/lib/slashCommands";
-import { getThinkingParams, type ThinkingLevel } from "@/lib/thinkingLevels";
+import { getThinkingParams, isValidThinkingLevel, type ThinkingLevel } from "@/lib/thinkingLevels";
 import { resolveConversation } from "@/lib/conversationManager";
 import { createHash } from "crypto";
-import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPrompt, isolateToolContext } from "@/lib/promptDefense";
+import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPrompt } from "@/lib/promptDefense";
+import { applyResponsePrefix } from "@/lib/messageFormatting";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 // Simple request deduplication: track recent request hashes to prevent double-sends
 const recentRequests = new Map<string, number>();
@@ -217,26 +217,16 @@ export async function POST(req: NextRequest) {
             return await convexClient.query(api.functions.config.get, { key });
           }
         };
-        const [providerSlug, apiKey, configModel, authMethod] = await Promise.all([
-          getGwConfig("ai_provider"),
-          getGwConfig("ai_api_key"),
-          getGwConfig("ai_model"),
-          getGwConfig("ai_auth_method"),
+        const [defaultThinkingLevelRaw, responsePrefix] = await Promise.all([
+          getGwConfig("models.thinking_level"),
+          getGwConfig("messages.response_prefix"),
         ]);
-
-        const provider = providerSlug || "anthropic";
-        const { getProviderApiKey, hydrateProviderEnv } = await import("@/lib/providerSecrets");
-        const key = apiKey || getProviderApiKey(provider) || "";
-        if (!key) throw new Error("No API key configured");
-        hydrateProviderEnv(provider, key);
 
         const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
         registerBuiltInApiProviders();
 
-        const routingRaw = await getGwConfig("model_routing");
-        const routingConfig: ModelRoutingConfig | null = routingRaw ? JSON.parse(routingRaw) : null;
-
         const enabledTools = await convexClient.query(api.functions.tools.getEnabled, { gatewayId: gatewayId as Id<"gateways"> });
+        const customRoutes = await convexClient.query(api.functions.modelRoutes.list, { gatewayId: gatewayId as Id<"gateways"> });
         
         // Always include builtin tools - use DB tools if they exist, otherwise fallback to builtins
         const { BUILTIN_TOOLS } = await import("@/lib/builtinTools");
@@ -248,20 +238,30 @@ export async function POST(req: NextRequest) {
           ...enabledTools,
         ];
         const providerTools = toProviderTools(allToolDefs);
-        const taskType: TaskType = "tool_use";
-
         const budgetState = {
           allowed: true,
           suggestedModel: budgetCheck.suggestedModel || undefined,
           remainingUsd: undefined as number | undefined,
         };
-
-        const modelId = selectModel(taskType, routingConfig, budgetState, agent.model || configModel || undefined);
+        const selection = await resolveAiSelection({
+          gatewayId: gatewayId as Id<"gateways">,
+          capability: "tool_use",
+          message: sanitizedContent,
+          agentModel: agent.model || undefined,
+          budget: budgetState,
+          customRoutes: customRoutes as any,
+        });
+        const provider = selection.provider;
+        const key = selection.apiKey;
+        if (!key) throw new Error("No API key configured");
+        const modelId = selection.model;
         const model = getModel(provider as any, modelId as any);
         if (!model) throw new Error(`Model "${modelId}" not found`);
 
         // Get thinking level from session metadata
-        const thinkingLevel = ((sessionDoc as any).meta?.thinkingLevel || "off") as ThinkingLevel;
+        const defaultThinkingLevel = (defaultThinkingLevelRaw || "off").toLowerCase();
+        const requestedThinking = String((sessionDoc as any).meta?.thinkingLevel || defaultThinkingLevel || "off").toLowerCase();
+        const thinkingLevel: ThinkingLevel = isValidThinkingLevel(requestedThinking) ? requestedThinking : "off";
         const thinkingParams = getThinkingParams(thinkingLevel, provider);
 
         // Transform messages, converting file references to vision content for images
@@ -323,6 +323,12 @@ export async function POST(req: NextRequest) {
 
         const startMs = Date.now();
         let fullContent = "";
+        const trimmedPrefix = (responsePrefix || "").trim();
+        if (trimmedPrefix) {
+          const prefixText = `${trimmedPrefix} `;
+          fullContent = prefixText;
+          controller.enqueue(encoder.encode(sseEvent({ type: "token", content: prefixText })));
+        }
         let usage = { input: 0, output: 0 };
         let streamedTokenEstimate = 0;
         let movedUserMessageToNewConversation = false;
@@ -448,12 +454,13 @@ export async function POST(req: NextRequest) {
 
         const cost = calculateCost(modelId, usage.input, usage.output);
 
+        const finalContent = applyResponsePrefix(fullContent, responsePrefix);
         const msgId = await convexClient.mutation(api.functions.messages.create, {
           gatewayId: gatewayId as Id<"gateways">,
           sessionId: sessionId as Id<"sessions">,
           agentId: sessionDoc.agentId,
           role: "assistant",
-          content: fullContent,
+          content: finalContent,
           tokens: usage,
           cost,
           model: modelId,

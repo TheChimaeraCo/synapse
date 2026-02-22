@@ -276,6 +276,9 @@ export default defineSchema({
     requiresApproval: v.boolean(),
     parameters: v.any(),
     handlerCode: v.optional(v.string()),
+    providerProfileId: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    model: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_gateway", ["gatewayId"])
@@ -495,6 +498,8 @@ export default defineSchema({
     description: v.string(),
     condition: v.any(),
     targetModel: v.string(),
+    targetProvider: v.optional(v.string()),
+    targetProviderProfileId: v.optional(v.string()),
     priority: v.number(),
     enabled: v.boolean(),
     createdAt: v.number(),

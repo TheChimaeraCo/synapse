@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
       description: body.description || "",
       condition: body.condition,
       targetModel: body.targetModel,
+      targetProvider: body.targetProvider || undefined,
+      targetProviderProfileId: body.targetProviderProfileId || undefined,
       priority: body.priority ?? 10,
       enabled: body.enabled ?? true,
     });
@@ -48,6 +50,8 @@ export async function PUT(req: NextRequest) {
       description: body.description,
       condition: body.condition,
       targetModel: body.targetModel,
+      targetProvider: body.targetProvider,
+      targetProviderProfileId: body.targetProviderProfileId,
       priority: body.priority,
       enabled: body.enabled,
     });

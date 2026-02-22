@@ -1,6 +1,8 @@
 "use client";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { gatewayFetch } from "@/lib/gatewayFetch";
+import { parseProviderProfiles } from "@/lib/aiRoutingConfig";
+import { useFetch } from "@/lib/hooks";
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -12,6 +14,9 @@ interface ToolRecord {
   category: string;
   enabled: boolean;
   requiresApproval: boolean;
+  providerProfileId?: string;
+  provider?: string;
+  model?: string;
 }
 
 interface ApprovalRecord {
@@ -32,6 +37,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export function ToolsTab() {
   const { data: session } = useSession();
+  const { data: configData } = useFetch<Record<string, string>>("/api/config/all");
   const [tools, setTools] = useState<ToolRecord[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,6 +46,7 @@ export function ToolsTab() {
   const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const gatewayId = (session?.user as any)?.gatewayId;
+  const providerProfiles = parseProviderProfiles(configData?.["ai.provider_profiles"]);
 
   async function fetchApprovals() {
     try {
@@ -87,6 +94,24 @@ export function ToolsTab() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: tool._id, enabled: newVal }),
     });
+  }
+
+  async function updateToolConfig(tool: ToolRecord, patch: Partial<ToolRecord>) {
+    setTools((prev) => prev.map((t) => (t._id === tool._id ? { ...t, ...patch } : t)));
+    try {
+      const res = await gatewayFetch("/api/tools", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: tool._id, ...patch }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+    } catch {
+      // Revert by refetching current state
+      gatewayFetch(`/api/tools?gatewayId=${gatewayId}`)
+        .then((r) => r.json())
+        .then((d) => setTools(d.tools || []))
+        .catch(() => {});
+    }
   }
 
   async function resolveApproval(approvalId: string, status: "approved" | "denied") {
@@ -225,6 +250,39 @@ export function ToolsTab() {
                 )}
               </div>
               <p className="text-sm text-zinc-400 mt-1">{tool.description}</p>
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] text-zinc-500 mb-1">Provider Profile</label>
+                  <select
+                    value={tool.providerProfileId || ""}
+                    onChange={(e) => {
+                      const profileId = e.target.value;
+                      const profile = providerProfiles.find((p) => p.id === profileId);
+                      updateToolConfig(tool, {
+                        providerProfileId: profileId || "",
+                        provider: profile?.provider || "",
+                      });
+                    }}
+                    className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                  >
+                    <option value="">Default (chat agent)</option>
+                    {providerProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name} ({profile.provider})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-500 mb-1">Model Override</label>
+                  <input
+                    value={tool.model || ""}
+                    onChange={(e) => updateToolConfig(tool, { model: e.target.value })}
+                    placeholder="Default"
+                    className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                  />
+                </div>
+              </div>
             </div>
             <button
               onClick={() => toggleEnabled(tool)}

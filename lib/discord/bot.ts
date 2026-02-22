@@ -6,6 +6,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { splitMessage } from "./send";
 import { executeTools, toProviderTools } from "../toolExecutor";
 import { BUILTIN_TOOLS } from "../builtinTools";
+import { applyResponsePrefix, normalizeChunkMode, parseChunkLimit } from "@/lib/messageFormatting";
 
 // --- Deduplication ---
 const DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -158,36 +159,43 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         const agent = await convex.query(api.functions.agents.get, { id: agentId });
         if (!agent) throw new Error("Agent not found");
 
-        // Get AI config
-        let providerSlug: string | null, apiKey: string | null, configModel: string | null;
+        // Get channel message formatting settings.
+        let responsePrefix: string | null = null;
+        let chunkLimitRaw: string | null = null;
+        let chunkModeRaw: string | null = null;
         if (config.gatewayId) {
           const { getGatewayConfig } = await import("./config");
-          [providerSlug, apiKey, configModel] = await Promise.all([
-            getGatewayConfig(config.gatewayId, "ai_provider"),
-            getGatewayConfig(config.gatewayId, "ai_api_key"),
-            getGatewayConfig(config.gatewayId, "ai_model"),
+          [responsePrefix, chunkLimitRaw, chunkModeRaw] = await Promise.all([
+            getGatewayConfig(config.gatewayId, "messages.response_prefix"),
+            getGatewayConfig(config.gatewayId, "messages.chunk_limit"),
+            getGatewayConfig(config.gatewayId, "messages.chunk_mode"),
           ]);
-          if (!providerSlug) providerSlug = await convex.query(api.functions.config.get, { key: "ai_provider" });
-          if (!apiKey) apiKey = await convex.query(api.functions.config.get, { key: "ai_api_key" });
-          if (!configModel) configModel = await convex.query(api.functions.config.get, { key: "ai_model" });
+          if (!responsePrefix) responsePrefix = await convex.query(api.functions.config.get, { key: "messages.response_prefix" });
+          if (!chunkLimitRaw) chunkLimitRaw = await convex.query(api.functions.config.get, { key: "messages.chunk_limit" });
+          if (!chunkModeRaw) chunkModeRaw = await convex.query(api.functions.config.get, { key: "messages.chunk_mode" });
         } else {
-          [providerSlug, apiKey, configModel] = await Promise.all([
-            convex.query(api.functions.config.get, { key: "ai_provider" }),
-            convex.query(api.functions.config.get, { key: "ai_api_key" }),
-            convex.query(api.functions.config.get, { key: "ai_model" }),
+          [responsePrefix, chunkLimitRaw, chunkModeRaw] = await Promise.all([
+            convex.query(api.functions.config.get, { key: "messages.response_prefix" }),
+            convex.query(api.functions.config.get, { key: "messages.chunk_limit" }),
+            convex.query(api.functions.config.get, { key: "messages.chunk_mode" }),
           ]);
         }
 
-        const provider = providerSlug || "anthropic";
-        const { getProviderApiKey, hydrateProviderEnv } = await import("../providerSecrets");
-        const key = apiKey || getProviderApiKey(provider) || "";
-        if (!key) throw new Error("No API key configured");
-        hydrateProviderEnv(provider, key);
-
         const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
         registerBuiltInApiProviders();
-
-        const modelId = agent.model || configModel || "claude-sonnet-4-20250514";
+        const customRoutes = await convex.query(api.functions.modelRoutes.list, { gatewayId });
+        const { resolveAiSelection } = await import("../aiRouting");
+        const selection = await resolveAiSelection({
+          gatewayId,
+          capability: "tool_use",
+          message: text,
+          agentModel: agent.model,
+          customRoutes: customRoutes as any,
+        });
+        const provider = selection.provider;
+        const key = selection.apiKey;
+        if (!key) throw new Error("No API key configured");
+        const modelId = selection.model;
         const model = getModel(provider as any, modelId as any);
         if (!model) throw new Error(`Model "${modelId}" not found`);
 
@@ -325,13 +333,17 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         const costs = MODEL_COSTS[modelId] || { inputPerMillion: 3, outputPerMillion: 15 };
         const cost = (usage.input / 1_000_000 * costs.inputPerMillion) + (usage.output / 1_000_000 * costs.outputPerMillion);
 
+        const chunkLimit = parseChunkLimit(chunkLimitRaw, 2000);
+        const chunkMode = normalizeChunkMode(chunkModeRaw);
+        const finalContent = applyResponsePrefix(fullContent, responsePrefix);
+
         // Store assistant message
         const msgId = await convex.mutation(api.functions.messages.create, {
           gatewayId,
           sessionId,
           agentId,
           role: "assistant",
-          content: fullContent,
+          content: finalContent,
           tokens: usage,
           cost,
           model: modelId,
@@ -352,7 +364,7 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         });
 
         // Send to Discord (chunked)
-        const chunks = splitMessage(fullContent);
+        const chunks = splitMessage(finalContent, chunkLimit, chunkMode);
         for (const chunk of chunks) {
           await msg.reply(chunk).catch((e) => {
             console.error("[discord] Failed to send chunk:", e);
@@ -367,7 +379,7 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         // Push notification
         try {
           const { sendPushToAll } = await import("../pushService");
-          const preview = fullContent.length > 100 ? fullContent.slice(0, 100) + "..." : fullContent;
+          const preview = finalContent.length > 100 ? finalContent.slice(0, 100) + "..." : finalContent;
           await sendPushToAll({ title: "Synapse - New Message", body: preview, url: "/chat" });
         } catch {}
 

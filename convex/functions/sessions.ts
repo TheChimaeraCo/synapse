@@ -1,5 +1,40 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "../_generated/server";
+import { decodeConfigForRead } from "../lib/configCrypto";
+
+async function getGatewayConfigValue(
+  ctx: any,
+  gatewayId: string,
+  key: string,
+): Promise<string | null> {
+  const row = await ctx.db
+    .query("gatewayConfig")
+    .withIndex("by_gateway_key", (q: any) => q.eq("gatewayId", gatewayId).eq("key", key))
+    .first();
+  if (row) return await decodeConfigForRead(key, row.value);
+
+  const master = (await ctx.db.query("gateways").collect()).find((g: any) => g.isMaster === true);
+  if (master && master._id !== gatewayId) {
+    const masterRow = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q: any) => q.eq("gatewayId", master._id).eq("key", key))
+      .first();
+    if (masterRow) return await decodeConfigForRead(key, masterRow.value);
+  }
+  return null;
+}
+
+async function getGatewayNumberConfig(
+  ctx: any,
+  gatewayId: string,
+  key: string,
+  fallback: number,
+): Promise<number> {
+  const raw = await getGatewayConfigValue(ctx, gatewayId, key);
+  const parsed = Number.parseInt(raw || "", 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed;
+}
 
 export const list = query({
   args: {
@@ -93,15 +128,54 @@ export const findOrCreate = mutation({
     userId: v.optional(v.id("authUsers")),
   },
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("sessions")
-      .withIndex("by_channel_externalUser", (q) =>
-        q.eq("channelId", args.channelId).eq("externalUserId", args.externalUserId)
-      )
-      .first();
+    const sessionMode = (await getGatewayConfigValue(ctx, args.gatewayId, "session.mode")) || "per-sender";
+    const timeoutMinutes = await getGatewayNumberConfig(ctx, args.gatewayId, "session.timeout_minutes", 0);
+    const maxConcurrent = await getGatewayNumberConfig(ctx, args.gatewayId, "session.max_concurrent", 100);
+
+    let existing = null;
+    if (sessionMode === "shared") {
+      const shared = await ctx.db
+        .query("sessions")
+        .withIndex("by_channel_externalUser", (q) => q.eq("channelId", args.channelId))
+        .collect();
+      existing = shared
+        .filter((s) => s.status === "active")
+        .sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0] || null;
+    } else {
+      existing = await ctx.db
+        .query("sessions")
+        .withIndex("by_channel_externalUser", (q) =>
+          q.eq("channelId", args.channelId).eq("externalUserId", args.externalUserId)
+        )
+        .first();
+    }
 
     if (existing && existing.status === "active") {
-      return existing._id;
+      const isTimedOut = timeoutMinutes > 0
+        && (Date.now() - existing.lastMessageAt) > timeoutMinutes * 60 * 1000;
+      if (!isTimedOut) {
+        return existing._id;
+      }
+    }
+
+    if (maxConcurrent > 0) {
+      const activeRows = sessionMode === "shared"
+        ? await ctx.db
+          .query("sessions")
+          .withIndex("by_channel_externalUser", (q) => q.eq("channelId", args.channelId))
+          .collect()
+        : await ctx.db
+          .query("sessions")
+          .withIndex("by_channel_externalUser", (q) =>
+            q.eq("channelId", args.channelId).eq("externalUserId", args.externalUserId)
+          )
+          .collect();
+      const activeByIdentity = activeRows
+        .filter((s) => s.status === "active")
+        .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+      if (activeByIdentity.length >= maxConcurrent) {
+        return activeByIdentity[0]._id;
+      }
     }
 
     return await ctx.db.insert("sessions", {
@@ -261,16 +335,19 @@ export const updateLastMessage = internalMutation({
 export const cleanupStale = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    const staleSessions = await ctx.db
+    const now = Date.now();
+    const activeSessions = await ctx.db
       .query("sessions")
-      .withIndex("by_status_lastMessage", (q) =>
-        q.eq("status", "active").lt("lastMessageAt", cutoff)
-      )
+      .withIndex("by_status_lastMessage", (q) => q.eq("status", "active"))
       .collect();
 
-    for (const session of staleSessions) {
-      await ctx.db.patch(session._id, { status: "archived" });
+    for (const session of activeSessions) {
+      const pruneAfterDays = await getGatewayNumberConfig(ctx, session.gatewayId, "session.prune_after_days", 1);
+      if (pruneAfterDays <= 0) continue;
+      const cutoffMs = pruneAfterDays * 24 * 60 * 60 * 1000;
+      if (now - session.lastMessageAt > cutoffMs) {
+        await ctx.db.patch(session._id, { status: "archived" });
+      }
     }
   },
 });

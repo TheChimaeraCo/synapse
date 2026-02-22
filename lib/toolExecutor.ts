@@ -23,6 +23,19 @@ const DANGEROUS_TOOLS = new Set([
   "pm2_restart",
   "pm2_delete",
 ]);
+const NETWORK_TOOLS = new Set(["web_search", "http_request"]);
+
+type ToolPolicyMode = "allowlist" | "blocklist" | "all";
+type ExecApprovalMode = "none" | "destructive" | "all";
+
+interface SandboxPolicy {
+  mode: "off" | "all" | "untrusted";
+  toolPolicy: ToolPolicyMode;
+  execApproval: ExecApprovalMode;
+  network: "enabled" | "disabled";
+  allowedList: string[];
+  blockedList: string[];
+}
 
 function getToolCacheKey(toolName: string, args: Record<string, any>): string | null {
   if (!TOOL_CACHE_TTLS[toolName]) return null;
@@ -74,6 +87,112 @@ interface SessionApprovalState {
   pending: ApprovalRow[];
   approved: ApprovalRow[];
   denied: ApprovalRow[];
+}
+
+function parseList(value?: string | null): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function normalizeToolPolicy(value?: string | null): ToolPolicyMode {
+  if (value === "blocklist") return "blocklist";
+  if (value === "all") return "all";
+  return "allowlist";
+}
+
+function normalizeExecApproval(value?: string | null): ExecApprovalMode {
+  if (value === "all") return "all";
+  if (value === "destructive") return "destructive";
+  return "none";
+}
+
+function normalizeSandboxMode(value?: string | null): SandboxPolicy["mode"] {
+  if (value === "all" || value === "untrusted") return value;
+  return "off";
+}
+
+async function loadSandboxPolicy(gatewayId: string): Promise<SandboxPolicy> {
+  const defaults: SandboxPolicy = {
+    mode: "off",
+    toolPolicy: "allowlist",
+    execApproval: "none",
+    network: "enabled",
+    allowedList: [],
+    blockedList: [],
+  };
+  const keys = [
+    "sandbox.mode",
+    "sandbox.tool_policy",
+    "sandbox.exec_approval",
+    "sandbox.network",
+    "sandbox.allowed_commands",
+    "sandbox.blocked_commands",
+  ];
+
+  try {
+    const { convexClient } = await import("@/lib/convex");
+    const { api } = await import("@/convex/_generated/api");
+    let config: Record<string, string> = {};
+    try {
+      config = await convexClient.query(api.functions.gatewayConfig.getMultiple, {
+        gatewayId: gatewayId as any,
+        keys,
+      });
+    } catch {
+      config = await convexClient.query(api.functions.config.getMultiple, { keys });
+    }
+
+    return {
+      mode: normalizeSandboxMode(config["sandbox.mode"]),
+      toolPolicy: normalizeToolPolicy(config["sandbox.tool_policy"]),
+      execApproval: normalizeExecApproval(config["sandbox.exec_approval"]),
+      network: config["sandbox.network"] === "disabled" ? "disabled" : "enabled",
+      allowedList: parseList(config["sandbox.allowed_commands"]),
+      blockedList: parseList(config["sandbox.blocked_commands"]),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function matchesConfiguredItem(value: string, list: string[]): boolean {
+  const normalized = value.toLowerCase();
+  return list.some((entry) => normalized === entry || normalized.includes(entry));
+}
+
+function isToolBlockedByPolicy(
+  toolName: string,
+  args: Record<string, any>,
+  policy: SandboxPolicy,
+): string | null {
+  if (policy.mode === "off") return null;
+
+  if (policy.network === "disabled" && NETWORK_TOOLS.has(toolName)) {
+    return "network access is disabled by sandbox policy";
+  }
+
+  if (policy.toolPolicy === "allowlist" && policy.allowedList.length > 0 && !matchesConfiguredItem(toolName, policy.allowedList)) {
+    return "tool is not in the sandbox allowlist";
+  }
+
+  if (policy.toolPolicy === "blocklist" && policy.blockedList.length > 0 && matchesConfiguredItem(toolName, policy.blockedList)) {
+    return "tool is blocked by sandbox policy";
+  }
+
+  if (policy.blockedList.length > 0) {
+    const commandLike = [args?.command, args?.script, args?.name]
+      .filter((v) => typeof v === "string")
+      .join(" ")
+      .toLowerCase();
+    if (commandLike && matchesConfiguredItem(commandLike, policy.blockedList)) {
+      return "command payload matches a blocked sandbox rule";
+    }
+  }
+
+  return null;
 }
 
 function canBypassApproval(context: ToolContext): boolean {
@@ -207,117 +326,170 @@ export async function executeDynamicTool(
 export async function executeTools(
   toolCalls: ToolCall[],
   context: ToolContext,
-  dbTools?: Array<{ name: string; handlerCode?: string; requiresApproval?: boolean }>,
+  dbTools?: Array<{
+    name: string;
+    handlerCode?: string;
+    requiresApproval?: boolean;
+    providerProfileId?: string;
+    provider?: string;
+    model?: string;
+  }>,
 ): Promise<ToolResult[]> {
   const results: ToolResult[] = [];
   const approvalState = await getSessionApprovalState(context);
+  const sandboxPolicy = await loadSandboxPolicy(context.gatewayId);
 
   // Build a map of DB tools by name
-  const dbToolMap = new Map<string, { handlerCode?: string; requiresApproval?: boolean }>();
+  const dbToolMap = new Map<string, {
+    handlerCode?: string;
+    requiresApproval?: boolean;
+    providerProfileId?: string;
+    provider?: string;
+    model?: string;
+  }>();
   if (dbTools) {
     for (const t of dbTools) {
       dbToolMap.set(t.name, {
         handlerCode: t.handlerCode,
         requiresApproval: t.requiresApproval,
+        providerProfileId: t.providerProfileId,
+        provider: t.provider,
+        model: t.model,
       });
     }
   }
 
   for (const call of toolCalls) {
-    const handler = TOOL_REGISTRY.get(call.name);
+    const previousToolOverride = (context as any).__toolModelOverride;
     const dbTool = dbToolMap.get(call.name);
-    const requiresApproval = Boolean(handler?.requiresApproval || dbTool?.requiresApproval)
-      || DANGEROUS_TOOLS.has(call.name);
+    const override = {
+      toolName: call.name,
+      providerProfileId: dbTool?.providerProfileId,
+      provider: dbTool?.provider,
+      model: dbTool?.model,
+    };
+    if (override.providerProfileId || override.provider || override.model) {
+      (context as any).__toolModelOverride = override;
+    } else {
+      delete (context as any).__toolModelOverride;
+    }
 
-    if (requiresApproval && !canBypassApproval(context)) {
-      const denied = approvalState?.denied.find((row) =>
-        isSameToolRequest(call.name, call.arguments, row)
-      );
-      if (denied) {
+    try {
+      const handler = TOOL_REGISTRY.get(call.name);
+      const blockedReason = isToolBlockedByPolicy(call.name, call.arguments, sandboxPolicy);
+      if (blockedReason) {
         results.push({
           toolCallId: call.id,
           toolName: call.name,
-          content: `Tool "${call.name}" was denied by owner/admin.`,
+          content: `Tool "${call.name}" blocked: ${blockedReason}.`,
           isError: true,
         });
         continue;
       }
 
-      const approved = approvalState?.approved.find((row) =>
-        isSameToolRequest(call.name, call.arguments, row)
-      );
-      if (!approved) {
-        const existingPending = approvalState?.pending.find((row) =>
+      const defaultApproval = Boolean(handler?.requiresApproval || dbTool?.requiresApproval);
+      const requiresApproval = sandboxPolicy.execApproval === "all"
+        ? true
+        : sandboxPolicy.execApproval === "destructive"
+          ? defaultApproval || DANGEROUS_TOOLS.has(call.name)
+          : defaultApproval;
+
+      if (requiresApproval && !canBypassApproval(context)) {
+        const denied = approvalState?.denied.find((row) =>
           isSameToolRequest(call.name, call.arguments, row)
         );
-
-        if (existingPending) {
+        if (denied) {
           results.push({
             toolCallId: call.id,
             toolName: call.name,
-            content: `Tool "${call.name}" is waiting for owner/admin approval. Request: ${existingPending._id}.`,
+            content: `Tool "${call.name}" was denied by owner/admin.`,
             isError: true,
           });
           continue;
         }
 
-      const approvalId = await createApprovalRequest(context, call.name, call.arguments);
-        if (approvalId && approvalState) {
-          approvalState.pending.push({
-            _id: approvalId,
-            toolName: call.name,
-            toolArgs: call.arguments,
-            status: "pending",
-          });
-        }
-      results.push({
-        toolCallId: call.id,
-        toolName: call.name,
-        content: approvalId
-          ? `Tool "${call.name}" requires owner/admin approval. Approval request created: ${approvalId}.`
-          : `Tool "${call.name}" requires owner/admin approval.`,
-        isError: true,
-      });
-      continue;
-      }
-    }
+        const approved = approvalState?.approved.find((row) =>
+          isSameToolRequest(call.name, call.arguments, row)
+        );
+        if (!approved) {
+          const existingPending = approvalState?.pending.find((row) =>
+            isSameToolRequest(call.name, call.arguments, row)
+          );
 
-    // Check tool cache first
-    const cacheKey = getToolCacheKey(call.name, call.arguments);
-    if (cacheKey) {
-      const cached = await getCachedResult(cacheKey);
-      if (cached) {
-        results.push({ toolCallId: call.id, toolName: call.name, content: `(cached) ${cached}`, isError: false });
+          if (existingPending) {
+            results.push({
+              toolCallId: call.id,
+              toolName: call.name,
+              content: `Tool "${call.name}" is waiting for owner/admin approval. Request: ${existingPending._id}.`,
+              isError: true,
+            });
+            continue;
+          }
+
+          const approvalId = await createApprovalRequest(context, call.name, call.arguments);
+          if (approvalId && approvalState) {
+            approvalState.pending.push({
+              _id: approvalId,
+              toolName: call.name,
+              toolArgs: call.arguments,
+              status: "pending",
+            });
+          }
+          results.push({
+            toolCallId: call.id,
+            toolName: call.name,
+            content: approvalId
+              ? `Tool "${call.name}" requires owner/admin approval. Approval request created: ${approvalId}.`
+              : `Tool "${call.name}" requires owner/admin approval.`,
+            isError: true,
+          });
+          continue;
+        }
+      }
+
+      // Check tool cache first
+      const cacheKey = getToolCacheKey(call.name, call.arguments);
+      if (cacheKey) {
+        const cached = await getCachedResult(cacheKey);
+        if (cached) {
+          results.push({ toolCallId: call.id, toolName: call.name, content: `(cached) ${cached}`, isError: false });
+          continue;
+        }
+      }
+
+      // 1. Check builtin registry first
+      if (handler) {
+        try {
+          const output = await handler.handler(call.arguments, context);
+          results.push({ toolCallId: call.id, toolName: call.name, content: output, isError: false });
+          // Cache if applicable
+          if (cacheKey) setCachedResult(call.name, cacheKey, output);
+        } catch (err: any) {
+          results.push({ toolCallId: call.id, toolName: call.name, content: `Tool error: ${err.message}`, isError: true });
+        }
         continue;
       }
-    }
 
-    // 1. Check builtin registry first
-    if (handler) {
-      try {
-        const output = await handler.handler(call.arguments, context);
-        results.push({ toolCallId: call.id, toolName: call.name, content: output, isError: false });
-        // Cache if applicable
-        if (cacheKey) setCachedResult(call.name, cacheKey, output);
-      } catch (err: any) {
-        results.push({ toolCallId: call.id, toolName: call.name, content: `Tool error: ${err.message}`, isError: true });
+      // 2. Check DB tools with handlerCode
+      const handlerCode = dbTool?.handlerCode;
+      if (handlerCode) {
+        try {
+          const output = await executeDynamicTool(handlerCode, call.arguments, context);
+          results.push({ toolCallId: call.id, toolName: call.name, content: output, isError: false });
+        } catch (err: any) {
+          results.push({ toolCallId: call.id, toolName: call.name, content: `Dynamic tool error: ${err.message}`, isError: true });
+        }
+        continue;
       }
-      continue;
-    }
 
-    // 2. Check DB tools with handlerCode
-    const handlerCode = dbTool?.handlerCode;
-    if (handlerCode) {
-      try {
-        const output = await executeDynamicTool(handlerCode, call.arguments, context);
-        results.push({ toolCallId: call.id, toolName: call.name, content: output, isError: false });
-      } catch (err: any) {
-        results.push({ toolCallId: call.id, toolName: call.name, content: `Dynamic tool error: ${err.message}`, isError: true });
+      results.push({ toolCallId: call.id, toolName: call.name, content: `Unknown tool: ${call.name}`, isError: true });
+    } finally {
+      if (previousToolOverride) {
+        (context as any).__toolModelOverride = previousToolOverride;
+      } else {
+        delete (context as any).__toolModelOverride;
       }
-      continue;
     }
-
-    results.push({ toolCallId: call.id, toolName: call.name, content: `Unknown tool: ${call.name}`, isError: true });
   }
 
   return results;

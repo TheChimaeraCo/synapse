@@ -7,6 +7,7 @@ import { buildDefaultSystemPrompt } from "@/lib/templates";
 import { buildConversationChainContext } from "@/lib/conversationManager";
 import { buildTopicContext } from "@/lib/topicContext";
 import { searchByEmbedding } from "@/lib/embeddings";
+import { buildRuntimeSettingsSummary } from "@/lib/runtimeSettings";
 
 interface ContextResult {
   systemPrompt: string;
@@ -15,7 +16,22 @@ interface ContextResult {
 }
 
 // Soft total budget - we trim only if we exceed this
-const TOTAL_BUDGET = 8000;
+const DEFAULT_TOTAL_BUDGET = 8000;
+
+async function getGatewayOrGlobalConfig(gatewayId: Id<"gateways">, key: string): Promise<string | null> {
+  try {
+    const result = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+      gatewayId,
+      key,
+    });
+    if (result?.value != null) return result.value;
+  } catch {}
+  try {
+    return (await convexClient.query(api.functions.config.get, { key })) || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Rough token estimate using ~4 chars per token heuristic.
@@ -199,48 +215,74 @@ export async function buildContext(
     ),
   ]);
 
+  if (!agent) throw new Error("Agent not found");
+
+  const contextKeys = [
+    "session.compact_max_turns",
+    "session.compact_max_tokens",
+    "identity.description",
+    "identity.emoji",
+    "identity.timezone",
+    "identity.time_format",
+    "identity.bootstrap_enabled",
+    "response_style",
+    "owner_name",
+    "openai_api_key",
+  ] as const;
+
+  const contextConfigEntries = await Promise.all(
+    contextKeys.map(async (key) => [key, await getGatewayOrGlobalConfig(agent.gatewayId, key)] as const)
+  );
+  const contextConfig = Object.fromEntries(contextConfigEntries) as Record<(typeof contextKeys)[number], string | null>;
+
+  const configuredMessageLimitRaw = Number.parseInt(contextConfig["session.compact_max_turns"] || "", 10);
+  const configuredMessageLimit = Number.isFinite(configuredMessageLimitRaw) && configuredMessageLimitRaw > 0
+    ? Math.min(configuredMessageLimitRaw, 200)
+    : undefined;
+  const messageLimit = configuredMessageLimit ?? escParams.messageLimit;
+
+  const configuredTokenBudgetRaw = Number.parseInt(contextConfig["session.compact_max_tokens"] || "", 10);
+  const configuredTokenBudget = Number.isFinite(configuredTokenBudgetRaw) && configuredTokenBudgetRaw > 1000
+    ? configuredTokenBudgetRaw
+    : DEFAULT_TOTAL_BUDGET;
+
   // Load messages scoped to conversation if available, fall back to flat stream
   let recentMessages: any[];
   if (_conversationId) {
     try {
       recentMessages = await convexClient.query(api.functions.messages.listByConversation, {
         conversationId: _conversationId,
-        limit: escParams.messageLimit,
+        limit: messageLimit,
       });
       console.log(`[Context] Scoped to conversation ${_conversationId}: ${recentMessages.length} messages`);
     } catch (err) {
       console.error("[Context] Conversation-scoped load failed, falling back to flat:", err);
       recentMessages = await convexClient.query(api.functions.messages.getRecent, {
         sessionId,
-        limit: escParams.messageLimit,
+        limit: messageLimit,
       });
     }
   } else {
     recentMessages = await convexClient.query(api.functions.messages.getRecent, {
       sessionId,
-      limit: escParams.messageLimit,
+      limit: messageLimit,
     });
   }
-
-  if (!agent) throw new Error("Agent not found");
 
   // --- Layer 1: Identity/Soul ---
   let onboardingPrompt = "";
   let useTemplateBase = false;
   let soulSection = "";
+  const bootstrapEnabled = contextConfig["identity.bootstrap_enabled"] !== "false";
   try {
     const soul = await convexClient.query(api.functions.onboarding.getSoul, {
       gatewayId: agent.gatewayId,
     });
     if (!soul) {
       useTemplateBase = true;
-      let userName = "";
-      try {
-        const authUser = await convexClient.query(api.functions.config.get, { key: "owner_name" });
-        userName = authUser || "";
-      } catch {}
-
-      onboardingPrompt = `\n\n---\n\nIMPORTANT - FIRST CONVERSATION:
+      const userName = contextConfig["owner_name"] || "";
+      if (bootstrapEnabled) {
+        onboardingPrompt = `\n\n---\n\nIMPORTANT - FIRST CONVERSATION:
 You are brand new. You just came into existence. This is your very first conversation with your person${userName ? ` (their name is ${userName})` : ""}.
 
 Your job right now is to get to know them through natural conversation. Don't be a form. Don't ask rapid-fire questions. Be curious, warm, and genuine.
@@ -254,6 +296,7 @@ Learn about them:
 As you learn things, naturally reflect them back. After a few exchanges when you feel you know enough, tell them you're ready and summarize who you've decided to become. Then just BE that from then on.
 
 You don't have a name yet. You don't have a personality yet. You're discovering both right now through this conversation. Be real.`;
+      }
     } else {
       // Build soul section from database
       const soulParts: string[] = [];
@@ -270,7 +313,7 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
   // Load response style config if available
   let styleSection = "";
   try {
-    const styleJson = await convexClient.query(api.functions.config.get, { key: "response_style" });
+    const styleJson = contextConfig["response_style"];
     if (styleJson) {
       const style = JSON.parse(styleJson);
       const styleParts: string[] = [];
@@ -284,6 +327,14 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
       }
     }
   } catch {}
+
+  let identityConfigSection = "";
+  const identityParts: string[] = [];
+  if (contextConfig["identity.description"]) identityParts.push(`Description: ${contextConfig["identity.description"]}`);
+  if (contextConfig["identity.emoji"]) identityParts.push(`Avatar emoji: ${contextConfig["identity.emoji"]}`);
+  if (contextConfig["identity.timezone"]) identityParts.push(`Timezone: ${contextConfig["identity.timezone"]}`);
+  if (contextConfig["identity.time_format"]) identityParts.push(`Time format: ${contextConfig["identity.time_format"]}`);
+  if (identityParts.length > 0) identityConfigSection = `\n\n## Workspace Identity\n${identityParts.join("\n")}`;
 
   // --- Soul Evolution insights ---
   let soulEvolutionSection = "";
@@ -301,14 +352,11 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
   }
 
   const basePrompt = useTemplateBase ? buildDefaultSystemPrompt() : agent.systemPrompt;
-  let identitySection = basePrompt + soulSection + soulEvolutionSection + styleSection + onboardingPrompt;
+  let identitySection = basePrompt + soulSection + identityConfigSection + soulEvolutionSection + styleSection + onboardingPrompt;
   console.log(`[Context] Layer 1 (Identity): ${estimateTokens(identitySection)} tokens`);
 
   // --- Layer 2: Knowledge (semantic search when available) ---
-  let openaiKey: string | undefined;
-  try {
-    openaiKey = await convexClient.query(api.functions.config.get, { key: "openai_api_key" }) || undefined;
-  } catch {}
+  const openaiKey = contextConfig["openai_api_key"] || undefined;
 
   const knowledgeSection = await formatKnowledgeSemantic(
     knowledge.map((k: any) => ({
@@ -380,15 +428,20 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
     }
   }
 
+  let runtimeSettingsSection = "";
+  try {
+    runtimeSettingsSection = await buildRuntimeSettingsSummary(agent.gatewayId);
+  } catch {}
+
   // --- Assemble ---
-  let systemPrompt = identitySection + knowledgeSection + conversationChainSection + topicSection + projectSection + escalationHint;
+  let systemPrompt = identitySection + knowledgeSection + conversationChainSection + topicSection + projectSection + runtimeSettingsSection + escalationHint;
 
   let totalTokens = estimateTokens(systemPrompt) + messageTokens;
-  console.log(`[Context] Total: ${totalTokens} tokens (soft budget: ${TOTAL_BUDGET})`);
+  console.log(`[Context] Total: ${totalTokens} tokens (soft budget: ${configuredTokenBudget})`);
 
   // Only trim if significantly over budget - drop oldest messages first
-  if (totalTokens > TOTAL_BUDGET) {
-    while (totalTokens > TOTAL_BUDGET && messages.length > 2) {
+  if (totalTokens > configuredTokenBudget) {
+    while (totalTokens > configuredTokenBudget && messages.length > 2) {
       const removed = messages.shift()!;
       messageTokens -= estimateTokens(removed.content);
       totalTokens = estimateTokens(systemPrompt) + messageTokens;

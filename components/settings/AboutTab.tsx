@@ -8,11 +8,16 @@ import { useFetch } from "@/lib/hooks";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { ExternalLink, Loader2, Database } from "lucide-react";
 import { toast } from "sonner";
+import { parseProviderProfiles, pickDefaultProfileId } from "@/lib/aiRoutingConfig";
 
 export function AboutTab() {
   const { data: configData } = useFetch<Record<string, string>>("/api/config/all");
   const [migrating, setMigrating] = useState(false);
   const [migrationResult, setMigrationResult] = useState<any>(null);
+  const profiles = parseProviderProfiles(configData?.["ai.provider_profiles"]);
+  const defaultProfileId = pickDefaultProfileId(profiles, configData?.["ai.default_profile_id"] || "");
+  const activeProfile = profiles.find((p) => p.id === defaultProfileId) || null;
+  const activeProvider = activeProfile?.provider || configData?.ai_provider || "Not configured";
 
   const handleMigrate = async () => {
     if (!confirm("Run multi-gateway migration? This copies systemConfig to gatewayConfig and creates gateway memberships. It's safe to run multiple times (idempotent).")) return;
@@ -55,7 +60,7 @@ export function AboutTab() {
           </div>
           <div className="flex justify-between items-center">
             <span className="text-zinc-400 text-sm">AI Provider</span>
-            <span className="text-zinc-200 text-sm">{configData?.ai_provider || "Not configured"}</span>
+            <span className="text-zinc-200 text-sm">{activeProvider}</span>
           </div>
           <div className="flex justify-between items-center">
             <span className="text-zinc-400 text-sm">Telegram</span>

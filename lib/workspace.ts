@@ -38,11 +38,19 @@ export async function getWorkspacePath(gatewayId?: string): Promise<string> {
       // 2. Fall back to gatewayConfig
       const result = await convex.query(api.functions.gatewayConfig.getWithInheritance, {
         gatewayId: gatewayId as Id<"gateways">,
-        key: "workspace_path",
+        key: "identity.workspace_path",
       });
       if (result?.value) {
         _gwCache[gatewayId] = { value: result.value, time: Date.now() };
         return result.value;
+      }
+      const legacyResult = await convex.query(api.functions.gatewayConfig.getWithInheritance, {
+        gatewayId: gatewayId as Id<"gateways">,
+        key: "workspace_path",
+      });
+      if (legacyResult?.value) {
+        _gwCache[gatewayId] = { value: legacyResult.value, time: Date.now() };
+        return legacyResult.value;
       }
     } catch {}
     // Fall through to global
@@ -52,8 +60,9 @@ export async function getWorkspacePath(gatewayId?: string): Promise<string> {
   if (_cached && Date.now() - _cacheTime < 60000) return _cached;
   try {
     const convex = new ConvexHttpClient(process.env.CONVEX_SELF_HOSTED_URL || "http://127.0.0.1:3220");
-    const val = await convex.query(api.functions.config.get, { key: "workspace_path" });
-    _cached = (val as string) || DEFAULT_WORKSPACE;
+    const namespaced = await convex.query(api.functions.config.get, { key: "identity.workspace_path" });
+    const legacy = await convex.query(api.functions.config.get, { key: "workspace_path" });
+    _cached = (namespaced as string) || (legacy as string) || DEFAULT_WORKSPACE;
     _cacheTime = Date.now();
     return _cached;
   } catch {

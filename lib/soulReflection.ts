@@ -1,6 +1,7 @@
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 const REFLECTION_PROMPT = `You are reflecting on a conversation you just had. Extract insights about your human - not facts (those go to knowledge), but behavioral patterns, relationship dynamics, and personality observations.
 
@@ -62,28 +63,17 @@ export async function reflectOnConversation(
       .map((m: any) => `${m.role}: ${m.content}`)
       .join("\n\n");
 
-    // Get AI config (same pattern as conversationSummarizer)
-    const getConfig = async (k: string) => {
-      try {
-        const r = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, { gatewayId, key: k });
-        if (r?.value) return r.value;
-      } catch {}
-      return await convexClient.query(api.functions.config.get, { key: k });
-    };
-
-    const [providerSlug, apiKey, configuredModel] = await Promise.all([
-      getConfig("ai_provider"),
-      getConfig("ai_api_key"),
-      getConfig("ai_model"),
-    ]);
-    const provider = providerSlug || "anthropic";
-    const { getProviderApiKey, hydrateProviderEnv } = await import("./providerSecrets");
-    const key = apiKey || getProviderApiKey(provider) || "";
+    const selection = await resolveAiSelection({
+      gatewayId,
+      capability: "reflection",
+      message: formatted.slice(0, 1000),
+    });
+    const provider = selection.provider;
+    const key = selection.apiKey;
     if (!key) {
       console.error("[soulReflection] No API key, skipping");
       return;
     }
-    hydrateProviderEnv(provider, key);
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
@@ -97,8 +87,8 @@ export async function reflectOnConversation(
 
     const preferredModelId = REFLECTION_MODELS[provider] || REFLECTION_MODELS.anthropic;
     let model = getModel(provider as any, preferredModelId as any);
-    if (!model && configuredModel) {
-      model = getModel(provider as any, configuredModel as any);
+    if (!model && selection.model) {
+      model = getModel(provider as any, selection.model as any);
     }
     if (!model) {
       console.error("[soulReflection] No model found");

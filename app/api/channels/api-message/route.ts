@@ -4,11 +4,11 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { buildContext } from "@/lib/contextBuilder";
 import { executeTools, toProviderTools } from "@/lib/toolExecutor";
-import { selectModel } from "@/lib/modelRouter";
 import { resolveConversation } from "@/lib/conversationManager";
-import type { ModelRoutingConfig, TaskType } from "@/lib/modelRouter";
 import { BUILTIN_TOOLS } from "@/lib/builtinTools";
 import { extractBearerToken, safeEqualSecret } from "@/lib/security";
+import { applyResponsePrefix } from "@/lib/messageFormatting";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 // --- Rate Limiting ---
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
@@ -85,7 +85,7 @@ async function validateAndSetup(req: NextRequest) {
   return { apiKey, message, stream, gatewayId, agentId, sessionId, conversationId, userMessageId };
 }
 
-async function getAIConfig(gatewayId: Id<"gateways">, agentId: Id<"agents">) {
+async function getAIConfig(gatewayId: Id<"gateways">, agentId: Id<"agents">, message: string) {
   const getConfig = async (key: string) => {
     try {
       const r = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, { gatewayId, key });
@@ -93,28 +93,33 @@ async function getAIConfig(gatewayId: Id<"gateways">, agentId: Id<"agents">) {
     } catch { return await convexClient.query(api.functions.config.get, { key }); }
   };
 
-  const [providerSlug, apiKeyVal, configModel] = await Promise.all([
-    getConfig("ai_provider"), getConfig("ai_api_key"), getConfig("ai_model"),
-  ]);
-
-  const provider = providerSlug || "anthropic";
-  const { getProviderApiKey, hydrateProviderEnv } = await import("@/lib/providerSecrets");
-  const key = apiKeyVal || getProviderApiKey(provider) || "";
-  if (!key) throw new Error("No API key configured");
-  hydrateProviderEnv(provider, key);
+  const responsePrefix = await getConfig("messages.response_prefix");
 
   const agent = await convexClient.query(api.functions.agents.get, { id: agentId });
   if (!agent) throw new Error("Agent not found");
-
-  const routingRaw = await getConfig("model_routing");
-  const routingConfig: ModelRoutingConfig | null = routingRaw ? JSON.parse(routingRaw) : null;
 
   const builtinToolDefs = BUILTIN_TOOLS.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
   const enabledTools = await convexClient.query(api.functions.tools.getEnabled, { gatewayId });
   const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
   const allToolDefs = [...builtinToolDefs.filter(t => !dbToolNames.has(t.name)), ...enabledTools];
+  const customRoutes = await convexClient.query(api.functions.modelRoutes.list, { gatewayId });
+  const selection = await resolveAiSelection({
+    gatewayId,
+    capability: "tool_use",
+    message,
+    agentModel: agent.model,
+    customRoutes: customRoutes as any,
+  });
+  if (!selection.apiKey) throw new Error("No API key configured");
 
-  return { provider, key, configModel, agent, routingConfig, allToolDefs };
+  return {
+    provider: selection.provider,
+    key: selection.apiKey,
+    modelId: selection.model,
+    agent,
+    allToolDefs,
+    responsePrefix,
+  };
 }
 
 /**
@@ -146,15 +151,14 @@ export async function POST(req: NextRequest) {
     }
 
     const ctx = await validateAndSetup(req);
-    const config = await getAIConfig(ctx.gatewayId, ctx.agentId);
+    const config = await getAIConfig(ctx.gatewayId, ctx.agentId, ctx.message);
     let responseConversationId = ctx.conversationId;
     let movedUserMessageToNewConversation = false;
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
 
-    const modelId = selectModel("tool_use" as TaskType, config.routingConfig, { allowed: true },
-      config.agent.model || config.configModel || undefined);
+    const modelId = config.modelId;
     const model = getModel(config.provider as any, modelId as any);
     if (!model) throw new Error(`Model "${modelId}" not found`);
 
@@ -191,6 +195,12 @@ export async function POST(req: NextRequest) {
           try {
             let usage = { input: 0, output: 0 };
             let fullContent = "";
+            const trimmedPrefix = (config.responsePrefix || "").trim();
+            if (trimmedPrefix) {
+              const prefixText = `${trimmedPrefix} `;
+              fullContent = prefixText;
+              controller.enqueue(encoder.encode(sseEvent({ type: "token", content: prefixText })));
+            }
 
             for (let round = 0; round <= 5; round++) {
               const toolCalls: any[] = [];
@@ -248,9 +258,10 @@ export async function POST(req: NextRequest) {
             }
 
             // Store response
+            const finalContent = applyResponsePrefix(fullContent, config.responsePrefix);
             await convexClient.mutation(api.functions.messages.create, {
               gatewayId: ctx.gatewayId, sessionId: ctx.sessionId, agentId: ctx.agentId,
-              role: "assistant", content: fullContent, tokens: usage, model: modelId, conversationId: responseConversationId,
+              role: "assistant", content: finalContent, tokens: usage, model: modelId, conversationId: responseConversationId,
             });
 
             controller.enqueue(encoder.encode(sseEvent({ type: "done", sessionId: ctx.sessionId, model: modelId, tokens: usage })));
@@ -324,13 +335,14 @@ export async function POST(req: NextRequest) {
 
     const latencyMs = Date.now() - startMs;
 
+    const finalContent = applyResponsePrefix(fullContent, config.responsePrefix);
     await convexClient.mutation(api.functions.messages.create, {
       gatewayId: ctx.gatewayId, sessionId: ctx.sessionId, agentId: ctx.agentId,
-      role: "assistant", content: fullContent, tokens: usage, model: modelId, latencyMs, conversationId: responseConversationId,
+      role: "assistant", content: finalContent, tokens: usage, model: modelId, latencyMs, conversationId: responseConversationId,
     });
 
     return NextResponse.json({
-      response: fullContent,
+      response: finalContent,
       sessionId: ctx.sessionId as string,
       model: modelId,
       tokens: usage,

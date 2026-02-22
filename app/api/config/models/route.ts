@@ -1,25 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
-import { getConvexClient } from "@/lib/convex";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
-
-async function getConfigValue(convex: any, gatewayId: string, key: string): Promise<string | null> {
-  try {
-    const result = await convex.query(api.functions.gatewayConfig.getWithInheritance, {
-      gatewayId: gatewayId as Id<"gateways">,
-      key,
-    });
-    return result?.value || null;
-  } catch {
-    // Fall back to systemConfig
-    return await convex.query(api.functions.config.get, { key });
-  }
-}
+import { getGatewayContext } from "@/lib/gateway-context";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 export async function GET(req: NextRequest) {
   try {
-    const convex = getConvexClient();
     let gatewayId: string | null = null;
 
     try {
@@ -28,20 +12,21 @@ export async function GET(req: NextRequest) {
     } catch {}
 
     const provider = req.nextUrl.searchParams.get("provider");
+    const profileId = req.nextUrl.searchParams.get("profileId");
 
-    // Get stored credentials (gateway-scoped if available)
-    const aiProvider = provider
-      || (gatewayId ? await getConfigValue(convex, gatewayId, "ai_provider") : await convex.query(api.functions.config.get, { key: "ai_provider" }))
-      || "anthropic";
-    const apiKey = gatewayId
-      ? await getConfigValue(convex, gatewayId, "ai_api_key")
-      : await convex.query(api.functions.config.get, { key: "ai_api_key" });
-    const authMethod = gatewayId
-      ? await getConfigValue(convex, gatewayId, "ai_auth_method")
-      : await convex.query(api.functions.config.get, { key: "ai_auth_method" });
-    const baseUrl = gatewayId
-      ? await getConfigValue(convex, gatewayId, "ai_base_url")
-      : await convex.query(api.functions.config.get, { key: "ai_base_url" });
+    const selection = await resolveAiSelection({
+      gatewayId,
+      capability: "chat",
+      routeOverride: {
+        provider: provider || undefined,
+        providerProfileId: profileId || undefined,
+      },
+    });
+
+    const aiProvider = provider || selection.provider;
+    const apiKey = selection.apiKey;
+    const authMethod = selection.authMethod;
+    const baseUrl = selection.baseUrl;
 
     if (!apiKey) {
       return NextResponse.json({ models: [], error: "No API key configured" });

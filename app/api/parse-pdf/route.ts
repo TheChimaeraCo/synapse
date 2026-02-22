@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { extractBearerToken, safeEqualSecret } from "@/lib/security";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 const MODELS: Record<string, string> = {
   anthropic: "claude-sonnet-4-20250514",
@@ -16,40 +17,21 @@ const MODELS: Record<string, string> = {
 };
 
 async function getAiConfig(gatewayId?: string) {
-  const getConfig = async (k: string) => {
-    if (gatewayId) {
-      try {
-        const r = await convexClient.query(
-          api.functions.gatewayConfig.getWithInheritance,
-          { gatewayId: gatewayId as any, key: k }
-        );
-        if (r?.value) return r.value;
-      } catch {}
-    }
-    const sysVal = await convexClient.query(api.functions.config.get, { key: k });
-    if (sysVal) return sysVal;
-    // Fall back to first gateway's config
-    if (!gatewayId) {
-      try {
-        const gateways = await convexClient.query(api.functions.gateways.list, {});
-        if (gateways?.length) {
-          const r = await convexClient.query(
-            api.functions.gatewayConfig.getWithInheritance,
-            { gatewayId: gateways[0]._id, key: k }
-          );
-          if (r?.value) return r.value;
-        }
-      } catch {}
-    }
-    return null;
-  };
-  const [providerSlug, apiKey] = await Promise.all([
-    getConfig("ai_provider"),
-    getConfig("ai_api_key"),
-  ]);
+  let resolvedGatewayId = gatewayId;
+  if (!resolvedGatewayId) {
+    try {
+      const gateways = await convexClient.query(api.functions.gateways.list, {});
+      if (gateways?.length) resolvedGatewayId = gateways[0]._id as any;
+    } catch {}
+  }
+  const selection = await resolveAiSelection({
+    gatewayId: resolvedGatewayId,
+    capability: "parse_pdf",
+  });
   return {
-    provider: providerSlug || "anthropic",
-    apiKey: apiKey || process.env.ANTHROPIC_API_KEY || "",
+    provider: selection.provider,
+    apiKey: selection.apiKey || process.env.ANTHROPIC_API_KEY || "",
+    model: selection.model,
   };
 }
 
@@ -152,7 +134,7 @@ export async function POST(request: NextRequest) {
     }
 
     // AI config
-    const { provider, apiKey } = await getAiConfig(gatewayId || undefined);
+    const { provider, apiKey, model: configuredModel } = await getAiConfig(gatewayId || undefined);
     if (!apiKey) return NextResponse.json({ success: false, error: "No AI API key configured" }, { status: 500 });
 
     const envMap: Record<string, string> = {
@@ -164,7 +146,7 @@ export async function POST(request: NextRequest) {
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
 
-    const modelId = MODELS[provider] || MODELS.anthropic;
+    const modelId = configuredModel || MODELS[provider] || MODELS.anthropic;
     const model = getModel(provider as any, modelId as any);
     if (!model) return NextResponse.json({ success: false, error: `Model not found: ${modelId}` }, { status: 500 });
 

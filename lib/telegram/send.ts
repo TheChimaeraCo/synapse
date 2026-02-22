@@ -1,5 +1,6 @@
 // lib/telegram/send.ts - Standalone Telegram message sending utilities
 // Used by both the grammY bot process AND Convex actions
+import { normalizeChunkMode, splitMessageByMode, type ChunkMode } from "@/lib/messageFormatting";
 
 const TELEGRAM_API = "https://api.telegram.org";
 const MAX_TEXT_LENGTH = 4096;
@@ -10,6 +11,8 @@ interface SendOptions {
   parseMode?: string;
   disableNotification?: boolean;
   messageThreadId?: number;
+  chunkLimit?: number;
+  chunkMode?: ChunkMode | string;
 }
 
 async function telegramApi(
@@ -28,21 +31,8 @@ async function telegramApi(
 /**
  * Split text into chunks at newline boundaries, respecting max length.
  */
-export function splitMessage(text: string, maxLen = MAX_TEXT_LENGTH): string[] {
-  if (text.length <= maxLen) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLen) {
-      chunks.push(remaining);
-      break;
-    }
-    let splitIdx = remaining.lastIndexOf("\n", maxLen);
-    if (splitIdx < maxLen / 2) splitIdx = maxLen;
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx);
-  }
-  return chunks;
+export function splitMessage(text: string, maxLen = MAX_TEXT_LENGTH, mode: ChunkMode = "newline"): string[] {
+  return splitMessageByMode(text, maxLen, normalizeChunkMode(mode));
 }
 
 /**
@@ -54,7 +44,10 @@ export async function sendMessage(
   text: string,
   opts: SendOptions = {}
 ): Promise<{ ok: boolean; messageId?: number }> {
-  const chunks = splitMessage(text);
+  const chunkLimit = opts.chunkLimit && opts.chunkLimit > 0
+    ? Math.min(opts.chunkLimit, MAX_TEXT_LENGTH)
+    : MAX_TEXT_LENGTH;
+  const chunks = splitMessage(text, chunkLimit, normalizeChunkMode(opts.chunkMode));
   let lastMessageId: number | undefined;
 
   for (let i = 0; i < chunks.length; i++) {

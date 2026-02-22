@@ -20,12 +20,20 @@ export interface BudgetState {
   remainingUsd?: number;
 }
 
+export interface ModelConstraints {
+  allowlist?: string[];
+  aliases?: Record<string, string>;
+  fallbackChain?: string[];
+}
+
 export interface ModelRoute {
   _id?: string;
   name: string;
   description: string;
   condition: RouteCondition;
   targetModel: string;
+  targetProvider?: string;
+  targetProviderProfileId?: string;
   priority: number;
   enabled: boolean;
 }
@@ -154,6 +162,55 @@ function getCheapest(model: string): string {
   return model;
 }
 
+export function parseModelList(raw?: string | null): string[] {
+  if (!raw) return [];
+  return raw.split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+export function parseModelAliasMap(raw?: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+export function constrainModel(model: string, constraints?: ModelConstraints): string {
+  if (!constraints) return model;
+
+  const aliases = constraints.aliases || {};
+  const allowlist = constraints.allowlist || [];
+  const fallbackChain = constraints.fallbackChain || [];
+
+  const resolveAlias = (value: string) => aliases[value] || value;
+  let resolved = resolveAlias(model);
+
+  if (allowlist.length > 0 && !allowlist.includes(resolved)) {
+    const fallbackAllowed = fallbackChain
+      .map(resolveAlias)
+      .find((candidate) => allowlist.includes(candidate));
+    resolved = fallbackAllowed || allowlist[0];
+  }
+
+  return resolved;
+}
+
+export function findMatchingRoute(message: string, customRoutes?: ModelRoute[]): ModelRoute | null {
+  if (!message || !customRoutes?.length) return null;
+  const sorted = [...customRoutes]
+    .filter((r) => r.enabled && !!r.targetModel)
+    .sort((a, b) => b.priority - a.priority);
+  for (const route of sorted) {
+    if (evaluateCondition(route.condition, message)) {
+      return route;
+    }
+  }
+  return null;
+}
+
 /**
  * Select model using custom routes first, then fall back to task-based routing.
  */
@@ -164,17 +221,14 @@ export function selectModel(
   agentModel?: string,
   message?: string,
   customRoutes?: ModelRoute[],
+  constraints?: ModelConstraints,
 ): string {
   const config = routing || DEFAULT_ROUTING;
 
   // Check custom routes first (sorted by priority, highest first)
   if (message && customRoutes?.length) {
-    const sorted = [...customRoutes].filter(r => r.enabled).sort((a, b) => b.priority - a.priority);
-    for (const route of sorted) {
-      if (evaluateCondition(route.condition, message)) {
-        return route.targetModel;
-      }
-    }
+    const match = findMatchingRoute(message, customRoutes);
+    if (match?.targetModel) return match.targetModel;
   }
 
   // Start with task-specific model, fall back to agent config
@@ -204,7 +258,7 @@ export function selectModel(
     model = getCheapest(model);
   }
 
-  return model;
+  return constrainModel(model, constraints);
 }
 
 export const DEFAULT_ROUTES: ModelRoute[] = [

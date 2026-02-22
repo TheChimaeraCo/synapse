@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp, Route } from "lucide-react";
 import { toast } from "sonner";
+import { useFetch } from "@/lib/hooks";
+import { parseProviderProfiles, type CapabilityRoutes } from "@/lib/aiRoutingConfig";
 
 interface RouteCondition {
   type: "message_length" | "has_code" | "keyword" | "combined";
@@ -20,20 +22,11 @@ interface ModelRoute {
   description: string;
   condition: RouteCondition;
   targetModel: string;
+  targetProvider?: string;
+  targetProviderProfileId?: string;
   priority: number;
   enabled: boolean;
 }
-
-const AVAILABLE_MODELS = [
-  "claude-opus-4-20250514",
-  "claude-sonnet-4-20250514",
-  "claude-haiku-3-20250514",
-  "gpt-4o",
-  "gpt-4o-mini",
-  "gemini-2.5-pro",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-];
 
 const CONDITION_TYPES = [
   { value: "message_length", label: "Message Length" },
@@ -41,10 +34,24 @@ const CONDITION_TYPES = [
   { value: "keyword", label: "Keyword Match" },
 ];
 
-function RouteEditor({ route, onSave, onDelete }: {
+const CAPABILITIES = [
+  { key: "chat", label: "Chat" },
+  { key: "tool_use", label: "Tool Use" },
+  { key: "summary", label: "Summary" },
+  { key: "code", label: "Code" },
+  { key: "analysis", label: "Analysis" },
+] as const;
+
+function RouteEditor({
+  route,
+  onSave,
+  onDelete,
+  profileOptions,
+}: {
   route: ModelRoute;
   onSave: (r: ModelRoute) => void;
   onDelete?: () => void;
+  profileOptions: Array<{ id: string; name: string; provider: string }>;
 }) {
   const [expanded, setExpanded] = useState(!route._id);
   const [form, setForm] = useState(route);
@@ -66,8 +73,8 @@ function RouteEditor({ route, onSave, onDelete }: {
           }
         </button>
         <div className="flex-1 min-w-0">
-          <span className={`text-sm font-medium ${form.enabled ? 'text-zinc-200' : 'text-zinc-500'}`}>{form.name || "New Rule"}</span>
-          <span className="text-xs text-zinc-500 ml-2">→ {form.targetModel}</span>
+          <span className={`text-sm font-medium ${form.enabled ? "text-zinc-200" : "text-zinc-500"}`}>{form.name || "New Rule"}</span>
+          <span className="text-xs text-zinc-500 ml-2">to {form.targetModel || "(default)"}</span>
         </div>
         <span className="text-[10px] text-zinc-500 font-mono">P{form.priority}</span>
         {expanded ? <ChevronUp className="h-4 w-4 text-zinc-500" /> : <ChevronDown className="h-4 w-4 text-zinc-500" />}
@@ -89,7 +96,7 @@ function RouteEditor({ route, onSave, onDelete }: {
               <input
                 type="number"
                 value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
+                onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value, 10) || 0 })}
                 className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-blue-500/40"
               />
             </div>
@@ -104,15 +111,37 @@ function RouteEditor({ route, onSave, onDelete }: {
             />
           </div>
 
-          <div>
-            <label className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">Target Model</label>
-            <select
-              value={form.targetModel}
-              onChange={(e) => setForm({ ...form, targetModel: e.target.value })}
-              className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-blue-500/40"
-            >
-              {AVAILABLE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">Provider Profile</label>
+              <select
+                value={form.targetProviderProfileId || ""}
+                onChange={(e) => {
+                  const profileId = e.target.value;
+                  const profile = profileOptions.find((p) => p.id === profileId);
+                  setForm({
+                    ...form,
+                    targetProviderProfileId: profileId || "",
+                    targetProvider: profile?.provider || "",
+                  });
+                }}
+                className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none"
+              >
+                <option value="">Default profile</option>
+                {profileOptions.map((profile) => (
+                  <option key={profile.id} value={profile.id}>{profile.name} ({profile.provider})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">Target Model</label>
+              <input
+                value={form.targetModel}
+                onChange={(e) => setForm({ ...form, targetModel: e.target.value })}
+                placeholder="e.g. claude-sonnet-4-20250514"
+                className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none"
+              />
+            </div>
           </div>
 
           <div>
@@ -122,14 +151,14 @@ function RouteEditor({ route, onSave, onDelete }: {
               onChange={(e) => {
                 const type = e.target.value as RouteCondition["type"];
                 const base: RouteCondition = { type };
-                if (type === "message_length") { base.maxLength = 50; }
-                if (type === "has_code") { base.codeDetection = true; }
-                if (type === "keyword") { base.keywords = []; }
+                if (type === "message_length") base.maxLength = 50;
+                if (type === "has_code") base.codeDetection = true;
+                if (type === "keyword") base.keywords = [];
                 setForm({ ...form, condition: base });
               }}
               className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-blue-500/40"
             >
-              {CONDITION_TYPES.map(ct => <option key={ct.value} value={ct.value}>{ct.label}</option>)}
+              {CONDITION_TYPES.map((ct) => <option key={ct.value} value={ct.value}>{ct.label}</option>)}
             </select>
           </div>
 
@@ -137,11 +166,11 @@ function RouteEditor({ route, onSave, onDelete }: {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] text-zinc-500 mb-1 block">Min Length</label>
-                <input type="number" value={form.condition.minLength ?? ""} onChange={(e) => setForm({ ...form, condition: { ...form.condition, minLength: e.target.value ? parseInt(e.target.value) : undefined } })} className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none" placeholder="0" />
+                <input type="number" value={form.condition.minLength ?? ""} onChange={(e) => setForm({ ...form, condition: { ...form.condition, minLength: e.target.value ? parseInt(e.target.value, 10) : undefined } })} className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none" placeholder="0" />
               </div>
               <div>
                 <label className="text-[10px] text-zinc-500 mb-1 block">Max Length</label>
-                <input type="number" value={form.condition.maxLength ?? ""} onChange={(e) => setForm({ ...form, condition: { ...form.condition, maxLength: e.target.value ? parseInt(e.target.value) : undefined } })} className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none" placeholder="No limit" />
+                <input type="number" value={form.condition.maxLength ?? ""} onChange={(e) => setForm({ ...form, condition: { ...form.condition, maxLength: e.target.value ? parseInt(e.target.value, 10) : undefined } })} className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none" placeholder="No limit" />
               </div>
             </div>
           )}
@@ -158,7 +187,7 @@ function RouteEditor({ route, onSave, onDelete }: {
               <label className="text-[10px] text-zinc-500 mb-1 block">Keywords (comma-separated)</label>
               <input
                 value={(form.condition.keywords || []).join(", ")}
-                onChange={(e) => setForm({ ...form, condition: { ...form.condition, keywords: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } })}
+                onChange={(e) => setForm({ ...form, condition: { ...form.condition, keywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } })}
                 className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none"
                 placeholder="hello, hi, thanks"
               />
@@ -182,18 +211,48 @@ function RouteEditor({ route, onSave, onDelete }: {
 }
 
 export function ModelRoutingTab() {
+  const { data: configData } = useFetch<Record<string, string>>("/api/config/all");
+  const profileOptions = useMemo(() => parseProviderProfiles(configData?.["ai.provider_profiles"]), [configData]);
+
   const [routes, setRoutes] = useState<ModelRoute[]>([]);
+  const [capabilityRoutes, setCapabilityRoutes] = useState<CapabilityRoutes>({});
   const [loading, setLoading] = useState(true);
+  const [savingCapabilities, setSavingCapabilities] = useState(false);
 
   const loadRoutes = async () => {
     try {
-      const res = await gatewayFetch("/api/config/models/routes");
-      if (res.ok) setRoutes(await res.json());
-    } catch {}
+      const [ruleRes, capabilityRes] = await Promise.all([
+        gatewayFetch("/api/config/models/routes"),
+        gatewayFetch("/api/config/models/routing"),
+      ]);
+      if (ruleRes.ok) setRoutes(await ruleRes.json());
+      if (capabilityRes.ok) setCapabilityRoutes(await capabilityRes.json());
+    } catch {
+      // ignore
+    }
     setLoading(false);
   };
 
-  useEffect(() => { loadRoutes(); }, []);
+  useEffect(() => {
+    loadRoutes();
+  }, []);
+
+  const saveCapabilityRoutes = async () => {
+    setSavingCapabilities(true);
+    try {
+      const res = await gatewayFetch("/api/config/models/routing", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(capabilityRoutes),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      toast.success("Capability defaults saved");
+    } catch {
+      toast.error("Failed to save capability defaults");
+    } finally {
+      setSavingCapabilities(false);
+    }
+  };
 
   const saveRoute = async (route: ModelRoute) => {
     try {
@@ -228,14 +287,19 @@ export function ModelRoutingTab() {
   };
 
   const addDefault = () => {
-    setRoutes([...routes, {
-      name: "",
-      description: "",
-      condition: { type: "keyword", keywords: [] },
-      targetModel: "claude-haiku-3-20250514",
-      priority: 10,
-      enabled: true,
-    }]);
+    setRoutes([
+      ...routes,
+      {
+        name: "",
+        description: "",
+        condition: { type: "keyword", keywords: [] },
+        targetModel: "",
+        targetProvider: "",
+        targetProviderProfileId: "",
+        priority: 10,
+        enabled: true,
+      },
+    ]);
   };
 
   return (
@@ -245,13 +309,62 @@ export function ModelRoutingTab() {
           <Route className="h-5 w-5 text-blue-400" /> Model Routing Rules
         </h2>
         <p className="text-xs text-zinc-500 mt-1">
-          Automatically route messages to different models based on content. Rules are evaluated by priority (highest first). First match wins.
+          Configure provider/model defaults per capability and add conditional message routing rules.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-zinc-200">Capability Defaults</h3>
+        <div className="space-y-2">
+          {CAPABILITIES.map(({ key, label }) => (
+            <div key={key} className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
+              <div className="text-xs text-zinc-400 uppercase tracking-wide">{label}</div>
+              <select
+                value={capabilityRoutes[key]?.providerProfileId || ""}
+                onChange={(e) => {
+                  const profileId = e.target.value;
+                  const profile = profileOptions.find((p) => p.id === profileId);
+                  setCapabilityRoutes((prev) => ({
+                    ...prev,
+                    [key]: {
+                      ...(prev[key] || {}),
+                      providerProfileId: profileId || "",
+                      provider: profile?.provider || "",
+                    },
+                  }));
+                }}
+                className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+              >
+                <option value="">Default provider profile</option>
+                {profileOptions.map((profile) => (
+                  <option key={profile.id} value={profile.id}>{profile.name} ({profile.provider})</option>
+                ))}
+              </select>
+              <input
+                value={capabilityRoutes[key]?.model || ""}
+                onChange={(e) => setCapabilityRoutes((prev) => ({
+                  ...prev,
+                  [key]: {
+                    ...(prev[key] || {}),
+                    model: e.target.value,
+                  },
+                }))}
+                placeholder="Model ID"
+                className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+              />
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-end">
+          <Button size="sm" onClick={saveCapabilityRoutes} disabled={savingCapabilities}>
+            {savingCapabilities ? "Saving..." : "Save Capability Defaults"}
+          </Button>
+        </div>
       </div>
 
       {loading ? (
         <div className="space-y-3">
-          {[1, 2].map(i => <div key={i} className="h-14 bg-white/[0.04] rounded-xl animate-pulse" />)}
+          {[1, 2].map((i) => <div key={i} className="h-14 bg-white/[0.04] rounded-xl animate-pulse" />)}
         </div>
       ) : (
         <div className="space-y-3">
@@ -260,12 +373,13 @@ export function ModelRoutingTab() {
               key={route._id || `new-${i}`}
               route={route}
               onSave={saveRoute}
-              onDelete={route._id ? () => deleteRoute(route._id!) : undefined}
+              onDelete={route._id ? () => deleteRoute(route._id as string) : undefined}
+              profileOptions={profileOptions}
             />
           ))}
           {routes.length === 0 && (
             <div className="text-center py-8 text-zinc-500 text-sm">
-              No routing rules configured. Messages will use the default model.
+              No conditional routing rules configured. Capability defaults will be used.
             </div>
           )}
         </div>

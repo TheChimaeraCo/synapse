@@ -1,6 +1,7 @@
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 const EXTRACTION_PROMPT = `You are a fact extraction system. Analyze the conversation and extract structured facts about the user.
 
@@ -51,28 +52,19 @@ export async function extractKnowledge(
 
     if (!snippet.trim()) return;
 
-    // Get AI config
-    const [apiKey, providerSlug] = await Promise.all([
-      convexClient.query(api.functions.config.get, { key: "ai_api_key" }),
-      convexClient.query(api.functions.config.get, { key: "ai_provider" }),
-    ]);
-
-    const provider = providerSlug || "anthropic";
-    const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
+    const selection = await resolveAiSelection({
+      gatewayId,
+      capability: "summary",
+      message: snippet.slice(0, 1000),
+    });
+    const provider = selection.provider;
+    const key = selection.apiKey || process.env.ANTHROPIC_API_KEY || "";
     if (!key) return;
-
-    const envMap: Record<string, string> = {
-      anthropic: "ANTHROPIC_API_KEY",
-      openai: "OPENAI_API_KEY",
-      google: "GEMINI_API_KEY",
-    };
-    if (envMap[provider]) process.env[envMap[provider]] = key;
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
 
-    // Use cheapest model available
-    const extractModel = provider === "anthropic" ? "claude-haiku-3-20250514" : "claude-haiku-3-20250514";
+    const extractModel = selection.model || "claude-haiku-3-20250514";
     const model = getModel(provider as any, extractModel as any);
     if (!model) return;
 

@@ -1,5 +1,6 @@
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 interface ClassificationResult {
   sameTopic: boolean;
@@ -32,30 +33,17 @@ export async function classifyTopic(
   gatewayId?: string
 ): Promise<ClassificationResult> {
   try {
-    // Use same provider/key as main chat - try gateway config first, fall back to system config
-    const getConfig = async (k: string) => {
-      if (gatewayId) {
-        try {
-          const r = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, { gatewayId: gatewayId as any, key: k });
-          if (r?.value) return r.value;
-        } catch {}
-      }
-      return await convexClient.query(api.functions.config.get, { key: k });
-    };
-    const [providerSlug, apiKey, configuredModel] = await Promise.all([
-      getConfig("ai_provider"),
-      getConfig("ai_api_key"),
-      getConfig("ai_model"),
-    ]);
-
-    const provider = providerSlug || "anthropic";
-    const { getProviderApiKey, hydrateProviderEnv } = await import("./providerSecrets");
-    const key = apiKey || getProviderApiKey(provider) || "";
+    const selection = await resolveAiSelection({
+      gatewayId: gatewayId || undefined,
+      capability: "classifier",
+      message: recentMessages.map((m) => m.content).join("\n").slice(0, 1000),
+    });
+    const provider = selection.provider;
+    const key = selection.apiKey;
     if (!key) {
       console.warn("[TopicClassifier] No API key, defaulting to sameTopic=true");
       return { sameTopic: true };
     }
-    hydrateProviderEnv(provider, key);
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
@@ -63,12 +51,12 @@ export async function classifyTopic(
     const preferredModelId = HAIKU_MODELS[provider] || HAIKU_MODELS.anthropic;
     let resolvedModelId = preferredModelId;
     let model = getModel(provider as any, preferredModelId as any);
-    if (!model && configuredModel) {
-      model = getModel(provider as any, configuredModel as any);
-      if (model) resolvedModelId = configuredModel;
+    if (!model && selection.model) {
+      model = getModel(provider as any, selection.model as any);
+      if (model) resolvedModelId = selection.model;
     }
     if (!model) {
-      console.error(`[TopicClassifier] No classifier model found for provider "${provider}" (tried "${preferredModelId}"${configuredModel ? `, "${configuredModel}"` : ""})`);
+      console.error(`[TopicClassifier] No classifier model found for provider "${provider}" (tried "${preferredModelId}"${selection.model ? `, "${selection.model}"` : ""})`);
       return { sameTopic: true };
     }
 

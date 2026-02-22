@@ -2,6 +2,7 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { reflectOnConversation } from "@/lib/soulReflection";
+import { resolveAiSelection } from "@/lib/aiRouting";
 
 const SUMMARY_MODELS: Record<string, string> = {
   anthropic: "claude-3-haiku-20240307",
@@ -79,42 +80,29 @@ export async function summarizeConversation(
       .map((m: any) => `${m.role}: ${m.content}`)
       .join("\n\n");
 
-    // Use AI to summarize via pi-ai (same as main chat/classifier)
-    const getConfig = async (k: string) => {
-      if (convo.gatewayId) {
-        try {
-          const r = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, { gatewayId: convo.gatewayId, key: k });
-          if (r?.value) return r.value;
-        } catch {}
-      }
-      return await convexClient.query(api.functions.config.get, { key: k });
-    };
-
-    const [providerSlug, apiKey, configuredModel] = await Promise.all([
-      getConfig("ai_provider"),
-      getConfig("ai_api_key"),
-      getConfig("ai_model"),
-    ]);
-    const provider = providerSlug || "anthropic";
-    const { getProviderApiKey, hydrateProviderEnv } = await import("./providerSecrets");
-    const key = apiKey || getProviderApiKey(provider) || "";
+    const selection = await resolveAiSelection({
+      gatewayId: convo.gatewayId || undefined,
+      capability: "summary",
+      message: formatted.slice(0, 1000),
+    });
+    const provider = selection.provider;
+    const key = selection.apiKey;
     if (!key) {
       console.error("[conversationSummarizer] No API key, skipping summarization");
       return;
     }
-    hydrateProviderEnv(provider, key);
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
     const preferredModelId = SUMMARY_MODELS[provider] || SUMMARY_MODELS.anthropic;
     let resolvedModelId = preferredModelId;
     let model = getModel(provider as any, preferredModelId as any);
-    if (!model && configuredModel) {
-      model = getModel(provider as any, configuredModel as any);
-      if (model) resolvedModelId = configuredModel;
+    if (!model && selection.model) {
+      model = getModel(provider as any, selection.model as any);
+      if (model) resolvedModelId = selection.model;
     }
     if (!model) {
-      console.error(`[conversationSummarizer] No summary model found (tried "${preferredModelId}"${configuredModel ? `, "${configuredModel}"` : ""})`);
+      console.error(`[conversationSummarizer] No summary model found (tried "${preferredModelId}"${selection.model ? `, "${selection.model}"` : ""})`);
       return;
     }
     console.log(`[conversationSummarizer] Using ${provider}:${resolvedModelId}`);

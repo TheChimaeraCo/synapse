@@ -24,6 +24,11 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [transcribing, setTranscribing] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceAwaitingReply, setVoiceAwaitingReply] = useState(false);
+  const [voiceSettings, setVoiceSettings] = useState({
+    autoRead: true,
+    autoTranscribe: true,
+    maxTextLength: 5000,
+  });
   const [agents, setAgents] = useState<Array<{ _id: string; name: string; slug: string; isActive: boolean }>>([]);
   const [currentAgentId, setCurrentAgentId] = useState<string | null>(null);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
@@ -53,6 +58,25 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     textareaRef.current?.focus();
   }, [sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await gatewayFetch("/api/config/bulk?keys=voice.auto_read,voice.auto_transcribe,voice.max_text_length");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const maxTextRaw = Number.parseInt(data["voice.max_text_length"] || "", 10);
+        setVoiceSettings({
+          autoRead: data["voice.auto_read"] !== "false",
+          autoTranscribe: data["voice.auto_transcribe"] !== "false",
+          maxTextLength: Number.isFinite(maxTextRaw) && maxTextRaw > 0 ? maxTextRaw : 5000,
+        });
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [gatewayId]);
 
   // Fetch agents list and current session agent
   useEffect(() => {
@@ -266,7 +290,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     const response = await gatewayFetch("/api/voice/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.slice(0, 5000) }),
+      body: JSON.stringify({ text: text.slice(0, voiceSettings.maxTextLength) }),
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
@@ -290,7 +314,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       };
       audio.play().catch(reject);
     });
-  }, []);
+  }, [voiceSettings.maxTextLength]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && recording) {
@@ -371,10 +395,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     setVoiceAwaitingReply(false);
     toast.success("Voice mode on");
 
-    if (!isDisabled && !recording && !transcribing) {
+    if (voiceSettings.autoTranscribe && !isDisabled && !recording && !transcribing) {
       await startRecording(true);
     }
-  }, [isDisabled, recording, startRecording, stopRecording, transcribing]);
+  }, [isDisabled, recording, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
 
   // Voice mode turn-taking: when a new assistant message arrives, speak it then listen again.
   useEffect(() => {
@@ -385,20 +409,22 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
 
       setVoiceAwaitingReply(false);
-      try {
-        await playTts(detail.content);
-      } catch (err: any) {
-        toast.error("Voice playback failed: " + (err.message || "unknown error"));
+      if (voiceSettings.autoRead) {
+        try {
+          await playTts(detail.content);
+        } catch (err: any) {
+          toast.error("Voice playback failed: " + (err.message || "unknown error"));
+        }
       }
 
-      if (voiceModeRef.current && !isDisabled) {
+      if (voiceModeRef.current && !isDisabled && voiceSettings.autoTranscribe) {
         await startRecording(true);
       }
     };
 
     window.addEventListener("synapse:assistant_message", handler);
     return () => window.removeEventListener("synapse:assistant_message", handler);
-  }, [isDisabled, playTts, sessionId, startRecording]);
+  }, [isDisabled, playTts, sessionId, startRecording, voiceSettings.autoRead, voiceSettings.autoTranscribe]);
 
   useEffect(() => {
     return () => {

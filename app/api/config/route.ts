@@ -5,11 +5,14 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { logAudit } from "@/lib/auditLog";
 
-const SENSITIVE_KEYS = ["api_key", "token", "secret"];
+const SENSITIVE_KEYS = ["api_key", "token", "secret", "provider_profiles"];
 const CONFIG_KEYS = [
   "ai_provider",
   "ai_model",
   "ai_auth_method",
+  "ai.provider_profiles",
+  "ai.default_profile_id",
+  "ai.capability_routes",
   "telegram_bot_token",
   "setup_complete",
   "agent_name",
@@ -19,6 +22,53 @@ export async function GET(req: NextRequest) {
   try {
     const { gatewayId } = await getGatewayContext(req);
     const convex = getConvexClient();
+    const params = new URL(req.url).searchParams;
+    const prefix = params.get("prefix");
+    const keysParam = params.get("keys");
+    const singleKey = params.get("key");
+
+    if (prefix || keysParam || singleKey) {
+      const result: Record<string, string> = {};
+
+      if (singleKey) {
+        const res = await convex.query(api.functions.gatewayConfig.getWithInheritance, {
+          gatewayId: gatewayId as Id<"gateways">,
+          key: singleKey,
+        });
+        const val = res?.value || null;
+        const isSensitive = SENSITIVE_KEYS.some((s) => singleKey.includes(s));
+        result[singleKey] = isSensitive ? (val ? "configured" : "") : (val || "");
+      }
+
+      if (keysParam) {
+        const keys = keysParam.split(",").map((k) => k.trim()).filter(Boolean);
+        if (keys.length > 0) {
+          const res = await convex.query(api.functions.gatewayConfig.getMultiple, {
+            gatewayId: gatewayId as Id<"gateways">,
+            keys,
+          });
+          for (const key of keys) {
+            const val = res[key] || "";
+            const isSensitive = SENSITIVE_KEYS.some((s) => key.includes(s));
+            result[key] = isSensitive ? (val ? "configured" : "") : val;
+          }
+        }
+      }
+
+      if (prefix) {
+        const all = await convex.query(api.functions.gatewayConfig.getAll, {
+          gatewayId: gatewayId as Id<"gateways">,
+        });
+        for (const [key, value] of Object.entries(all)) {
+          if (!key.startsWith(prefix)) continue;
+          const isSensitive = SENSITIVE_KEYS.some((s) => key.includes(s));
+          result[key] = isSensitive ? (value ? "configured" : "") : value;
+        }
+      }
+
+      return NextResponse.json(result);
+    }
+
     const result: Record<string, string> = {};
 
     for (const key of CONFIG_KEYS) {
@@ -42,6 +92,41 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
+    try {
+      const convex = getConvexClient();
+      const params = new URL(req.url).searchParams;
+      const prefix = params.get("prefix");
+      const keysParam = params.get("keys");
+      const singleKey = params.get("key");
+
+      if (prefix || keysParam || singleKey) {
+        const result: Record<string, string> = {};
+        if (singleKey) {
+          const val = await convex.query(api.functions.config.get, { key: singleKey });
+          const isSensitive = SENSITIVE_KEYS.some((s) => singleKey.includes(s));
+          result[singleKey] = isSensitive ? (val ? "configured" : "") : (val || "");
+        }
+        if (keysParam) {
+          const keys = keysParam.split(",").map((k) => k.trim()).filter(Boolean);
+          if (keys.length > 0) {
+            const vals = await convex.query(api.functions.config.getMultiple, { keys });
+            for (const key of keys) {
+              const val = vals[key] || "";
+              const isSensitive = SENSITIVE_KEYS.some((s) => key.includes(s));
+              result[key] = isSensitive ? (val ? "configured" : "") : val;
+            }
+          }
+        }
+        if (prefix) {
+          const vals = await convex.query(api.functions.config.getByPrefix, { prefix });
+          for (const [key, value] of Object.entries(vals)) {
+            const isSensitive = SENSITIVE_KEYS.some((s) => key.includes(s));
+            result[key] = isSensitive ? (value ? "configured" : "") : value;
+          }
+        }
+        return NextResponse.json(result);
+      }
+    } catch {}
     return handleGatewayError(err);
   }
 }

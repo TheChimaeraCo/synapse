@@ -61,6 +61,21 @@ export const getAll = query({
     for (const row of rows) {
       result[row.key] = await decodeConfigForRead(row.key, row.value);
     }
+
+    // Merge inherited config from master gateway without overwriting local values.
+    const allGateways = await ctx.db.query("gateways").collect();
+    const master = allGateways.find((g) => g.isMaster === true);
+    if (master && master._id !== args.gatewayId) {
+      const masterRows = await ctx.db
+        .query("gatewayConfig")
+        .withIndex("by_gatewayId", (q) => q.eq("gatewayId", master._id))
+        .collect();
+      for (const row of masterRows) {
+        if (result[row.key] !== undefined) continue;
+        result[row.key] = await decodeConfigForRead(row.key, row.value);
+      }
+    }
+
     return result;
   },
 });

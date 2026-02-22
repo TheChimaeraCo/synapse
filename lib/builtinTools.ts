@@ -951,34 +951,27 @@ const spawnAgent: BuiltinTool = {
       const agent = await convexClient.query(api.functions.agents.get, { id: context.agentId as any });
       if (!agent) return "Error: parent agent not found";
 
-      // Get AI config (use gateway config with inheritance, fall back to systemConfig)
-      const getConfig = async (key: string) => {
-        try {
-          const result = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
-            gatewayId: agent.gatewayId,
-            key,
-          });
-          return result?.value || null;
-        } catch {
-          return await convexClient.query(api.functions.config.get, { key });
-        }
-      };
+      const toolOverride = (context as any).__toolModelOverride as {
+        providerProfileId?: string;
+        provider?: string;
+        model?: string;
+      } | undefined;
+      const { resolveAiSelection } = await import("@/lib/aiRouting");
+      const resolved = await resolveAiSelection({
+        gatewayId: agent.gatewayId as any,
+        capability: "tool_use",
+        message: args.task,
+        agentModel: agent.model,
+        routeOverride: {
+          providerProfileId: toolOverride?.providerProfileId,
+          provider: toolOverride?.provider,
+          model: args.model || toolOverride?.model,
+        },
+      });
 
-      const [providerSlug, apiKey, configModel] = await Promise.all([
-        getConfig("ai_provider"),
-        getConfig("ai_api_key"),
-        getConfig("ai_model"),
-      ]);
-
-      const provider = providerSlug || "anthropic";
-      const key = apiKey || process.env.ANTHROPIC_API_KEY || "";
-      // Default models per provider
-      const providerDefaults: Record<string, string> = {
-        anthropic: "claude-sonnet-4-20250514",
-        openai: "gpt-4o-mini",
-        google: "gemini-2.0-flash",
-      };
-      const modelId = args.model || configModel || providerDefaults[provider] || "claude-sonnet-4-20250514";
+      const provider = resolved.provider;
+      const key = resolved.apiKey;
+      const modelId = args.model || resolved.model;
 
       if (!key) return "Error: no API key configured. Set ai_api_key in gateway config.";
 
@@ -1000,14 +993,6 @@ const spawnAgent: BuiltinTool = {
       const availableTools = args.tools
         ? allTools.filter(t => args.tools!.includes(t.name) && !BLOCKED_TOOLS.includes(t.name))
         : allTools.filter(t => !BLOCKED_TOOLS.includes(t.name));
-
-      // Set env var for pi-ai (same pattern as main chat route)
-      const envMap: Record<string, string> = {
-        anthropic: "ANTHROPIC_API_KEY",
-        openai: "OPENAI_API_KEY",
-        google: "GEMINI_API_KEY",
-      };
-      if (envMap[provider]) process.env[envMap[provider]] = key;
 
       // Run the sub-agent - sync by default, async if requested
       const log = async (entry: string) => {
