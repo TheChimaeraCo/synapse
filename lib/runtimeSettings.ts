@@ -44,6 +44,10 @@ const RUNTIME_KEYS = [
   "git.github_host",
   "modules.registry",
   "modules.routes",
+  "sync.obsidian.livesync.enabled",
+  "sync.obsidian.livesync.couchdb_url",
+  "sync.obsidian.livesync.username",
+  "sync.obsidian.livesync.upstream_username",
 ] as const;
 
 async function getGatewayRuntimeConfig(gatewayId: Id<"gateways">): Promise<Record<string, string>> {
@@ -155,6 +159,12 @@ export async function buildRuntimeSettingsSummary(gatewayId: Id<"gateways">): Pr
     } catch {}
   }
   lines.push(`Modules: installed=${moduleCount}, enabled=${moduleEnabledCount}, routed=${moduleRouteCount}`);
+
+  const liveSyncEnabled = bool(cfg["sync.obsidian.livesync.enabled"]);
+  const liveSyncCouchUrl = nonEmpty(cfg["sync.obsidian.livesync.couchdb_url"]);
+  const liveSyncUser = nonEmpty(cfg["sync.obsidian.livesync.username"]);
+  const liveSyncUpstreamUser = nonEmpty(cfg["sync.obsidian.livesync.upstream_username"]);
+  lines.push(`Obsidian LiveSync proxy: enabled=${liveSyncEnabled}, couchdb_url=${liveSyncCouchUrl ? "configured" : "missing"}, auth_user=${liveSyncUser ? "configured" : "missing"}, upstream_user=${liveSyncUpstreamUser ? "configured" : "default"}`);
 
   return `\n\n## Runtime Settings Snapshot\n${lines.map((line) => `- ${line}`).join("\n")}`;
 }

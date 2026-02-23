@@ -5,7 +5,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { logAudit } from "@/lib/auditLog";
 
-const SENSITIVE_KEYS = ["api_key", "token", "secret", "private_key", "provider_profiles", "oauth_credentials"];
+const SENSITIVE_KEYS = ["api_key", "token", "secret", "private_key", "password", "provider_profiles", "oauth_credentials"];
 const CONFIG_KEYS = [
   "ai_provider",
   "ai_model",
@@ -35,6 +35,12 @@ const CONFIG_KEYS = [
   "git.github_app_private_key",
   "modules.registry",
   "modules.routes",
+  "sync.obsidian.livesync.enabled",
+  "sync.obsidian.livesync.couchdb_url",
+  "sync.obsidian.livesync.username",
+  "sync.obsidian.livesync.password",
+  "sync.obsidian.livesync.upstream_username",
+  "sync.obsidian.livesync.upstream_password",
 ];
 
 function requireConfigManager(role: string) {

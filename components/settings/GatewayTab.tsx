@@ -12,14 +12,16 @@ import { useState } from "react";
 export function GatewayTab() {
   const { get, set, save: saveGateway, saving: savingGateway, loading: loadingGateway } = useConfigSettings("gateway.");
   const { get: getGit, set: setGit, save: saveGit, saving: savingGit, loading: loadingGit } = useConfigSettings("git.");
+  const { get: getSync, set: setSync, save: saveSync, saving: savingSync, loading: loadingSync } = useConfigSettings("sync.obsidian.livesync.");
   const [checkingGit, setCheckingGit] = useState(false);
   const [gitStatus, setGitStatus] = useState<any>(null);
 
-  if (loadingGateway || loadingGit) return <div className="text-zinc-400">Loading...</div>;
+  if (loadingGateway || loadingGit || loadingSync) return <div className="text-zinc-400">Loading...</div>;
 
   const save = async () => {
     await saveGateway();
     await saveGit();
+    await saveSync();
   };
 
   const checkGitStatus = async () => {
@@ -254,8 +256,75 @@ export function GatewayTab() {
         </CardContent>
       </Card>
 
-      <Button onClick={save} disabled={savingGateway || savingGit}>
-        {savingGateway || savingGit ? "Saving..." : "Save Changes"}
+      <Card className="bg-white/[0.04] border-white/[0.06]">
+        <CardHeader>
+          <CardTitle className="text-sm text-zinc-300">Obsidian LiveSync Proxy</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Toggle
+            checked={getSync("enabled", "false") === "true"}
+            onChange={(v) => setSync("enabled", v ? "true" : "false")}
+            label="Enable LiveSync CouchDB proxy"
+          />
+          <div>
+            <label className="text-sm text-zinc-400 mb-1 block">CouchDB Base URL</label>
+            <Input
+              value={getSync("couchdb_url")}
+              onChange={(e) => setSync("couchdb_url", e.target.value)}
+              placeholder="http://localhost:5984"
+              className="bg-white/[0.06] border-white/[0.08] text-white"
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-zinc-400 mb-1 block">Proxy Username</label>
+              <Input
+                value={getSync("username")}
+                onChange={(e) => setSync("username", e.target.value)}
+                placeholder="obsidian"
+                className="bg-white/[0.06] border-white/[0.08] text-white"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-zinc-400 mb-1 block">Proxy Password</label>
+              <Input
+                type="password"
+                value={getSync("password")}
+                onChange={(e) => setSync("password", e.target.value)}
+                placeholder="********"
+                className="bg-white/[0.06] border-white/[0.08] text-white"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-zinc-400 mb-1 block">Upstream Username (optional)</label>
+              <Input
+                value={getSync("upstream_username")}
+                onChange={(e) => setSync("upstream_username", e.target.value)}
+                placeholder="Leave blank to reuse proxy username"
+                className="bg-white/[0.06] border-white/[0.08] text-white"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-zinc-400 mb-1 block">Upstream Password (optional)</label>
+              <Input
+                type="password"
+                value={getSync("upstream_password")}
+                onChange={(e) => setSync("upstream_password", e.target.value)}
+                placeholder="Leave blank to reuse proxy password"
+                className="bg-white/[0.06] border-white/[0.08] text-white"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">
+            LiveSync URL format: <code>/sync/obsidian/livesync/&lt;gateway-slug&gt;/</code>
+          </p>
+        </CardContent>
+      </Card>
+
+      <Button onClick={save} disabled={savingGateway || savingGit || savingSync}>
+        {savingGateway || savingGit || savingSync ? "Saving..." : "Save Changes"}
       </Button>
     </div>
   );
