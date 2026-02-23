@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     try {
       const peek = await bodyClone.json();
       channelIdForRateLimit = peek.channelId;
-    } catch {}
+    } catch { }
 
     if (channelIdForRateLimit) {
       const rl = checkRateLimit(channelIdForRateLimit);
@@ -183,7 +183,15 @@ export async function POST(req: NextRequest) {
     };
 
     const options: any = { maxTokens: config.agent.maxTokens || 4096, apiKey: config.key };
+    options.signal = req.signal;
     if (config.agent.temperature !== undefined) options.temperature = config.agent.temperature;
+
+    class ClientAbortError extends Error {
+      constructor() {
+        super("Client disconnected");
+        this.name = "ClientAbortError";
+      }
+    }
 
     if (ctx.stream) {
       // SSE streaming
@@ -192,7 +200,15 @@ export async function POST(req: NextRequest) {
 
       const stream = new ReadableStream({
         async start(controller) {
+          let clientAborted = req.signal.aborted;
+          const abortHandler = () => { clientAborted = true; };
+          req.signal.addEventListener("abort", abortHandler);
+          const throwIfAborted = () => {
+            if (clientAborted || req.signal.aborted) throw new ClientAbortError();
+          };
+
           try {
+            throwIfAborted();
             let usage = { input: 0, output: 0 };
             let fullContent = "";
             const trimmedPrefix = (config.responsePrefix || "").trim();
@@ -208,6 +224,13 @@ export async function POST(req: NextRequest) {
 
               const aiStream = streamSimple(model, aiContext, options);
               for await (const event of aiStream) {
+                if (clientAborted || req.signal.aborted) {
+                  if (typeof (aiStream as any).return === "function") {
+                    try { await (aiStream as any).return(); } catch { }
+                  }
+                  throw new ClientAbortError();
+                }
+
                 if (event.type === "text_delta") {
                   roundText += event.delta;
                   controller.enqueue(encoder.encode(sseEvent({ type: "token", content: event.delta })));
@@ -222,6 +245,7 @@ export async function POST(req: NextRequest) {
 
               fullContent += roundText;
               if (toolCalls.length === 0) break;
+              throwIfAborted();
 
               controller.enqueue(encoder.encode(sseEvent({ type: "tool_use", tools: toolCalls.map((t: any) => t.name) })));
 
@@ -232,6 +256,7 @@ export async function POST(req: NextRequest) {
                 userRole: "viewer",
               };
               const toolResults = await executeTools(toolCalls, toolContext, config.allToolDefs as any);
+              throwIfAborted();
               const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
               if (switchedConvoId) {
                 responseConversationId = switchedConvoId;
@@ -258,6 +283,7 @@ export async function POST(req: NextRequest) {
             }
 
             // Store response
+            throwIfAborted();
             const finalContent = applyResponsePrefix(fullContent, config.responsePrefix);
             await convexClient.mutation(api.functions.messages.create, {
               gatewayId: ctx.gatewayId, sessionId: ctx.sessionId, agentId: ctx.agentId,
@@ -267,8 +293,15 @@ export async function POST(req: NextRequest) {
             controller.enqueue(encoder.encode(sseEvent({ type: "done", sessionId: ctx.sessionId, model: modelId, tokens: usage })));
             controller.close();
           } catch (err: any) {
+            if (err instanceof ClientAbortError || req.signal.aborted) {
+              console.log("[API Channel] Client aborted request; stopping api-message generation.");
+              return;
+            }
             controller.enqueue(encoder.encode(sseEvent({ type: "error", message: err.message || "Stream error" })));
             controller.close();
+          } finally {
+            req.signal.removeEventListener("abort", abortHandler);
+            try { controller.close(); } catch { }
           }
         },
       });

@@ -182,16 +182,6 @@ export default function SetupPage() {
     }
   };
 
-  if (setupData === undefined) {
-    return (
-      <div className="min-h-screen bg-transparent flex items-center justify-center">
-        <div className="animate-pulse text-zinc-500">Loading...</div>
-      </div>
-    );
-  }
-
-  if (setupData?.complete === true) return null;
-
   const handleCreateAccount = async () => {
     if (!name || !email || !password) {
       toast.error("Please fill in all fields");
@@ -614,6 +604,17 @@ export default function SetupPage() {
       setLoading(false);
     }
   };
+
+  // Keep all hooks above this point to preserve a stable hook call order.
+  if (setupData === undefined) {
+    return (
+      <div className="min-h-screen bg-transparent flex items-center justify-center">
+        <div className="animate-pulse text-zinc-500">Loading...</div>
+      </div>
+    );
+  }
+
+  if (setupData?.complete === true) return null;
 
   const stepTitles = ["Create Account", "Create Gateway", "AI Provider", "Connect Telegram"];
 
