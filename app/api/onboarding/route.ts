@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return NextResponse.json({ ok: true, agentName: result.agentName });
+      return NextResponse.json({ ok: true, agentName: result.agentName, gatewayId });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

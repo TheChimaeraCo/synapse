@@ -199,19 +199,26 @@ export default function OnboardingPage() {
       });
       const data = await res.json();
       if (data.ok) {
-        // Ensure gateway is selected before navigating
-        const gwId = localStorage.getItem("synapse-active-gateway");
-        if (!gwId) {
-          try {
-            const gwRes = await gatewayFetch("/api/gateways");
-            const gwData = await gwRes.json();
-            if (gwData.gateways?.length > 0) {
-              const id = gwData.gateways[0]._id;
-              localStorage.setItem("synapse-active-gateway", id);
-              document.cookie = `synapse-active-gateway=${id}; path=/; max-age=31536000; samesite=lax`;
-            }
-          } catch {}
+        // Set active gateway deterministically from server context.
+        const gatewayId = data.gatewayId || localStorage.getItem("synapse-active-gateway");
+        if (!gatewayId) {
+          setCompleting(false);
+          setMessages((prev) => [...prev, {
+            role: "assistant",
+            content: "I completed onboarding, but couldn't resolve your gateway. Please refresh and try again.",
+          }]);
+          return;
         }
+        localStorage.setItem("synapse-active-gateway", gatewayId);
+        document.cookie = `synapse-active-gateway=${gatewayId}; path=/; max-age=31536000; samesite=lax`;
+        window.dispatchEvent(new CustomEvent("synapse:gateway-changed", { detail: { gatewayId } }));
+        try {
+          await gatewayFetch("/api/gateways/switch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ gatewayId }),
+          });
+        } catch {}
         // Brief pause for dramatic effect
         await new Promise((r) => setTimeout(r, 1500));
         router.push("/chat");

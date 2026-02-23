@@ -59,10 +59,16 @@ export async function GET(req: NextRequest) {
 
 // POST: set multiple config keys at once
 export async function POST(req: NextRequest) {
+  let entries: Record<string, string> = {};
+  try {
+    entries = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
   try {
     const { gatewayId } = await getGatewayContext(req);
     const convex = getConvexClient();
-    const entries: Record<string, string> = await req.json();
     for (const [key, value] of Object.entries(entries)) {
       await convex.mutation(api.functions.gatewayConfig.set, {
         gatewayId: gatewayId as Id<"gateways">,
@@ -78,7 +84,6 @@ export async function POST(req: NextRequest) {
       const session = await getAuthSession();
       if (!session) return unauthorized();
       const convex = getConvexClient();
-      const entries: Record<string, string> = await req.json();
       for (const [key, value] of Object.entries(entries)) {
         await convex.mutation(api.functions.config.set, { key, value: String(value) });
       }

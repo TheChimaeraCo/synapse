@@ -255,6 +255,14 @@ export default function SetupPage() {
       setCreatedGatewayId(data.gatewayId);
       localStorage.setItem("synapse-active-gateway", data.gatewayId);
       document.cookie = `synapse-active-gateway=${data.gatewayId}; path=/; max-age=31536000; samesite=lax`;
+      window.dispatchEvent(new CustomEvent("synapse:gateway-changed", { detail: { gatewayId: data.gatewayId } }));
+      try {
+        await gatewayFetch("/api/gateways/switch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gatewayId: data.gatewayId }),
+        });
+      } catch {}
       setStep(3);
     } catch (err: any) {
       toast.error(err.message || "Something went wrong");

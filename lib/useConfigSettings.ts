@@ -9,8 +9,13 @@ export function useConfigSettings(prefix: string) {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await gatewayFetch(`/api/config/bulk?prefix=${prefix}`);
+      let res = await gatewayFetch(`/api/config/bulk?prefix=${prefix}`);
+      if (!res.ok && (res.status === 401 || res.status === 403)) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        res = await gatewayFetch(`/api/config/bulk?prefix=${prefix}`);
+      }
       if (res.ok) {
         const data = await res.json();
         setConfig(data);
@@ -20,7 +25,14 @@ export function useConfigSettings(prefix: string) {
     }
   }, [prefix]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+    const onGatewayChanged = () => { void load(); };
+    window.addEventListener("synapse:gateway-changed", onGatewayChanged);
+    return () => {
+      window.removeEventListener("synapse:gateway-changed", onGatewayChanged);
+    };
+  }, [load]);
 
   const get = (key: string, defaultValue = "") => config[`${prefix}${key}`] ?? defaultValue;
   const set = (key: string, value: string) => setConfig(prev => ({ ...prev, [`${prefix}${key}`]: value }));
@@ -28,11 +40,19 @@ export function useConfigSettings(prefix: string) {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await gatewayFetch("/api/config/bulk", {
+      let res = await gatewayFetch("/api/config/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
       });
+      if (!res.ok && (res.status === 401 || res.status === 403)) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        res = await gatewayFetch("/api/config/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        });
+      }
       if (!res.ok) throw new Error();
       toast.success("Settings saved");
     } catch {

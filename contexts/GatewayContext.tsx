@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 
 export interface Gateway {
   _id: string;
@@ -46,11 +47,19 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const pathname = usePathname();
   const router = useRouter();
+  const { status } = useSession();
 
   const fetchGateways = useCallback(async () => {
+    if (status === "loading") return;
     try {
       const res = await fetch("/api/gateways");
-      if (!res.ok) return;
+      if (!res.ok) {
+        // Session can still be settling right after login/setup/onboarding.
+        if (res.status === 401 && status === "authenticated") {
+          setTimeout(() => { void fetchGateways(); }, 1200);
+        }
+        return;
+      }
       const data = await res.json();
       const list: Gateway[] = data.gateways || [];
       setGateways(list);
@@ -83,11 +92,12 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [status]);
 
   useEffect(() => {
-    fetchGateways();
-  }, [fetchGateways]);
+    if (status === "loading") return;
+    void fetchGateways();
+  }, [fetchGateways, status]);
 
   // Redirect to /gateways if no gateways and not on a no-gateway route
   useEffect(() => {
