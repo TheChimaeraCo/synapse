@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
+import { GatewayError, getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { getConvexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+
+function requireConfigManager(role: string) {
+  if (role !== "owner" && role !== "admin") {
+    throw new GatewayError(403, "Owner/admin role required");
+  }
+}
 
 // GET: fetch multiple config keys by prefix or list
 export async function GET(req: NextRequest) {
@@ -67,7 +73,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { gatewayId } = await getGatewayContext(req);
+    const { gatewayId, role } = await getGatewayContext(req);
+    requireConfigManager(role);
     const convex = getConvexClient();
     for (const [key, value] of Object.entries(entries)) {
       await convex.mutation(api.functions.gatewayConfig.set, {
@@ -83,6 +90,10 @@ export async function POST(req: NextRequest) {
       const { getAuthSession, unauthorized } = await import("@/lib/api-auth");
       const session = await getAuthSession();
       if (!session) return unauthorized();
+      const role = session.role as string;
+      if (role !== "owner" && role !== "admin") {
+        return NextResponse.json({ error: "Owner/admin role required" }, { status: 403 });
+      }
       const convex = getConvexClient();
       for (const [key, value] of Object.entries(entries)) {
         await convex.mutation(api.functions.config.set, { key, value: String(value) });

@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
+import { GatewayError, getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { BUILTIN_TOOLS, TOOL_REGISTRY } from "@/lib/builtinTools";
+
+function requireToolManager(role: string) {
+  if (role !== "owner" && role !== "admin") {
+    throw new GatewayError(403, "Owner/admin role required");
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -43,7 +49,8 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    await getGatewayContext(req);
+    const { role } = await getGatewayContext(req);
+    requireToolManager(role);
     const { id, enabled, requiresApproval, providerProfileId, provider, model } = await req.json();
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });

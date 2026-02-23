@@ -5,6 +5,7 @@ import type { ToolCall, Tool } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import * as vm from "vm";
 import { createHash } from "crypto";
+import { readModuleConfig, resolveModuleToolRoute } from "@/lib/modules/config";
 
 // Tool cache TTLs in milliseconds
 const TOOL_CACHE_TTLS: Record<string, number> = {
@@ -104,6 +105,12 @@ function parseList(value?: string | null): string[] {
     .split(",")
     .map((v) => v.trim().toLowerCase())
     .filter(Boolean);
+}
+
+function cleanString(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
 
 function normalizeToolPolicy(value?: string | null): ToolPolicyMode {
@@ -384,6 +391,10 @@ export async function executeTools(
   const results: ToolResult[] = [];
   const approvalState = await getSessionApprovalState(context);
   const sandboxPolicy = await loadSandboxPolicy(context.gatewayId);
+  const moduleConfig = await readModuleConfig(context.gatewayId).catch(() => ({
+    installedModules: [],
+    routes: {},
+  }));
 
   // Build a map of DB tools by name
   const dbToolMap = new Map<string, {
@@ -408,11 +419,22 @@ export async function executeTools(
   for (const call of toolCalls) {
     const previousToolOverride = (context as any).__toolModelOverride;
     const dbTool = dbToolMap.get(call.name);
+    const moduleRoute = resolveModuleToolRoute(
+      call.name,
+      moduleConfig.installedModules,
+      moduleConfig.routes,
+    );
+    const dbProviderProfileId = cleanString(dbTool?.providerProfileId);
+    const dbProvider = cleanString(dbTool?.provider);
+    const dbModel = cleanString(dbTool?.model);
+    const moduleProviderProfileId = cleanString(moduleRoute?.providerProfileId);
+    const moduleProvider = cleanString(moduleRoute?.provider);
+    const moduleModel = cleanString(moduleRoute?.model);
     const override = {
       toolName: call.name,
-      providerProfileId: dbTool?.providerProfileId,
-      provider: dbTool?.provider,
-      model: dbTool?.model,
+      providerProfileId: dbProviderProfileId || moduleProviderProfileId,
+      provider: dbProvider || moduleProvider,
+      model: dbModel || moduleModel,
     };
     if (override.providerProfileId || override.provider || override.model) {
       (context as any).__toolModelOverride = override;

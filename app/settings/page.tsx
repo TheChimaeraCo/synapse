@@ -33,6 +33,7 @@ const ChannelsTab = lazyTab(() => import("@/components/settings/ChannelsTab"), "
 const MessagesTab = lazyTab(() => import("@/components/settings/MessagesTab"), "MessagesTab");
 const UsageBudgetTab = lazyTab(() => import("@/components/settings/UsageBudgetTab"), "UsageBudgetTab");
 const ToolsTab = lazyTab(() => import("@/components/settings/ToolsTab"), "ToolsTab");
+const ModulesTab = lazyTab(() => import("@/components/settings/ModulesTab"), "ModulesTab");
 const SkillsTab = lazyTab(() => import("@/components/settings/SkillsTab"), "SkillsTab");
 const SessionsTab = lazyTab(() => import("@/components/settings/SessionsTab"), "SessionsTab");
 const VoiceTab = lazyTab(() => import("@/components/settings/VoiceTab"), "VoiceTab");
@@ -77,6 +78,7 @@ const tabs = [
   { id: "messages", label: "Messages", icon: MessageSquare },
   { id: "usage", label: "Usage & Budget", icon: BarChart3 },
   { id: "tools", label: "Tools", icon: Wrench },
+  { id: "modules", label: "Modules", icon: Package },
   { id: "skills", label: "Skills", icon: Puzzle },
   { id: "sessions", label: "Sessions", icon: Clock },
   { id: "voice", label: "Voice / TTS", icon: Mic },
@@ -129,7 +131,7 @@ const categories: Category[] = [
     id: "tools",
     label: "Tools & Skills",
     icon: Wrench,
-    tabs: ["tools", "skills", "plugins", "browser", "sandbox"],
+    tabs: ["tools", "modules", "skills", "plugins", "browser", "sandbox"],
   },
   {
     id: "automation",
@@ -294,6 +296,7 @@ export default function SettingsPage() {
           {activeTab === "messages" && <MessagesTab />}
           {activeTab === "usage" && <UsageBudgetTab />}
           {activeTab === "tools" && <ToolsTab />}
+          {activeTab === "modules" && <ModulesTab />}
           {activeTab === "skills" && <SkillsTab />}
           {activeTab === "sessions" && <SessionsTab />}
           {activeTab === "voice" && <VoiceTab />}

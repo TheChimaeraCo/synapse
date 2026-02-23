@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
+import { GatewayError, getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { getConvexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import { DEFAULT_ROUTING } from "@/lib/modelRouter";
@@ -14,6 +14,12 @@ import {
   type RouteTarget,
 } from "@/lib/aiRoutingConfig";
 import type { Id } from "@/convex/_generated/dataModel";
+
+function requireModelManager(role: string) {
+  if (role !== "owner" && role !== "admin") {
+    throw new GatewayError(403, "Owner/admin role required");
+  }
+}
 
 function clean(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -115,7 +121,8 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const { gatewayId } = await getGatewayContext(req);
+    const { gatewayId, role } = await getGatewayContext(req);
+    requireModelManager(role);
     const convex = getConvexClient();
     const body = await req.json();
     const routes = withDefaults(normalizeBodyToRoutes(body));

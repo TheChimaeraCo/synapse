@@ -16,7 +16,15 @@ export type AuditAction =
   | "tool.enable"
   | "tool.disable"
   | "gateway.create"
-  | "gateway.update";
+  | "gateway.update"
+  | "module.install"
+  | "module.uninstall"
+  | "module.enable"
+  | "module.disable"
+  | "module.import"
+  | "module.import_blocked"
+  | "module.export"
+  | "module.route";
 
 export type AuditResource =
   | "user"
@@ -25,7 +33,8 @@ export type AuditResource =
   | "channel"
   | "member"
   | "tool"
-  | "gateway";
+  | "gateway"
+  | "module";
 
 export async function logAudit(
   userId: string | undefined,

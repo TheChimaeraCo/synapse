@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
+import { GatewayError, getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { getConvexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { logAudit } from "@/lib/auditLog";
 
-const SENSITIVE_KEYS = ["api_key", "token", "secret", "provider_profiles", "oauth_credentials"];
+const SENSITIVE_KEYS = ["api_key", "token", "secret", "private_key", "provider_profiles", "oauth_credentials"];
 const CONFIG_KEYS = [
   "ai_provider",
   "ai_model",
@@ -28,7 +28,20 @@ const CONFIG_KEYS = [
   "proactive.quiet_hours_end",
   "proactive.timezone",
   "proactive.allowed_platforms",
+  "git.auth_mode",
+  "git.github_host",
+  "git.github_app_id",
+  "git.github_app_installation_id",
+  "git.github_app_private_key",
+  "modules.registry",
+  "modules.routes",
 ];
+
+function requireConfigManager(role: string) {
+  if (role !== "owner" && role !== "admin") {
+    throw new GatewayError(403, "Owner/admin role required");
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -154,14 +167,14 @@ export async function POST(req: NextRequest) {
 
     // Try gateway-scoped set first (requires auth)
     try {
-      const { gatewayId } = await getGatewayContext(req);
+      const ctx = await getGatewayContext(req);
+      requireConfigManager(ctx.role);
       await convex.mutation(api.functions.gatewayConfig.set, {
-        gatewayId: gatewayId as Id<"gateways">,
+        gatewayId: ctx.gatewayId as Id<"gateways">,
         key,
         value: String(value),
       });
-      const ctx = await getGatewayContext(req).catch(() => null);
-      logAudit(ctx?.userId, "config.change", "config", `${key} updated`, key);
+      logAudit(ctx.userId, "config.change", "config", `${key} updated`, key);
       return NextResponse.json({ success: true });
     } catch (gwErr: any) {
       // Only fall back to systemConfig during initial setup (no users exist yet)

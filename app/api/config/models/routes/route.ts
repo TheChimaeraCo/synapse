@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
+import { GatewayError, getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { getConvexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+
+function requireModelManager(role: string) {
+  if (role !== "owner" && role !== "admin") {
+    throw new GatewayError(403, "Owner/admin role required");
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -19,7 +25,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { gatewayId } = await getGatewayContext(req);
+    const { gatewayId, role } = await getGatewayContext(req);
+    requireModelManager(role);
     const convex = getConvexClient();
     const body = await req.json();
     const id = await convex.mutation(api.functions.modelRoutes.create, {
@@ -41,7 +48,8 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    await getGatewayContext(req);
+    const { role } = await getGatewayContext(req);
+    requireModelManager(role);
     const convex = getConvexClient();
     const body = await req.json();
     await convex.mutation(api.functions.modelRoutes.update, {
@@ -63,7 +71,8 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    await getGatewayContext(req);
+    const { role } = await getGatewayContext(req);
+    requireModelManager(role);
     const convex = getConvexClient();
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");

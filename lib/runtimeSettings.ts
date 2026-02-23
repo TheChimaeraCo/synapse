@@ -40,6 +40,10 @@ const RUNTIME_KEYS = [
   "sandbox.disk_limit",
   "sandbox.docker_image",
   "sandbox.scope",
+  "git.auth_mode",
+  "git.github_host",
+  "modules.registry",
+  "modules.routes",
 ] as const;
 
 async function getGatewayRuntimeConfig(gatewayId: Id<"gateways">): Promise<Record<string, string>> {
@@ -123,6 +127,34 @@ export async function buildRuntimeSettingsSummary(gatewayId: Id<"gateways">): Pr
   const sandboxScope = nonEmpty(cfg["sandbox.scope"]) || "session";
   lines.push(`Sandbox resources: cpu=${sandboxCpu}, memory=${sandboxMem}MB, disk=${sandboxDisk}MB, scope=${sandboxScope}`);
   if (nonEmpty(cfg["sandbox.docker_image"])) lines.push(`Sandbox docker image configured`);
+
+  const gitMode = nonEmpty(cfg["git.auth_mode"]) || "cli_oauth";
+  const gitHost = nonEmpty(cfg["git.github_host"]) || "github.com";
+  lines.push(`Git auth: mode=${gitMode}, host=${gitHost}`);
+
+  const modulesRaw = nonEmpty(cfg["modules.registry"]);
+  const moduleRoutesRaw = nonEmpty(cfg["modules.routes"]);
+  let moduleCount = 0;
+  let moduleEnabledCount = 0;
+  let moduleRouteCount = 0;
+  if (modulesRaw) {
+    try {
+      const parsed = JSON.parse(modulesRaw);
+      if (Array.isArray(parsed)) {
+        moduleCount = parsed.length;
+        moduleEnabledCount = parsed.filter((m: any) => m?.enabled !== false).length;
+      }
+    } catch {}
+  }
+  if (moduleRoutesRaw) {
+    try {
+      const parsed = JSON.parse(moduleRoutesRaw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        moduleRouteCount = Object.keys(parsed).length;
+      }
+    } catch {}
+  }
+  lines.push(`Modules: installed=${moduleCount}, enabled=${moduleEnabledCount}, routed=${moduleRouteCount}`);
 
   return `\n\n## Runtime Settings Snapshot\n${lines.map((line) => `- ${line}`).join("\n")}`;
 }

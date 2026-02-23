@@ -7,6 +7,12 @@ import * as fs from "fs";
 import * as path from "path";
 import { lookup } from "dns/promises";
 import { isIP } from "net";
+import {
+  buildGitAuthEnv,
+  commandLikelyUsesGit,
+  getGitAuthConfig,
+  getGitHubAppInstallationToken,
+} from "@/lib/githubAuth";
 
 /**
  * A built-in tool that agents can invoke during chat.
@@ -1046,6 +1052,18 @@ const shellExec: BuiltinTool = {
 
     const timeout = Math.min(args.timeout || 30000, 60000);
     const cwd = args.cwd || await getWorkspaceRoot(context.gatewayId);
+    const env: NodeJS.ProcessEnv = { ...process.env };
+
+    if (commandLikelyUsesGit(args.command)) {
+      const gitAuth = await getGitAuthConfig(context.gatewayId);
+      if (gitAuth.mode === "github_app") {
+        const { token, host } = await getGitHubAppInstallationToken(gitAuth);
+        Object.assign(env, buildGitAuthEnv(token, host));
+      } else {
+        // CLI OAuth mode relies on host credential manager / gh auth login.
+        env.GIT_TERMINAL_PROMPT = env.GIT_TERMINAL_PROMPT || "0";
+      }
+    }
 
     try {
       const result = execSync(args.command, {
@@ -1054,6 +1072,7 @@ const shellExec: BuiltinTool = {
         maxBuffer: 1024 * 1024,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
+        env,
       });
 
       const output = String(result);
