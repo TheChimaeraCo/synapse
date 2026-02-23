@@ -3,6 +3,7 @@ import { HelpTooltip } from "@/components/HelpTooltip";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { parseProviderProfiles } from "@/lib/aiRoutingConfig";
 import { useFetch } from "@/lib/hooks";
+import { ModelSearchInput } from "@/components/settings/ModelSearchInput";
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -47,10 +48,34 @@ export function ToolsTab() {
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [braveApiKey, setBraveApiKey] = useState("");
   const [savingBraveKey, setSavingBraveKey] = useState(false);
+  const [modelCache, setModelCache] = useState<Record<string, string[]>>({});
+  const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
 
   const gatewayId = (session?.user as any)?.gatewayId;
   const providerProfiles = parseProviderProfiles(configData?.["ai.provider_profiles"]);
   const braveConfigured = Boolean(braveKeyData?.brave_search_api_key);
+
+  const fetchModelsForProfile = async (profileId?: string, provider?: string) => {
+    const key = profileId || provider || "_default";
+    if (modelCache[key] || loadingModels[key]) return;
+    setLoadingModels((prev) => ({ ...prev, [key]: true }));
+    try {
+      const params = new URLSearchParams();
+      if (profileId) params.set("profileId", profileId);
+      if (provider) params.set("provider", provider);
+      const res = await gatewayFetch(`/api/config/models?${params.toString()}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const models = Array.isArray(data?.models)
+        ? data.models.filter((m: unknown): m is string => typeof m === "string")
+        : [];
+      setModelCache((prev) => ({ ...prev, [key]: models }));
+    } catch {
+      // no-op
+    } finally {
+      setLoadingModels((prev) => ({ ...prev, [key]: false }));
+    }
+  };
 
   async function fetchApprovals() {
     try {
@@ -87,6 +112,15 @@ export function ToolsTab() {
     }, 10000);
     return () => clearInterval(interval);
   }, [gatewayId]);
+
+  useEffect(() => {
+    void fetchModelsForProfile();
+    for (const tool of tools) {
+      if (tool.providerProfileId || tool.provider) {
+        void fetchModelsForProfile(tool.providerProfileId, tool.provider);
+      }
+    }
+  }, [tools]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function toggleEnabled(tool: ToolRecord) {
     const newVal = !tool.enabled;
@@ -329,9 +363,13 @@ export function ToolsTab() {
                     onChange={(e) => {
                       const profileId = e.target.value;
                       const profile = providerProfiles.find((p) => p.id === profileId);
+                      if (profileId && profile) {
+                        void fetchModelsForProfile(profileId, profile.provider);
+                      }
                       updateToolConfig(tool, {
                         providerProfileId: profileId || "",
                         provider: profile?.provider || "",
+                        model: "",
                       });
                     }}
                     className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
@@ -346,12 +384,30 @@ export function ToolsTab() {
                 </div>
                 <div>
                   <label className="block text-[11px] text-zinc-500 mb-1">Model Override</label>
-                  <input
-                    value={tool.model || ""}
-                    onChange={(e) => updateToolConfig(tool, { model: e.target.value })}
-                    placeholder="Default"
-                    className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                  />
+                  {(() => {
+                    const profile = providerProfiles.find((p) => p.id === tool.providerProfileId);
+                    const cacheKey = tool.providerProfileId || tool.provider || "_default";
+                    const options = Array.from(new Set([
+                      ...(modelCache[cacheKey] || modelCache._default || []),
+                      profile?.defaultModel || "",
+                      tool.model || "",
+                    ].filter((value): value is string => typeof value === "string" && value.length > 0)));
+                    return (
+                      <div>
+                        <ModelSearchInput
+                          value={tool.model || ""}
+                          onChange={(value) => updateToolConfig(tool, { model: value })}
+                          options={options}
+                          placeholder="Default"
+                          className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                          listId={`tool-model-${tool._id}`}
+                        />
+                        {loadingModels[cacheKey] && (
+                          <p className="mt-1 text-[10px] text-zinc-500">Loading models...</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

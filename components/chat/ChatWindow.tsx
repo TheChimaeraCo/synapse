@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { MessageBubble } from "./MessageBubble";
 import { ConversationSavedDivider } from "./ConversationDivider";
+import { ToolApprovalsPopup } from "./ToolApprovalsPopup";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useChat } from "@/hooks/useChat";
 import ReactMarkdown from "react-markdown";
@@ -307,6 +308,8 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
           New messages
         </button>
       )}
+
+      <ToolApprovalsPopup sessionId={sessionId} />
     </div>
   );
 }

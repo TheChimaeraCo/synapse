@@ -5,7 +5,14 @@ import type { ToolCall, Tool } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import * as vm from "vm";
 import { createHash } from "crypto";
-import { readModuleConfig, resolveModuleToolRoute } from "@/lib/modules/config";
+import { findModuleForTool, readModuleConfig, resolveModuleToolRoute } from "@/lib/modules/config";
+import {
+  getModuleRecord,
+  listModuleRecords,
+  removeModuleRecord,
+  searchModuleRecords,
+  upsertModuleRecord,
+} from "@/lib/modules/store";
 
 // Tool cache TTLs in milliseconds
 const TOOL_CACHE_TTLS: Record<string, number> = {
@@ -16,6 +23,7 @@ const TOOL_CACHE_TTLS: Record<string, number> = {
 const DANGEROUS_TOOLS = new Set([
   "shell_exec",
   "convex_deploy",
+  "forge_module",
   "create_tool",
   "spawn_agent",
   "pm2_start",
@@ -319,12 +327,40 @@ async function getSessionApprovalState(context: ToolContext): Promise<SessionApp
 export async function executeDynamicTool(
   handlerCode: string,
   args: Record<string, any>,
-  context: ToolContext
+  context: ToolContext,
+  moduleId?: string,
 ): Promise<string> {
   const output: string[] = [];
+
+  const boundModuleId = cleanString(moduleId);
+  const moduleStore = {
+    moduleId: boundModuleId || null,
+    list: async (entity: string) => {
+      if (!boundModuleId) throw new Error("moduleStore is only available for module-owned tools.");
+      return await listModuleRecords(context.gatewayId as any, boundModuleId, entity);
+    },
+    get: async (entity: string, id: string) => {
+      if (!boundModuleId) throw new Error("moduleStore is only available for module-owned tools.");
+      return await getModuleRecord(context.gatewayId as any, boundModuleId, entity, id);
+    },
+    upsert: async (entity: string, id: string, data: unknown, tags?: string[]) => {
+      if (!boundModuleId) throw new Error("moduleStore is only available for module-owned tools.");
+      return await upsertModuleRecord(context.gatewayId as any, boundModuleId, entity, id, data, tags);
+    },
+    remove: async (entity: string, id: string) => {
+      if (!boundModuleId) throw new Error("moduleStore is only available for module-owned tools.");
+      return await removeModuleRecord(context.gatewayId as any, boundModuleId, entity, id);
+    },
+    search: async (entity: string, query: string, limit?: number) => {
+      if (!boundModuleId) throw new Error("moduleStore is only available for module-owned tools.");
+      return await searchModuleRecords(context.gatewayId as any, boundModuleId, entity, query, limit);
+    },
+  };
+
   const sandbox = {
     args,
     context,
+    moduleStore,
     fetch: globalThis.fetch,
     JSON,
     Math,
@@ -551,7 +587,8 @@ export async function executeTools(
       const handlerCode = dbTool?.handlerCode;
       if (handlerCode) {
         try {
-          const output = await executeDynamicTool(handlerCode, call.arguments, context);
+          const module = findModuleForTool(call.name, moduleConfig.installedModules);
+          const output = await executeDynamicTool(handlerCode, call.arguments, context, module?.id);
           results.push({ toolCallId: call.id, toolName: call.name, content: output, isError: false });
         } catch (err: any) {
           results.push({ toolCallId: call.id, toolName: call.name, content: `Dynamic tool error: ${err.message}`, isError: true });

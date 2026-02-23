@@ -13,6 +13,14 @@ export interface ModuleManifest {
     title?: string;
     icon?: string;
   }>;
+  tools?: Array<{
+    name: string;
+    description: string;
+    category?: string;
+    requiresApproval?: boolean;
+    parameters?: Record<string, unknown>;
+    handlerCode: string;
+  }>;
 }
 
 export interface ModulePackage {
@@ -35,6 +43,14 @@ export interface InstalledModuleRecord {
     path: string;
     title?: string;
     icon?: string;
+  }>;
+  tools?: Array<{
+    name: string;
+    description: string;
+    category?: string;
+    requiresApproval?: boolean;
+    parameters?: Record<string, unknown>;
+    handlerCode: string;
   }>;
   enabled: boolean;
   source: "local" | "registry" | "imported";
@@ -93,6 +109,30 @@ export function validateModuleManifest(input: unknown): { ok: true; manifest: Mo
       })
       .filter(Boolean) as ModuleManifest["routes"]
     : undefined;
+  const tools = Array.isArray(raw.tools)
+    ? raw.tools
+      .map((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+        const row = value as Record<string, unknown>;
+        const name = toStringOrEmpty(row.name);
+        const description = toStringOrEmpty(row.description);
+        const handlerCode = toStringOrEmpty(row.handlerCode);
+        if (!name || !description || !handlerCode) return null;
+        const category = toStringOrEmpty(row.category) || "module";
+        const parameters = row.parameters && typeof row.parameters === "object" && !Array.isArray(row.parameters)
+          ? row.parameters as Record<string, unknown>
+          : undefined;
+        return {
+          name,
+          description,
+          category,
+          requiresApproval: row.requiresApproval === true,
+          parameters,
+          handlerCode,
+        };
+      })
+      .filter(Boolean) as ModuleManifest["tools"]
+    : undefined;
 
   const manifest: ModuleManifest = {
     manifestVersion: 1,
@@ -105,6 +145,7 @@ export function validateModuleManifest(input: unknown): { ok: true; manifest: Mo
     permissions: permissions && permissions.length > 0 ? permissions : undefined,
     toolPrefixes: toolPrefixes && toolPrefixes.length > 0 ? toolPrefixes : undefined,
     routes: routes && routes.length > 0 ? routes : undefined,
+    tools: tools && tools.length > 0 ? tools : undefined,
   };
   return { ok: true, manifest };
 }

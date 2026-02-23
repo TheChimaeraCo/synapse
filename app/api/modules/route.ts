@@ -22,6 +22,7 @@ import {
   serializeModuleRoutes,
 } from "@/lib/modules/config";
 import type { InstalledModuleRecord, ModulePackage, ModuleRouteConfig } from "@/lib/modules/manifest";
+import { setModuleToolsEnabled, syncModuleTools } from "@/lib/modules/tools";
 
 const MAX_MODULE_REQUEST_BYTES = 1_500_000;
 const MAX_IMPORT_PACKAGE_BYTES = 1_000_000;
@@ -277,6 +278,7 @@ export async function POST(req: NextRequest) {
         homepage: found.manifest.homepage,
         toolPrefixes: found.manifest.toolPrefixes,
         routes: found.manifest.routes,
+        tools: found.manifest.tools,
         enabled: true,
         source: found.source,
         installedAt: Date.now(),
@@ -284,14 +286,15 @@ export async function POST(req: NextRequest) {
       });
       routes[found.manifest.id] = routes[found.manifest.id] || { mode: "default" };
       await saveModuleState(gwId, installedModules, routes);
+      const toolSync = await syncModuleTools(gwId, found.manifest, true);
       await logAudit(
         userId,
         "module.install",
         "module",
-        `Installed module ${found.manifest.id}@${found.manifest.version} from ${found.source}`,
+        `Installed module ${found.manifest.id}@${found.manifest.version} from ${found.source} (tools created=${toolSync.created}, updated=${toolSync.updated}, unchanged=${toolSync.unchanged})`,
         found.manifest.id,
       );
-      return NextResponse.json({ ok: true, installed: sortModules(installedModules), routes });
+      return NextResponse.json({ ok: true, installed: sortModules(installedModules), routes, tools: toolSync });
     }
 
     if (action === "uninstall") {
@@ -299,6 +302,7 @@ export async function POST(req: NextRequest) {
       if (!moduleId) {
         return NextResponse.json({ error: "moduleId is required" }, { status: 400 });
       }
+      const existing = installedModules.find((m) => m.id === moduleId);
       installedModules = installedModules.filter((m) => m.id !== moduleId);
       if (routes[moduleId]) {
         const nextRoutes = { ...routes };
@@ -306,6 +310,9 @@ export async function POST(req: NextRequest) {
         routes = nextRoutes;
       }
       await saveModuleState(gwId, installedModules, routes);
+      if (existing) {
+        await setModuleToolsEnabled(gwId, existing, false);
+      }
       await logAudit(
         userId,
         "module.uninstall",
@@ -330,6 +337,7 @@ export async function POST(req: NextRequest) {
         m.id === moduleId ? { ...m, enabled, updatedAt: Date.now() } : m
       ));
       await saveModuleState(gwId, installedModules, routes);
+      await setModuleToolsEnabled(gwId, hit, enabled);
       await logAudit(
         userId,
         enabled ? "module.enable" : "module.disable",
@@ -420,6 +428,7 @@ export async function POST(req: NextRequest) {
           homepage: pkg.manifest.homepage,
           toolPrefixes: pkg.manifest.toolPrefixes,
           routes: pkg.manifest.routes,
+          tools: pkg.manifest.tools,
           enabled: true,
           source: "imported",
           installedAt: Date.now(),
@@ -427,6 +436,7 @@ export async function POST(req: NextRequest) {
         });
         routes[pkg.manifest.id] = routes[pkg.manifest.id] || { mode: "default" };
         await saveModuleState(gwId, installedModules, routes);
+        await syncModuleTools(gwId, pkg.manifest, true);
       }
       await logAudit(
         userId,

@@ -56,6 +56,30 @@ export function parseInstalledModules(raw?: string | null): InstalledModuleRecor
         }
         return parsedRoutes.length > 0 ? parsedRoutes : undefined;
       })();
+      const tools = (() => {
+        if (!Array.isArray(row.tools)) return undefined;
+        const parsedTools: NonNullable<InstalledModuleRecord["tools"]> = [];
+        for (const value of row.tools) {
+          if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+          const tool = value as Record<string, unknown>;
+          const name = clean(tool.name);
+          const description = clean(tool.description);
+          const handlerCode = clean(tool.handlerCode);
+          if (!name || !description || !handlerCode) continue;
+          const parameters = tool.parameters && typeof tool.parameters === "object" && !Array.isArray(tool.parameters)
+            ? tool.parameters as Record<string, unknown>
+            : undefined;
+          parsedTools.push({
+            name,
+            description,
+            category: clean(tool.category) || "module",
+            requiresApproval: tool.requiresApproval === true,
+            parameters,
+            handlerCode,
+          });
+        }
+        return parsedTools.length > 0 ? parsedTools : undefined;
+      })();
 
       out.push({
         id,
@@ -66,6 +90,7 @@ export function parseInstalledModules(raw?: string | null): InstalledModuleRecor
         homepage: clean(row.homepage),
         toolPrefixes: toolPrefixes && toolPrefixes.length > 0 ? toolPrefixes : undefined,
         routes,
+        tools,
         enabled: row.enabled !== false,
         source: row.source === "registry" || row.source === "imported" ? row.source : "local",
         installedAt: typeof row.installedAt === "number" ? row.installedAt : Date.now(),
@@ -88,6 +113,7 @@ export function serializeInstalledModules(modules: InstalledModuleRecord[]): str
     homepage: m.homepage,
     toolPrefixes: m.toolPrefixes && m.toolPrefixes.length > 0 ? m.toolPrefixes : undefined,
     routes: m.routes && m.routes.length > 0 ? m.routes : undefined,
+    tools: m.tools && m.tools.length > 0 ? m.tools : undefined,
     enabled: m.enabled !== false,
     source: m.source,
     installedAt: m.installedAt,

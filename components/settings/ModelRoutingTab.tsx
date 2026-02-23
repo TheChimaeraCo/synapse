@@ -7,6 +7,7 @@ import { Plus, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp, Route } 
 import { toast } from "sonner";
 import { useFetch } from "@/lib/hooks";
 import { parseProviderProfiles, type CapabilityRoutes } from "@/lib/aiRoutingConfig";
+import { ModelSearchInput } from "@/components/settings/ModelSearchInput";
 
 interface RouteCondition {
   type: "message_length" | "has_code" | "keyword" | "combined";
@@ -51,11 +52,17 @@ function RouteEditor({
   onSave,
   onDelete,
   profileOptions,
+  resolveModelOptions,
+  loadingModels,
+  prefetchModels,
 }: {
   route: ModelRoute;
   onSave: (r: ModelRoute) => void;
   onDelete?: () => void;
   profileOptions: Array<{ id: string; name: string; provider: string }>;
+  resolveModelOptions: (profileId?: string, provider?: string, currentValue?: string) => string[];
+  loadingModels: Record<string, boolean>;
+  prefetchModels: (profileId: string, provider: string) => void;
 }) {
   const [expanded, setExpanded] = useState(!route._id);
   const [form, setForm] = useState(route);
@@ -123,6 +130,9 @@ function RouteEditor({
                 onChange={(e) => {
                   const profileId = e.target.value;
                   const profile = profileOptions.find((p) => p.id === profileId);
+                  if (profileId && profile) {
+                    prefetchModels(profileId, profile.provider);
+                  }
                   setForm({
                     ...form,
                     targetProviderProfileId: profileId || "",
@@ -139,12 +149,17 @@ function RouteEditor({
             </div>
             <div>
               <label className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">Target Model</label>
-              <input
+              <ModelSearchInput
                 value={form.targetModel}
-                onChange={(e) => setForm({ ...form, targetModel: e.target.value })}
+                onChange={(value) => setForm({ ...form, targetModel: value })}
+                options={resolveModelOptions(form.targetProviderProfileId, form.targetProvider, form.targetModel)}
                 placeholder="e.g. claude-sonnet-4-20250514"
                 className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                listId={`routing-model-${form._id || "new"}-${form.priority}`}
               />
+              {loadingModels[form.targetProviderProfileId || form.targetProvider || "_default"] && (
+                <p className="mt-1 text-[10px] text-zinc-500">Loading models...</p>
+              )}
             </div>
           </div>
 
@@ -226,6 +241,17 @@ export function ModelRoutingTab() {
   // Cache of fetched models per provider/profile
   const [modelCache, setModelCache] = useState<Record<string, string[]>>({});
   const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
+
+  const resolveModelOptions = (profileId?: string, provider?: string, currentValue?: string) => {
+    const cacheKey = profileId || provider || "_default";
+    const profile = profileOptions.find((p) => p.id === profileId);
+    const out = new Set<string>();
+    for (const model of modelCache[cacheKey] || []) out.add(model);
+    for (const model of modelCache._default || []) out.add(model);
+    if (profile?.defaultModel) out.add(profile.defaultModel);
+    if (currentValue) out.add(currentValue);
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+  };
 
   const fetchModelsForProfile = async (profileId: string, provider: string) => {
     const cacheKey = profileId || provider || "_default";
@@ -390,30 +416,21 @@ export function ModelRoutingTab() {
               {(() => {
                 const cap = capabilityRoutes[key];
                 const cacheKey = cap?.providerProfileId || cap?.provider || "_default";
-                const models = modelCache[cacheKey] || modelCache["_default"] || [];
                 const currentValue = cap?.model || "";
+                const modelOptions = resolveModelOptions(cap?.providerProfileId, cap?.provider, currentValue);
                 return (
                   <div className="relative">
-                    <select
-                      value={models.includes(currentValue) ? currentValue : "__custom__"}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "__custom__") return;
-                        setCapabilityRoutes((prev) => ({
-                          ...prev,
-                          [key]: { ...(prev[key] || {}), model: val },
-                        }));
-                      }}
+                    <ModelSearchInput
+                      value={currentValue}
+                      onChange={(value) => setCapabilityRoutes((prev) => ({
+                        ...prev,
+                        [key]: { ...(prev[key] || {}), model: value },
+                      }))}
+                      options={modelOptions}
+                      placeholder="Select/search model..."
                       className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                    >
-                      <option value="">Select model...</option>
-                      {currentValue && !models.includes(currentValue) && (
-                        <option value="__custom__">{currentValue} (custom)</option>
-                      )}
-                      {models.map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
+                      listId={`capability-model-${key}`}
+                    />
                     {loadingModels[cacheKey] && (
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-500">Loading...</div>
                     )}
@@ -443,6 +460,9 @@ export function ModelRoutingTab() {
               onSave={saveRoute}
               onDelete={route._id ? () => deleteRoute(route._id as string) : undefined}
               profileOptions={profileOptions}
+              resolveModelOptions={resolveModelOptions}
+              loadingModels={loadingModels}
+              prefetchModels={fetchModelsForProfile}
             />
           ))}
           {routes.length === 0 && (

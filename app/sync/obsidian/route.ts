@@ -21,6 +21,13 @@ const MAX_WRITE_BYTES = 20 * 1024 * 1024;
 const MAX_OPERATIONS = 500;
 const IGNORED_DIRS = new Set([".git", "node_modules", ".next", "dist", "build"]);
 
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Gateway-Id, Accept",
+  "Access-Control-Max-Age": "86400",
+};
+
 interface SyncContext {
   gatewayId: string;
   userId?: string;
@@ -242,6 +249,17 @@ function ssePayload(data: unknown): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
+function withCors(response: NextResponse | Response): NextResponse | Response {
+  Object.entries(CORS_HEADERS).forEach(([key, value]) => {
+    response.headers.set(key, value);
+  });
+  return response;
+}
+
+export async function OPTIONS() {
+  return withCors(new NextResponse(null, { status: 204 }));
+}
+
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
@@ -257,20 +275,20 @@ export async function GET(req: NextRequest) {
 
     if (filePath) {
       const file = await readFileContent(vaultRoot, filePath, encoding);
-      return NextResponse.json({
+      return withCors(NextResponse.json({
         vaultPath,
         filePath: normalizeRelative(filePath),
         ...file,
-      });
+      }));
     }
 
     if (!stream) {
       const files = await listVaultFiles(vaultRoot);
-      return NextResponse.json({
+      return withCors(NextResponse.json({
         vaultPath,
         revision: computeRevision(files),
         files,
-      });
+      }));
     }
 
     const encoder = new TextEncoder();
@@ -350,15 +368,15 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return new Response(streamBody, {
+    return withCors(new Response(streamBody, {
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
       },
-    });
+    }));
   } catch (err) {
-    return handleGatewayError(err);
+    return withCors(handleGatewayError(err));
   }
 }
 
@@ -395,10 +413,10 @@ export async function POST(req: NextRequest) {
       });
     }
     if (operations.length > MAX_OPERATIONS) {
-      return NextResponse.json(
+      return withCors(NextResponse.json(
         { error: `Too many operations (max ${MAX_OPERATIONS})` },
         { status: 413 },
-      );
+      ));
     }
 
     let totalWriteBytes = 0;
@@ -446,14 +464,14 @@ export async function POST(req: NextRequest) {
     }
 
     const files = await listVaultFiles(vaultRoot);
-    return NextResponse.json({
+    return withCors(NextResponse.json({
       ok: true,
       applied,
       vaultPath,
       revision: computeRevision(files),
       files,
-    });
+    }));
   } catch (err) {
-    return handleGatewayError(err);
+    return withCors(handleGatewayError(err));
   }
 }

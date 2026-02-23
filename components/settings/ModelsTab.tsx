@@ -1,9 +1,10 @@
 "use client";
 import { HelpTooltip } from "@/components/HelpTooltip";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ModelSearchInput } from "@/components/settings/ModelSearchInput";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +40,17 @@ export function ModelsTab() {
   const fallbacks = get("fallback_chain") ? get("fallback_chain").split(",") : [];
   const imageModel = get("image_model", "");
   const thinkingLevel = get("thinking_level", "off");
+  const modelSuggestions = useMemo(() => {
+    const out = new Set<string>();
+    for (const model of ALL_MODELS) out.add(model);
+    for (const model of allowlist) out.add(model);
+    for (const model of fallbacks) out.add(model);
+    for (const model of Object.values(aliases)) out.add(model);
+    if (imageModel) out.add(imageModel);
+    if (newAlias.model) out.add(newAlias.model);
+    if (newFallback) out.add(newFallback);
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+  }, [allowlist, fallbacks, aliases, imageModel, newAlias.model, newFallback]);
 
   const toggleModel = (model: string) => {
     const updated = allowlist.includes(model)
@@ -125,11 +137,13 @@ export function ModelsTab() {
               onChange={(e) => setNewAlias(a => ({ ...a, name: e.target.value }))}
               className="bg-white/[0.06] border-white/[0.08] text-white text-sm flex-1"
             />
-            <Input
-              placeholder="Model ID"
+            <ModelSearchInput
               value={newAlias.model}
-              onChange={(e) => setNewAlias(a => ({ ...a, model: e.target.value }))}
+              onChange={(value) => setNewAlias(a => ({ ...a, model: value }))}
+              options={modelSuggestions}
+              placeholder="Model ID"
               className="bg-white/[0.06] border-white/[0.08] text-white text-sm flex-1"
+              listId="models-alias-model-options"
             />
             <Button onClick={addAlias} size="sm" variant="outline" className="border-white/[0.08] text-zinc-300">
               <Plus className="w-4 h-4" />
@@ -154,16 +168,14 @@ export function ModelsTab() {
             </div>
           ))}
           <div className="flex gap-2">
-            <Select value={newFallback} onValueChange={(val) => setNewFallback(val)}>
-              <SelectTrigger className="flex-1 bg-white/[0.04] border-white/[0.08] text-zinc-200 rounded-xl">
-                <SelectValue placeholder="Select model..." />
-              </SelectTrigger>
-              <SelectContent>
-                {ALL_MODELS.map((m) => (
-                  <SelectItem key={m} value={m}>{m}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ModelSearchInput
+              value={newFallback}
+              onChange={(value) => setNewFallback(value)}
+              options={modelSuggestions}
+              placeholder="Select/search model..."
+              className="flex-1 bg-white/[0.04] border-white/[0.08] text-zinc-200 rounded-xl"
+              listId="models-fallback-options"
+            />
             <Button onClick={addFallback} size="sm" variant="outline" className="border-white/[0.08] text-zinc-300">
               <Plus className="w-4 h-4" />
             </Button>

@@ -1175,6 +1175,46 @@ const createTool: BuiltinTool = {
   },
 };
 
+const forgeModule: BuiltinTool = {
+  name: "forge_module",
+  description: "Generate a self-contained Synapse module from a natural-language request, write it under modules/, and optionally install it with tools.",
+  category: "system",
+  requiresApproval: true,
+  parameters: Type.Object({
+    prompt: Type.String({ description: "Module request prompt (what this module should do)." }),
+    module_id: Type.Optional(Type.String({ description: "Optional module id (kebab-case)." })),
+    module_name: Type.Optional(Type.String({ description: "Optional display name." })),
+    install: Type.Optional(Type.Boolean({ description: "Install immediately (default true)." })),
+    overwrite: Type.Optional(Type.Boolean({ description: "Overwrite existing module files if present (default false)." })),
+  }),
+  handler: async (args, context) => {
+    try {
+      const role = String(context.userRole || "").toLowerCase();
+      if (role && role !== "owner" && role !== "admin") {
+        return "Only owner/admin can forge modules.";
+      }
+      const { forgeModuleFromPrompt } = await import("@/lib/modules/forge");
+      const result = await forgeModuleFromPrompt({
+        gatewayId: context.gatewayId as any,
+        prompt: String(args.prompt || ""),
+        moduleId: typeof args.module_id === "string" ? args.module_id : undefined,
+        moduleName: typeof args.module_name === "string" ? args.module_name : undefined,
+        install: args.install !== false,
+        overwrite: args.overwrite === true,
+      });
+      const lines = [
+        `Module forged: ${result.manifest.name} (${result.manifest.id}@${result.manifest.version})`,
+        `Installed: ${result.installed ? "yes" : "no"}`,
+        `Tools: created=${result.tools.created}, updated=${result.tools.updated}, unchanged=${result.tools.unchanged}`,
+        `Files: ${result.filesWritten.join(", ")}`,
+      ];
+      return lines.join("\n");
+    } catch (e: any) {
+      return `Forge module error: ${e.message}`;
+    }
+  },
+};
+
 /**
  * Register a dynamic tool in the runtime registry (for create_tool).
  * Uses inline vm execution to avoid circular imports.
@@ -1265,7 +1305,7 @@ const spawnAgent: BuiltinTool = {
       const sysPrompt = args.systemPrompt || "You are a worker agent. Complete the task and return results. Be thorough but efficient. Use your tools when needed. When done, provide a clear summary of what you found or accomplished.";
 
       // Determine tools for the sub-agent - safe subset only
-      const BLOCKED_TOOLS = ["spawn_agent", "kill_agent", "list_agents", "shell_exec", "convex_deploy", "file_write", "create_tool", "save_soul", "memory_store", "new_conversation"];
+      const BLOCKED_TOOLS = ["spawn_agent", "kill_agent", "list_agents", "shell_exec", "convex_deploy", "file_write", "create_tool", "forge_module", "save_soul", "memory_store", "new_conversation"];
       const { BUILTIN_TOOLS: allTools } = await import("@/lib/builtinTools");
       const availableTools = args.tools
         ? allTools.filter(t => args.tools!.includes(t.name) && !BLOCKED_TOOLS.includes(t.name))
@@ -2443,6 +2483,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   shellExec,
   convexDeploy,
   createTool,
+  forgeModule,
   spawnAgent,
   killAgent,
   listAgents,

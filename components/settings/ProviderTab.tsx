@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ModelSearchInput } from "@/components/settings/ModelSearchInput";
 import { toast } from "sonner";
 import { PROVIDERS, type AnthropicAuthMethod } from "@/lib/providers";
 import { useFetch } from "@/lib/hooks";
@@ -155,8 +156,27 @@ export function ProviderTab() {
   const currentProvider = profiles.find((p) => p.id === defaultProfileId) || profiles[0];
   const currentProviderDef = currentProvider ? PROVIDERS.find((p) => p.slug === currentProvider.provider) : null;
   const currentModel = currentProvider?.defaultModel || configData?.ai_model || currentProviderDef?.defaultModel || "";
+  const providerModelsEndpoint = draft.provider
+    ? `/api/config/models?provider=${encodeURIComponent(draft.provider)}`
+    : "/api/config/models";
+  const { data: providerModelsData } = useFetch<{ models: string[] }>(providerModelsEndpoint);
 
   const providerDef = PROVIDERS.find((p) => p.slug === draft.provider);
+  const providerModelOptions = useMemo(() => {
+    const out = new Set<string>();
+    if (Array.isArray(providerModelsData?.models)) {
+      for (const model of providerModelsData.models) {
+        const next = clean(model);
+        if (next) out.add(next);
+      }
+    }
+    const defaults = [providerDef?.defaultModel, draft.defaultModel, currentModel];
+    for (const model of defaults) {
+      const next = clean(model);
+      if (next) out.add(next);
+    }
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+  }, [providerModelsData?.models, providerDef?.defaultModel, draft.defaultModel, currentModel]);
   const anthropicAuthMethod = (draft.authMethod || "api_key") as AnthropicAuthMethod;
   const isAnthropic = draft.provider === "anthropic";
   const oauthProviderId = clean(draft.oauthProvider) || defaultOAuthProvider(draft.provider) || "";
@@ -574,9 +594,10 @@ export function ProviderTab() {
 
           <div>
             <label className="text-sm text-zinc-400 mb-1 block">Default Model (for this profile)</label>
-            <Input
+            <ModelSearchInput
               value={draft.defaultModel || ""}
-              onChange={(e) => setDraft((d) => ({ ...d, defaultModel: e.target.value }))}
+              onChange={(value) => setDraft((d) => ({ ...d, defaultModel: value }))}
+              options={providerModelOptions}
               placeholder={providerDef?.defaultModel || "Model ID"}
               className="bg-white/[0.06] border-white/[0.08] text-white"
             />

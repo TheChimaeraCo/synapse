@@ -5,6 +5,7 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ModelSearchInput } from "@/components/settings/ModelSearchInput";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConfigSettings } from "@/lib/useConfigSettings";
@@ -20,6 +21,9 @@ const DEFAULT_ELEVEN_MODELS: ElevenModel[] = [
   { id: "eleven_multilingual_v2", name: "Eleven Multilingual v2", description: "High quality multilingual voice" },
 ];
 
+const OPENAI_TTS_MODELS = ["gpt-4o-mini-tts", "gpt-4o-realtime-preview", "gpt-4o-audio-preview"];
+const GOOGLE_TTS_MODELS = ["chirp-3-hd", "gemini-2.0-flash-exp"];
+
 export function VoiceTab() {
   const { get, set, save, saving, loading } = useConfigSettings("voice.");
   const [testText, setTestText] = useState("Hello, this is a test of the voice system.");
@@ -27,6 +31,7 @@ export function VoiceTab() {
   const [loadingElevenModels, setLoadingElevenModels] = useState(false);
   const [elevenModels, setElevenModels] = useState<ElevenModel[]>(DEFAULT_ELEVEN_MODELS);
   const [elevenModelsError, setElevenModelsError] = useState<string | null>(null);
+  const [providerModelOptions, setProviderModelOptions] = useState<string[]>([]);
 
   const handleTest = async () => {
     if (!testText.trim()) return;
@@ -102,6 +107,30 @@ export function VoiceTab() {
     return () => clearTimeout(timer);
   }, [provider, selectedModel, ttsApiKey, set]);
 
+  useEffect(() => {
+    if (provider !== "openai" && provider !== "google") {
+      setProviderModelOptions([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await gatewayFetch(`/api/config/models?provider=${encodeURIComponent(provider)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const models = Array.isArray(data?.models)
+          ? data.models.filter((m: unknown): m is string => typeof m === "string")
+          : [];
+        if (!cancelled) setProviderModelOptions(models);
+      } catch {
+        if (!cancelled) setProviderModelOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [provider]);
+
   const elevenModelOptions = useMemo(() => {
     const map = new Map<string, ElevenModel>();
     DEFAULT_ELEVEN_MODELS.forEach((m) => map.set(m.id, m));
@@ -111,6 +140,18 @@ export function VoiceTab() {
     }
     return Array.from(map.values());
   }, [elevenModels, selectedModel]);
+
+  const genericModelOptions = useMemo(() => {
+    const defaults = provider === "openai"
+      ? OPENAI_TTS_MODELS
+      : provider === "google"
+        ? GOOGLE_TTS_MODELS
+        : [];
+    const out = new Set<string>(defaults);
+    for (const model of providerModelOptions) out.add(model);
+    if (selectedModel) out.add(selectedModel);
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+  }, [provider, providerModelOptions, selectedModel]);
 
   if (loading) return <div className="text-zinc-400">Loading...</div>;
 
@@ -199,11 +240,13 @@ export function VoiceTab() {
               ) : (
                 <div>
                   <label className="text-sm text-zinc-400 mb-1 block">Model</label>
-                  <Input
+                  <ModelSearchInput
                     value={get("tts_model", "")}
-                    onChange={(e) => set("tts_model", e.target.value)}
+                    onChange={(value) => set("tts_model", value)}
+                    options={genericModelOptions}
                     placeholder={provider === "openai" ? "gpt-4o-mini-tts" : "Google voice model (optional)"}
                     className="bg-white/[0.06] border-white/[0.08] text-white"
+                    listId={`voice-model-${provider}`}
                   />
                 </div>
               )}

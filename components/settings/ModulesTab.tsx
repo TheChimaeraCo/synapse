@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useFetch } from "@/lib/hooks";
 import { parseProviderProfiles } from "@/lib/aiRoutingConfig";
+import { ModelSearchInput } from "@/components/settings/ModelSearchInput";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Download, Upload, Package, RefreshCw } from "lucide-react";
+import { Download, Upload, Package, RefreshCw, Sparkles } from "lucide-react";
 
 interface ModuleManifest {
   manifestVersion: 1;
@@ -86,6 +87,11 @@ export function ModulesTab() {
   const [busyAction, setBusyAction] = useState<string>("");
   const [modelCache, setModelCache] = useState<Record<string, string[]>>({});
   const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
+  const [forgePrompt, setForgePrompt] = useState("");
+  const [forgeModuleId, setForgeModuleId] = useState("");
+  const [forgeModuleName, setForgeModuleName] = useState("");
+  const [forgeInstall, setForgeInstall] = useState(true);
+  const [forgeOverwrite, setForgeOverwrite] = useState(false);
 
   useEffect(() => {
     if (!data?.routes) return;
@@ -207,6 +213,39 @@ export function ModulesTab() {
     }
   }
 
+  async function forgeModule() {
+    const prompt = forgePrompt.trim();
+    if (!prompt) return;
+    setBusyAction("forge");
+    try {
+      const res = await gatewayFetch("/api/modules/forge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          moduleId: forgeModuleId.trim() || undefined,
+          moduleName: forgeModuleName.trim() || undefined,
+          install: forgeInstall,
+          overwrite: forgeOverwrite,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Failed to forge module");
+      const moduleId = json?.module?.id || "module";
+      toast.success(`Forged ${moduleId}`);
+      if (!forgeOverwrite) {
+        setForgePrompt("");
+        setForgeModuleId("");
+        setForgeModuleName("");
+      }
+      await refetch();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to forge module");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   if (loading) {
     return <div className="text-zinc-400">Loading modules...</div>;
   }
@@ -229,6 +268,62 @@ export function ModulesTab() {
       <Card className="bg-white/[0.04] border-white/[0.06]">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm text-zinc-300 flex items-center gap-2">
+            <Sparkles className="h-4 w-4" /> Forge Module
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-zinc-400">
+            Generate a new local module from a plain-language prompt. This writes files into <code>modules/</code> and can auto-install.
+          </p>
+          <Textarea
+            value={forgePrompt}
+            onChange={(e) => setForgePrompt(e.target.value)}
+            placeholder="Build a meal planner module that stores recipes, creates weekly plans, generates shopping lists, and fetches nutrition facts."
+            className="min-h-24"
+          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <Input
+              value={forgeModuleId}
+              onChange={(e) => setForgeModuleId(e.target.value)}
+              placeholder="module id (optional, e.g. meal-planner)"
+              className="bg-white/[0.06] border-white/[0.08] text-white"
+            />
+            <Input
+              value={forgeModuleName}
+              onChange={(e) => setForgeModuleName(e.target.value)}
+              placeholder="module name (optional)"
+              className="bg-white/[0.06] border-white/[0.08] text-white"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-300">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={forgeInstall}
+                onChange={(e) => setForgeInstall(e.target.checked)}
+                className="accent-blue-500"
+              />
+              Auto-install
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={forgeOverwrite}
+                onChange={(e) => setForgeOverwrite(e.target.checked)}
+                className="accent-blue-500"
+              />
+              Overwrite existing module files
+            </label>
+          </div>
+          <Button onClick={() => void forgeModule()} disabled={busyAction === "forge" || !forgePrompt.trim()}>
+            Forge Module
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white/[0.04] border-white/[0.06]">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm text-zinc-300 flex items-center gap-2">
             <Package className="h-4 w-4" /> Installed Modules
           </CardTitle>
         </CardHeader>
@@ -243,7 +338,12 @@ export function ModulesTab() {
             const cacheKey = draft.providerProfileId || draft.provider || "_default";
             const modelOptions = modelCache[cacheKey] || modelCache._default || [];
             const modelValue = draft.model || "";
-            const hasKnownModel = modelValue ? modelOptions.includes(modelValue) : true;
+            const selectedProfile = profileOptions.find((p) => p.id === draft.providerProfileId);
+            const searchableModels = Array.from(new Set([
+              ...modelOptions,
+              selectedProfile?.defaultModel || "",
+              modelValue,
+            ].filter((value): value is string => typeof value === "string" && value.length > 0)));
 
             return (
               <div key={mod.id} className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
@@ -326,27 +426,20 @@ export function ModulesTab() {
                     ))}
                   </select>
 
-                  <select
-                    value={hasKnownModel ? modelValue : "__custom__"}
+                  <ModelSearchInput
+                    value={modelValue}
                     disabled={routeMode !== "module"}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value === "__custom__") return;
+                    onChange={(value) => {
                       setRouteDrafts((prev) => ({
                         ...prev,
                         [mod.id]: { ...(prev[mod.id] || {}), model: value },
                       }));
                     }}
+                    options={searchableModels}
+                    placeholder="Select/search model..."
                     className="w-full bg-white/[0.04] border border-white/[0.1] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none disabled:opacity-50"
-                  >
-                    <option value="">Select model...</option>
-                    {!hasKnownModel && modelValue && (
-                      <option value="__custom__">{modelValue} (custom)</option>
-                    )}
-                    {modelOptions.map((model) => (
-                      <option key={model} value={model}>{model}</option>
-                    ))}
-                  </select>
+                    listId={`module-model-${mod.id}`}
+                  />
 
                   <Button
                     size="sm"
@@ -356,21 +449,6 @@ export function ModulesTab() {
                     Save Routing
                   </Button>
                 </div>
-
-                {routeMode === "module" && (!hasKnownModel || modelOptions.length === 0) && (
-                  <Input
-                    value={draft.model || ""}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setRouteDrafts((prev) => ({
-                        ...prev,
-                        [mod.id]: { ...(prev[mod.id] || {}), model: value },
-                      }));
-                    }}
-                    placeholder="Custom model id"
-                    className="bg-white/[0.06] border-white/[0.08] text-white"
-                  />
-                )}
 
                 {loadingModels[cacheKey] && (
                   <p className="text-[11px] text-zinc-500">Loading models...</p>
