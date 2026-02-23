@@ -59,6 +59,7 @@ const WebhooksTab = lazyTab(() => import("@/components/settings/WebhooksTab"), "
 const UsageQuotasTab = lazyTab(() => import("@/components/settings/UsageQuotasTab"), "UsageQuotasTab");
 const ModelRoutingTab = lazyTab(() => import("@/components/settings/ModelRoutingTab"), "ModelRoutingTab");
 const SystemAlertsTab = lazyTab(() => import("@/components/settings/SystemAlertsTab"), "SystemAlertsTab");
+const ObsidianTab = lazyTab(() => import("@/components/settings/ObsidianTab"), "ObsidianTab");
 import {
   Settings, Cpu, MessageSquare, BarChart3, User, Info, Wrench, Shield, Puzzle,
   Layers, Mic, Zap, Server, Terminal, FileText, Variable, Package, Globe, Clock,
@@ -86,6 +87,7 @@ const tabs = [
   { id: "automation", label: "Automation", icon: Zap },
   { id: "gateway", label: "Gateway", icon: Server },
   { id: "gateways", label: "Gateways", icon: Server },
+  { id: "obsidian", label: "Obsidian Sync", icon: Database },
   { id: "members", label: "Members", icon: Users },
   { id: "sandbox", label: "Sandbox", icon: Terminal },
   { id: "logging", label: "Logging", icon: FileText },
@@ -155,7 +157,7 @@ const categories: Category[] = [
     id: "system",
     label: "System",
     icon: Cog,
-    tabs: ["gateway", "gateways", "logging", "envvars", "pm2", "changelog", "about"],
+    tabs: ["gateway", "gateways", "obsidian", "logging", "envvars", "pm2", "changelog", "about"],
   },
 ];
 
@@ -304,6 +306,7 @@ export default function SettingsPage() {
           {activeTab === "automation" && <AutomationTab />}
           {activeTab === "gateway" && <GatewayTab />}
           {activeTab === "gateways" && <GatewaysTab />}
+          {activeTab === "obsidian" && <ObsidianTab />}
           {activeTab === "sandbox" && <SandboxTab />}
           {activeTab === "logging" && <LoggingTab />}
           {activeTab === "envvars" && <EnvVarsTab />}
