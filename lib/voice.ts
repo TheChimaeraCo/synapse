@@ -5,7 +5,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
 export interface VoiceConfig {
-  ttsProvider: "elevenlabs" | "openai" | "google" | "none";
+  ttsProvider: "elevenlabs" | "openai" | "google" | "groq" | "none";
   ttsApiKey?: string;
   ttsVoice?: string;
   ttsModel?: string;
@@ -15,6 +15,7 @@ export interface VoiceConfig {
   ttsSpeed?: number;
   sttProvider: "openai" | "google" | "groq" | "browser" | "none";
   sttApiKey?: string;
+  sttModel?: string;
 }
 
 interface SpeechInputOptions {
@@ -38,8 +39,10 @@ const VOICE_CONFIG_KEYS = [
   "voice.speed",
   "voice.stt_provider",
   "voice.stt_api_key",
+  "voice.stt_model",
   "voice_stt_provider",
   "voice_stt_api_key",
+  "voice_stt_model",
   "voice_tts_provider",
   "voice_tts_api_key",
   "voice_tts_voice",
@@ -71,6 +74,19 @@ function extensionFromMime(mimeType?: string): string {
   return "webm";
 }
 
+function normalizeOpenSpeechLanguage(language?: string): string {
+  const raw = String(language || "").trim();
+  if (!raw) return "en";
+  const code = raw.split(/[-_]/)[0].toLowerCase();
+  return /^[a-z]{2,3}$/.test(code) ? code : "en";
+}
+
+function normalizeGoogleLanguage(language?: string): string {
+  const raw = String(language || "").trim();
+  if (!raw) return "en-US";
+  return raw;
+}
+
 function googleEncodingFromMime(mimeType?: string): { encoding?: string; sampleRateHertz?: number } {
   const mime = (mimeType || "").toLowerCase();
   if (mime.includes("webm")) return { encoding: "WEBM_OPUS", sampleRateHertz: 48000 };
@@ -80,7 +96,7 @@ function googleEncodingFromMime(mimeType?: string): { encoding?: string; sampleR
   return {};
 }
 
-function requireApiKey(provider: "elevenlabs" | "openai" | "google", key?: string): string {
+function requireApiKey(provider: "elevenlabs" | "openai" | "google" | "groq", key?: string): string {
   if (!key || !key.trim()) {
     throw new Error(`Missing API key for ${provider} voice provider`);
   }
@@ -179,6 +195,37 @@ export async function textToSpeech(text: string, config: VoiceConfig): Promise<B
     return Buffer.from(data.audioContent, "base64");
   }
 
+  if (config.ttsProvider === "groq") {
+    const apiKey = requireApiKey("groq", config.ttsApiKey || process.env.GROQ_API_KEY);
+    const model = config.ttsModel || "canopylabs/orpheus-v1-english";
+    const voice = config.ttsVoice || "tara";
+    const boundedInput = input.length > 200 ? input.slice(0, 200) : input;
+    const res = await fetch("https://api.groq.com/openai/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        input: boundedInput,
+        voice,
+        speed: config.ttsSpeed ?? 1.0,
+        response_format: "wav",
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      if (err.includes("model_terms_required")) {
+        throw new Error("Groq TTS model terms not accepted. Open console.groq.com/playground and accept terms for canopylabs/orpheus-v1-english.");
+      }
+      throw new Error(`Groq TTS failed (${res.status}): ${err}`);
+    }
+
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   throw new Error(`Unknown TTS provider: ${config.ttsProvider}`);
 }
 
@@ -200,15 +247,19 @@ export async function speechToText(
 
   const mimeType = inputOptions?.mimeType || "audio/webm";
   const filename = inputOptions?.filename || `audio.${extensionFromMime(mimeType)}`;
-  const language = inputOptions?.language || "en";
+  const openSpeechLanguage = normalizeOpenSpeechLanguage(inputOptions?.language);
+  const googleLanguage = normalizeGoogleLanguage(inputOptions?.language);
 
   if (config.sttProvider === "openai") {
     const apiKey = requireApiKey("openai", config.sttApiKey || process.env.OPENAI_API_KEY);
+    const model = config.sttModel || "gpt-4o-transcribe";
     const formData = new FormData();
     const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });
     formData.append("file", blob, filename);
-    formData.append("model", "whisper-1");
-    formData.append("language", language);
+    formData.append("model", model);
+    formData.append("language", openSpeechLanguage);
+    formData.append("response_format", "verbose_json");
+    formData.append("temperature", "0");
 
     const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
@@ -228,15 +279,16 @@ export async function speechToText(
   }
 
   if (config.sttProvider === "groq") {
-    const apiKey = requireApiKey("groq" as any, config.sttApiKey || process.env.GROQ_API_KEY);
+    const apiKey = requireApiKey("groq", config.sttApiKey || process.env.GROQ_API_KEY);
+    const model = config.sttModel || "whisper-large-v3";
     const formData = new FormData();
     // Groq Whisper works better with explicit file extensions matching the codec
     const groqExt = mimeType.includes("opus") ? "ogg" : extensionFromMime(mimeType);
     const groqFilename = `recording.${groqExt}`;
     const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });
     formData.append("file", blob, groqFilename);
-    formData.append("model", "whisper-large-v3-turbo");
-    formData.append("language", language);
+    formData.append("model", model);
+    formData.append("language", openSpeechLanguage);
     formData.append("response_format", "verbose_json");
 
     const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
@@ -261,9 +313,9 @@ export async function speechToText(
     const apiKey = requireApiKey("google", config.sttApiKey || process.env.GOOGLE_API_KEY);
     const { encoding, sampleRateHertz } = googleEncodingFromMime(mimeType);
     const googleConfig: Record<string, any> = {
-      languageCode: inputOptions?.language || "en-US",
+      languageCode: googleLanguage,
       enableAutomaticPunctuation: true,
-      model: "latest_short",
+      model: config.sttModel || "latest_long",
     };
     if (encoding) googleConfig.encoding = encoding;
     if (sampleRateHertz) googleConfig.sampleRateHertz = sampleRateHertz;
@@ -327,13 +379,14 @@ export async function getVoiceConfigFromDb(gatewayId?: Id<"gateways">): Promise<
 
     const ttsProviderRaw = firstValue(configs, ["voice.tts_provider", "voice_tts_provider"]) || "none";
     const sttProviderRaw = firstValue(configs, ["voice.stt_provider", "voice_stt_provider"]) || "groq";
-    const ttsProvider = (["elevenlabs", "openai", "google", "none"].includes(ttsProviderRaw) ? ttsProviderRaw : "none") as VoiceConfig["ttsProvider"];
+    const ttsProvider = (["elevenlabs", "openai", "google", "groq", "none"].includes(ttsProviderRaw) ? ttsProviderRaw : "none") as VoiceConfig["ttsProvider"];
     const sttProvider = (["openai", "google", "groq", "browser", "none"].includes(sttProviderRaw) ? sttProviderRaw : "groq") as VoiceConfig["sttProvider"];
 
     const ttsApiKey =
-      firstValue(configs, ["voice.tts_api_key", "voice_tts_api_key", "ai_api_key"]) ||
+      firstValue(configs, ["voice.tts_api_key", "voice_tts_api_key", "voice.stt_api_key", "voice_stt_api_key", "ai_api_key"]) ||
       (ttsProvider === "elevenlabs" ? process.env.ELEVENLABS_API_KEY : undefined) ||
       (ttsProvider === "openai" ? process.env.OPENAI_API_KEY : undefined) ||
+      (ttsProvider === "groq" ? process.env.GROQ_API_KEY : undefined) ||
       (ttsProvider === "google" ? process.env.GOOGLE_API_KEY : undefined);
 
     const sttApiKey =
@@ -354,6 +407,7 @@ export async function getVoiceConfigFromDb(gatewayId?: Id<"gateways">): Promise<
       ttsSpeed: parseNumberValue(firstValue(configs, ["voice.tts_speed", "voice.speed"])),
       sttProvider,
       sttApiKey,
+      sttModel: firstValue(configs, ["voice.stt_model", "voice_stt_model"]),
     };
   } catch (err) {
     console.error("[voice] Failed to load voice config:", err);

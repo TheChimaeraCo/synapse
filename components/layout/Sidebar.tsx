@@ -4,7 +4,7 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,9 @@ import {
   Bot,
   Brain,
   CheckCircle2,
+  ChevronDown,
+  ClipboardList,
+  Download,
   FileText,
   FolderKanban,
   FolderOpen,
@@ -24,15 +27,17 @@ import {
   MessageCircle,
   MessageSquare,
   Plus,
+  Search,
   Send as SendIcon,
   Settings,
   Shield,
   Square,
+  Sun,
+  Moon,
   X,
   XCircle,
   Zap,
-ArrowRight,
-  ClipboardList,
+  ArrowRight,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import dynamic from "next/dynamic";
@@ -40,7 +45,12 @@ const ConversationModal = dynamic(() => import("@/components/chat/ConversationMo
 import { ConnectionStatus } from "@/components/ui/ConnectionStatus";
 import { GatewaySwitcher } from "@/components/layout/GatewaySwitcher";
 import { useTheme } from "@/contexts/ThemeContext";
-import { ChevronDown, Download, Sun, Moon } from "lucide-react";
+
+interface NavLink {
+  href: string;
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+}
 
 interface WorkerAgent {
   _id: string;
@@ -100,7 +110,7 @@ function InstallAppButton() {
   );
 }
 
-const navLinks = [
+const navLinks: NavLink[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/vault", label: "Vault", icon: BookOpen },
@@ -109,7 +119,7 @@ const navLinks = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-const secondaryNavLinks = [
+const secondaryNavLinks: NavLink[] = [
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/analytics", label: "Analytics", icon: Zap },
   { href: "/parse-history", label: "Parse History", icon: ClipboardList },
@@ -117,9 +127,42 @@ const secondaryNavLinks = [
   { href: "/admin/audit", label: "Audit Log", icon: Shield },
 ];
 
-function SidebarMore({ pathname, onClose }: { pathname: string; onClose?: () => void }) {
+function SidebarNavLink({
+  link,
+  pathname,
+  onClose,
+  compact = false,
+}: {
+  link: NavLink;
+  pathname: string;
+  onClose?: () => void;
+  compact?: boolean;
+}) {
+  const tourId = link.href === "/chat" ? "chat-link" : link.href === "/knowledge" ? "knowledge-link" : link.href === "/settings" ? "settings-link" : undefined;
+  const isActive = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
+  return (
+    <Link
+      key={link.href}
+      href={link.href}
+      onClick={onClose}
+      {...(tourId ? { "data-tour": tourId } : {})}
+      className={cn(
+        "group flex items-center gap-3 rounded-xl border px-3.5 font-medium transition-all duration-200 ease-out",
+        compact ? "py-2 text-xs" : "py-2.5 text-sm",
+        isActive
+          ? "border-blue-500/25 bg-gradient-to-r from-blue-500/12 via-cyan-500/8 to-purple-500/12 text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_0_0_1px_rgba(59,130,246,0.08)]"
+          : "border-transparent text-zinc-400 hover:border-white/[0.08] hover:bg-white/[0.05] hover:text-zinc-200"
+      )}
+    >
+      <link.icon className={cn("h-4 w-4 shrink-0 transition-colors", isActive ? "text-blue-300" : "text-zinc-500 group-hover:text-zinc-300")} />
+      <span className="truncate">{link.label}</span>
+    </Link>
+  );
+}
+
+function SidebarMore({ pathname, links, onClose }: { pathname: string; links: NavLink[]; onClose?: () => void }) {
   const [open, setOpen] = useState(false);
-  const hasActiveSecondary = secondaryNavLinks.some(
+  const hasActiveSecondary = links.some(
     (l) => pathname.startsWith(l.href)
   );
 
@@ -128,40 +171,91 @@ function SidebarMore({ pathname, onClose }: { pathname: string; onClose?: () => 
     if (hasActiveSecondary) setOpen(true);
   }, [hasActiveSecondary]);
 
+  if (links.length === 0) return null;
+
   return (
-    <div>
+    <div className="pt-1">
       <button
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "w-full flex items-center gap-3 rounded-xl px-3.5 py-2 text-sm font-medium transition-all duration-200 text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300",
+          "w-full flex items-center gap-3 rounded-xl border border-transparent px-3.5 py-2 text-xs font-medium transition-all duration-200 text-zinc-500 hover:border-white/[0.08] hover:bg-white/[0.05] hover:text-zinc-200",
+          hasActiveSecondary && !open && "text-zinc-300"
         )}
       >
-        <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
-        <span className="text-xs">More</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform duration-200", open && "rotate-180")} />
+        <span>More</span>
+        <span className="ml-auto text-[10px] text-zinc-600">{links.length}</span>
       </button>
-      {open && (
-        <div className="flex flex-col gap-0.5 mt-0.5 ml-2">
-          {secondaryNavLinks.map((link) => {
-            const isActive = pathname.startsWith(link.href);
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={onClose}
-                className={cn(
-                  "flex items-center gap-3 rounded-xl px-3 py-2 text-xs font-medium transition-all duration-200",
-                  isActive
-                    ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10 text-blue-300 border border-blue-500/20"
-                    : "text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300"
-                )}
-              >
-                <link.icon className={cn("h-3.5 w-3.5", isActive && "text-blue-400")} />
-                {link.label}
-              </Link>
-            );
-          })}
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-70"
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="mt-1.5 space-y-1">
+            {links.map((link) => (
+              <SidebarNavLink key={link.href} link={link} pathname={pathname} onClose={onClose} compact />
+            ))}
+          </div>
         </div>
-      )}
+      </div>
+    </div>
+  );
+}
+
+function SidebarSection({
+  title,
+  icon: Icon,
+  count,
+  defaultOpen = true,
+  storageKey,
+  children,
+}: {
+  title: string;
+  icon: ComponentType<{ className?: string }>;
+  count?: number;
+  defaultOpen?: boolean;
+  storageKey?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw === "0") setOpen(false);
+      if (raw === "1") setOpen(true);
+    } catch {}
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(storageKey, open ? "1" : "0");
+    } catch {}
+  }, [storageKey, open]);
+
+  return (
+    <div className="px-2 py-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 px-1 text-left transition-colors hover:text-zinc-300"
+      >
+        <Icon className="h-3.5 w-3.5 text-zinc-500" />
+        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">{title}</span>
+        {typeof count === "number" && <span className="ml-auto text-[10px] text-zinc-600">{count}</span>}
+        <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-600 transition-transform duration-200", !open && "-rotate-90")} />
+      </button>
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-80"
+        )}
+      >
+        <div className="overflow-hidden pt-1.5">{children}</div>
+      </div>
     </div>
   );
 }
@@ -345,7 +439,6 @@ interface InstalledModule {
 
 function SidebarModules({ onClose }: { onClose?: () => void }) {
   const [modules, setModules] = useState<InstalledModule[]>([]);
-  const [expanded, setExpanded] = useState(true);
   const [selectedModule, setSelectedModule] = useState<InstalledModule | null>(null);
 
   useEffect(() => {
@@ -367,79 +460,66 @@ function SidebarModules({ onClose }: { onClose?: () => void }) {
   if (modules.length === 0) return null;
 
   return (
-    <div className="px-2 py-2 space-y-1">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1.5 px-1 mb-1 w-full text-left hover:text-zinc-300 transition-colors"
-      >
-        <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-500 transition-transform", !expanded && "-rotate-90")} />
-        <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Modules</span>
-        <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 text-purple-400 border-purple-500/30 ml-auto">
-          {modules.length}
-        </Badge>
-      </button>
-      {expanded && (
-        <div className="space-y-0.5">
-          {modules.map((mod) => {
-            const mainRoute = mod.routes?.[0];
-            const hasUI = Boolean(mainRoute?.path);
-            return (
-              <div key={mod.name}>
-                <button
-                  onClick={() => setSelectedModule(selectedModule?.name === mod.name ? null : mod)}
-                  className={cn(
-                    "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs transition-all duration-200",
-                    selectedModule?.name === mod.name
-                      ? "bg-gradient-to-r from-purple-500/10 to-blue-500/10 text-purple-300 border border-purple-500/15"
-                      : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
-                  )}
-                >
-                  <span className="text-sm shrink-0">{mod.icon || "📦"}</span>
-                  <span className="truncate capitalize">{mod.name.replace(/-/g, " ")}</span>
-                  {mod.tools && mod.tools.length > 0 && (
-                    <span className="text-[10px] text-zinc-600 ml-auto">{mod.tools.length}</span>
-                  )}
-                </button>
-                {selectedModule?.name === mod.name && (
-                  <div className="ml-6 mt-1 space-y-1">
+    <SidebarSection title="Modules" icon={Bot} count={modules.length} storageKey="sidebar:modules">
+      <div className="space-y-0.5">
+        {modules.map((mod) => {
+          return (
+            <div key={mod.name}>
+              <button
+                onClick={() => setSelectedModule(selectedModule?.name === mod.name ? null : mod)}
+                className={cn(
+                  "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs transition-all duration-200",
+                  selectedModule?.name === mod.name
+                    ? "bg-gradient-to-r from-purple-500/10 to-blue-500/10 text-purple-300 border border-purple-500/15"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
+                )}
+              >
+                <span className="text-sm shrink-0">{mod.icon || "📦"}</span>
+                <span className="truncate capitalize">{mod.name.replace(/-/g, " ")}</span>
+                {mod.tools && mod.tools.length > 0 && (
+                  <span className="text-[10px] text-zinc-600 ml-auto">{mod.tools.length}</span>
+                )}
+              </button>
+              {selectedModule?.name === mod.name && (
+                <div className="ml-6 mt-1 space-y-1">
+                  <Link
+                    href={`/modules/${mod.id}`}
+                    onClick={onClose}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-purple-300 hover:bg-purple-500/10 transition-all"
+                  >
+                    <span className="text-xs">🖥</span>
+                    <span>Open UI</span>
+                  </Link>
+                  {mod.routes?.map((route) => (
                     <Link
-                      href={`/modules/${mod.id}`}
+                      key={route.path}
+                      href={route.path}
                       onClick={onClose}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-purple-300 hover:bg-purple-500/10 transition-all"
                     >
-                      <span className="text-xs">🖥</span>
-                      <span>Open UI</span>
+                      <span className="text-xs">{route.icon || "📄"}</span>
+                      <span>{route.title || route.path}</span>
                     </Link>
-                    {mod.routes?.map((route) => (
-                      <Link
-                        key={route.path}
-                        href={route.path}
-                        onClick={onClose}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-purple-300 hover:bg-purple-500/10 transition-all"
-                      >
-                        <span className="text-xs">{route.icon || "📄"}</span>
-                        <span>{route.title || route.path}</span>
-                      </Link>
-                    ))}
-                    {mod.tools && mod.tools.length > 0 && (
-                      <div className="px-3 py-1 text-[10px] text-zinc-600">
-                        {mod.tools.length} tool{mod.tools.length !== 1 ? "s" : ""}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-{/* Modal removed - using inline expand with route links */}
-    </div>
+                  ))}
+                  {mod.tools && mod.tools.length > 0 && (
+                    <div className="px-3 py-1 text-[10px] text-zinc-600">
+                      {mod.tools.length} tool{mod.tools.length !== 1 ? "s" : ""}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </SidebarSection>
   );
 }
 
 function SidebarAgents() {
   const [agents, setAgents] = useState<WorkerAgent[]>([]);
+  const [showHistory, setShowHistory] = useState(true);
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
   const fetchAgents = useCallback(async () => {
     try {
@@ -460,12 +540,12 @@ function SidebarAgents() {
     } catch {}
   }, [fetchAgents]);
 
+  const hasRunning = agents.some((a) => a.status === "running");
   useEffect(() => {
     fetchAgents();
-    const hasRunning = agents.some(a => a.status === "running");
     const interval = setInterval(fetchAgents, hasRunning ? 2000 : 15000);
     return () => clearInterval(interval);
-  }, [fetchAgents, agents.length]);
+  }, [fetchAgents, hasRunning]);
 
   useEffect(() => {
     const handler = () => fetchAgents();
@@ -473,9 +553,27 @@ function SidebarAgents() {
     return () => window.removeEventListener("synapse:agent_update", handler);
   }, [fetchAgents]);
 
-  const running = agents.filter(a => a.status === "running");
-  const past = agents.filter(a => a.status !== "running");
-  const [showHistory, setShowHistory] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("sidebar:agents:history");
+      if (raw === "0") setShowHistory(false);
+      if (raw === "1") setShowHistory(true);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sidebar:agents:history", showHistory ? "1" : "0");
+    } catch {}
+  }, [showHistory]);
+
+  const running = agents
+    .filter((a) => a.status === "running")
+    .sort((a, b) => b.startedAt - a.startedAt);
+  const past = agents
+    .filter((a) => a.status !== "running")
+    .sort((a, b) => (b.completedAt || b.startedAt) - (a.completedAt || a.startedAt));
+  const visiblePast = showAllHistory ? past : past.slice(0, 12);
 
   if (running.length === 0 && past.length === 0) return null;
 
@@ -492,50 +590,66 @@ function SidebarAgents() {
   const historyStats = sectionStats(past);
 
   return (
-    <div className="px-2 py-2 space-y-3">
-      {/* Active agents */}
-      {running.length > 0 && (
-        <div>
-          <div className="flex items-center gap-1.5 px-1 mb-1">
-            <Bot className="h-3.5 w-3.5 text-blue-400" />
-            <span className="text-[11px] font-medium text-blue-400 uppercase tracking-wider">Active</span>
-            <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 text-blue-400 border-blue-500/30 ml-auto">
-              {running.length}
-            </Badge>
-          </div>
-          {activeStats.tokens > 0 && (
-            <div className="px-1 mb-2 text-[10px] text-zinc-600 font-mono">
-              {formatTokens(activeStats.tokens)}t{activeStats.cost > 0 ? ` · $${activeStats.cost.toFixed(3)}` : ""}
+    <SidebarSection title="Agents" icon={Bot} count={agents.length} storageKey="sidebar:agents">
+      <div className="space-y-3">
+        {/* Active agents */}
+        {running.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 px-1 mb-1">
+              <span className="text-[11px] font-medium text-blue-400 uppercase tracking-wider">Active</span>
+              <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 text-blue-400 border-blue-500/30 ml-auto">
+                {running.length}
+              </Badge>
             </div>
-          )}
-          <div className="space-y-1.5">
-            {running.map(a => <AgentItem key={a._id} agent={a} onKill={killAgent} />)}
-          </div>
-        </div>
-      )}
-
-      {/* History toggle */}
-      {past.length > 0 && (
-        <div>
-          <button
-            onClick={() => setShowHistory(v => !v)}
-            className="flex items-center gap-1.5 px-1 mb-1 w-full text-left hover:text-zinc-300 transition-colors"
-          >
-            <Bot className="h-3.5 w-3.5 text-zinc-500" />
-            <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">History</span>
-            <span className="text-[10px] text-zinc-600 ml-auto">{past.length}</span>
-          </button>
-          <div className="px-1 mb-2 text-[10px] text-zinc-600 font-mono">
-            {formatTokens(historyStats.tokens)}t{historyStats.cost > 0 ? ` · $${historyStats.cost.toFixed(3)}` : ""}
-          </div>
-          {showHistory && (
+            {activeStats.tokens > 0 && (
+              <div className="px-1 mb-2 text-[10px] text-zinc-600 font-mono">
+                {formatTokens(activeStats.tokens)}t{activeStats.cost > 0 ? ` · $${activeStats.cost.toFixed(3)}` : ""}
+              </div>
+            )}
             <div className="space-y-1.5">
-              {past.map(a => <AgentItem key={a._id} agent={a} />)}
+              {running.map(a => <AgentItem key={a._id} agent={a} onKill={killAgent} />)}
             </div>
-          )}
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+
+        {/* History toggle */}
+        {past.length > 0 && (
+          <div>
+            <button
+              onClick={() => setShowHistory(v => !v)}
+              className="flex items-center gap-1.5 px-1 mb-1 w-full text-left hover:text-zinc-300 transition-colors"
+            >
+              <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">History</span>
+              <span className="text-[10px] text-zinc-600 ml-auto">{past.length}</span>
+            </button>
+            <div className="px-1 mb-2 text-[10px] text-zinc-600 font-mono flex items-center justify-between gap-2">
+              <span>
+                {formatTokens(historyStats.tokens)}t{historyStats.cost > 0 ? ` · $${historyStats.cost.toFixed(3)}` : ""}
+              </span>
+              <span className="text-zinc-700">last 24h</span>
+            </div>
+            <div
+              className={cn(
+                "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+                showHistory ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-80"
+              )}
+            >
+              <div className="space-y-1.5 overflow-hidden">
+                {visiblePast.map(a => <AgentItem key={a._id} agent={a} />)}
+                {past.length > 12 && (
+                  <button
+                    onClick={() => setShowAllHistory((v) => !v)}
+                    className="w-full rounded-lg border border-white/[0.08] bg-white/[0.02] px-2 py-1 text-[10px] text-zinc-500 transition hover:bg-white/[0.05] hover:text-zinc-300"
+                  >
+                    {showAllHistory ? "Show less" : `Show ${past.length - 12} more`}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </SidebarSection>
   );
 }
 
@@ -719,6 +833,7 @@ function SidebarChannels() {
   const gatewayId = (session?.user as any)?.gatewayId;
   const [channels, setChannels] = useState<Array<{ _id: string; name: string; platform: string; icon?: string; description?: string }>>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+  const [channelFilter, setChannelFilter] = useState("");
 
   useEffect(() => {
     if (!gatewayId) return;
@@ -748,6 +863,13 @@ function SidebarChannels() {
 
   const platformChannels = channels.filter((c) => c.platform !== "custom");
   const customChannels = channels.filter((c) => c.platform === "custom");
+  const normalizedFilter = channelFilter.trim().toLowerCase();
+  const filteredPlatformChannels = normalizedFilter
+    ? platformChannels.filter((c) => c.name.toLowerCase().includes(normalizedFilter) || c.platform.toLowerCase().includes(normalizedFilter))
+    : platformChannels;
+  const filteredCustomChannels = normalizedFilter
+    ? customChannels.filter((c) => c.name.toLowerCase().includes(normalizedFilter))
+    : customChannels;
 
   const PLATFORM_ICONS: Record<string, React.ReactNode> = {
     telegram: <SendIcon className="h-3.5 w-3.5 text-sky-400" />,
@@ -765,13 +887,52 @@ function SidebarChannels() {
   if (channels.length === 0) return null;
 
   return (
-    <div className="px-2 py-2 space-y-1">
-      {platformChannels.length > 0 && (
-        <div>
-          <div className="px-1 py-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Platforms</span>
+    <SidebarSection title="Channels" icon={MessageCircle} count={channels.length} storageKey="sidebar:channels">
+      <div className="space-y-1">
+        <div className="relative pb-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-600" />
+          <input
+            value={channelFilter}
+            onChange={(e) => setChannelFilter(e.target.value)}
+            placeholder="Filter channels..."
+            className="h-8 w-full rounded-lg border border-white/[0.08] bg-white/[0.03] pl-8 pr-2 text-xs text-zinc-200 outline-none transition-colors placeholder:text-zinc-600 focus:border-blue-400/50 focus:bg-white/[0.06]"
+          />
+        </div>
+        {filteredPlatformChannels.length > 0 && (
+          <div>
+            <div className="px-1 py-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Platforms</span>
+            </div>
+            {filteredPlatformChannels.map((ch) => (
+              <button
+                key={ch._id}
+                onClick={() => selectChannel(ch._id)}
+                className={cn(
+                  "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-all duration-200",
+                  ch._id === activeChannelId
+                    ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10 text-zinc-100 border border-blue-500/15"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
+                )}
+              >
+                <span className="shrink-0">
+                  {ch.icon ? <span className="text-sm">{ch.icon}</span> : (PLATFORM_ICONS[ch.platform] || <Hash className="h-3.5 w-3.5" />)}
+                </span>
+                <span className="truncate">{ch.name}</span>
+              </button>
+            ))}
           </div>
-          {platformChannels.map((ch) => (
+        )}
+        <div>
+          <div className="px-1 py-1 flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Custom</span>
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent("synapse:create-channel"))}
+              className="text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {filteredCustomChannels.map((ch) => (
             <button
               key={ch._id}
               onClick={() => selectChannel(ch._id)}
@@ -782,44 +943,16 @@ function SidebarChannels() {
                   : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
               )}
             >
-              <span className="shrink-0">
-                {ch.icon ? <span className="text-sm">{ch.icon}</span> : (PLATFORM_ICONS[ch.platform] || <Hash className="h-3.5 w-3.5" />)}
-              </span>
+              <Hash className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
               <span className="truncate">{ch.name}</span>
             </button>
           ))}
+          {filteredCustomChannels.length === 0 && (
+            <span className="px-2.5 py-1 text-xs text-zinc-600 italic block">No custom channels</span>
+          )}
         </div>
-      )}
-      <div>
-        <div className="px-1 py-1 flex items-center justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Custom</span>
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent("synapse:create-channel"))}
-            className="text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        {customChannels.map((ch) => (
-          <button
-            key={ch._id}
-            onClick={() => selectChannel(ch._id)}
-            className={cn(
-              "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-all duration-200",
-              ch._id === activeChannelId
-                ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10 text-zinc-100 border border-blue-500/15"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
-            )}
-          >
-            <Hash className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
-            <span className="truncate">{ch.name}</span>
-          </button>
-        ))}
-        {customChannels.length === 0 && (
-          <span className="px-2.5 py-1 text-xs text-zinc-600 italic block">No custom channels</span>
-        )}
       </div>
-    </div>
+    </SidebarSection>
   );
 }
 
@@ -923,9 +1056,18 @@ function ThemeToggleCompact() {
 
 export function Sidebar({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname();
+  const [navFilter, setNavFilter] = useState("");
+  const trimmedFilter = navFilter.trim().toLowerCase();
+  const filteredPrimaryLinks = trimmedFilter
+    ? navLinks.filter((link) => link.label.toLowerCase().includes(trimmedFilter))
+    : navLinks;
+  const filteredSecondaryLinks = trimmedFilter
+    ? secondaryNavLinks.filter((link) => link.label.toLowerCase().includes(trimmedFilter))
+    : secondaryNavLinks;
+  const hasAnyNavMatch = filteredPrimaryLinks.length > 0 || filteredSecondaryLinks.length > 0;
 
   return (
-    <div className="flex h-full flex-col bg-white/[0.04] backdrop-blur-2xl border-r border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
+    <div className="flex h-full flex-col overflow-hidden border-r border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
       {/* Logo */}
       <div className="flex items-center justify-between px-5 py-5">
         <Link href="/" className="flex items-center gap-2.5">
@@ -954,37 +1096,30 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
       {/* Nav links */}
       <nav data-tour="sidebar" className="flex flex-col gap-1 px-3 py-2">
-        {navLinks.map((link) => {
-          const tourId = link.href === "/chat" ? "chat-link" : link.href === "/knowledge" ? "knowledge-link" : link.href === "/settings" ? "settings-link" : undefined;
-          const isActive =
-            link.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(link.href);
-          return (
-            <Link
-              key={link.href}
-              href={link.href}
-              onClick={onClose}
-              {...(tourId ? { "data-tour": tourId } : {})}
-              className={cn(
-                "flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200",
-                isActive
-                  ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10 text-blue-300 border border-blue-500/20 shadow-[0_0_20px_rgba(59,130,246,0.1)]"
-                  : "text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
-              )}
-            >
-              <link.icon className={cn("h-4 w-4", isActive && "text-blue-400")} />
-              {link.label}
-            </Link>
-          );
-        })}
-        <SidebarMore pathname={pathname} onClose={onClose} />
+        <div className="relative pb-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-600" />
+          <input
+            value={navFilter}
+            onChange={(e) => setNavFilter(e.target.value)}
+            placeholder="Jump to..."
+            className="h-8 w-full rounded-lg border border-white/[0.08] bg-white/[0.03] pl-8 pr-2 text-xs text-zinc-200 outline-none transition-colors placeholder:text-zinc-600 focus:border-blue-400/50 focus:bg-white/[0.06]"
+          />
+        </div>
+        {filteredPrimaryLinks.map((link) => (
+          <SidebarNavLink key={link.href} link={link} pathname={pathname} onClose={onClose} />
+        ))}
+        {!hasAnyNavMatch && (
+          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-zinc-500">
+            No matching pages.
+          </div>
+        )}
+        <SidebarMore pathname={pathname} links={filteredSecondaryLinks} onClose={onClose} />
       </nav>
 
       <Separator />
 
       {/* Channels + agents - fills remaining space */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
         {pathname.startsWith("/chat") && <SidebarChannels />}
         <SidebarModules onClose={onClose} />
         <SidebarAgents />

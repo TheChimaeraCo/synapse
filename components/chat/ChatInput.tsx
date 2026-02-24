@@ -8,6 +8,7 @@ import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, MicOff, Bot, Chevro
 import { toast } from "sonner";
 import { useSession } from "next-auth/react";
 import { getCommandSuggestions } from "@/lib/slashCommands";
+import { prepareTextForSpeech } from "@/lib/voiceText";
 
 type BrowserSpeechRecognition = {
   lang: string;
@@ -43,10 +44,11 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState({
     autoRead: true,
-    streamTts: true,
+    streamTts: false,
     bargeIn: true,
     autoTranscribe: true,
     maxTextLength: 5000,
+    ttsProvider: "none",
     sttProvider: "groq",
     sttLanguage: "en-US",
     ttsSpeed: 1.2,
@@ -75,6 +77,11 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const streamSpeechQueueRef = useRef<string[]>([]);
   const streamSpeechLoopActiveRef = useRef(false);
   const streamSpeechUsedRef = useRef(false);
+  const processingVoiceTurnRef = useRef(false);
+  const groqTtsUnavailableRef = useRef(false);
+  const voiceInputStreamRef = useRef<MediaStream | null>(null);
+  const autoListenBackoffUntilRef = useRef(0);
+  const lastAutoListenAttemptRef = useRef(0);
   const bargeInMonitorStreamRef = useRef<MediaStream | null>(null);
   const bargeInMonitorAudioCtxRef = useRef<AudioContext | null>(null);
   const bargeInMonitorFrameRef = useRef<number | null>(null);
@@ -113,6 +120,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     voiceSettingsRef.current = voiceSettings;
+    if (voiceSettings.ttsProvider !== "groq") {
+      groqTtsUnavailableRef.current = false;
+    }
   }, [voiceSettings]);
 
   useEffect(() => {
@@ -135,19 +145,21 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await gatewayFetch("/api/config/bulk?keys=voice.auto_read,voice.stream_tts,voice.barge_in,voice.auto_transcribe,voice.max_text_length,voice.stt_provider,voice.stt_language,voice.tts_speed,voice.speed");
+        const res = await gatewayFetch("/api/config/bulk?keys=voice.auto_read,voice.stream_tts,voice.barge_in,voice.auto_transcribe,voice.max_text_length,voice.tts_provider,voice.stt_provider,voice.stt_language,voice.tts_speed,voice.speed");
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
         const maxTextRaw = Number.parseInt(data["voice.max_text_length"] || "", 10);
+        const ttsProviderRaw = String(data["voice.tts_provider"] || "none").toLowerCase();
         const sttProviderRaw = String(data["voice.stt_provider"] || "groq").toLowerCase();
         const ttsSpeedRaw = Number.parseFloat(String(data["voice.tts_speed"] || data["voice.speed"] || "1.2"));
         setVoiceSettings({
           autoRead: data["voice.auto_read"] !== "false",
-          streamTts: data["voice.stream_tts"] !== "false",
+          streamTts: data["voice.stream_tts"] === "true",
           bargeIn: data["voice.barge_in"] !== "false",
           autoTranscribe: data["voice.auto_transcribe"] !== "false",
           maxTextLength: Number.isFinite(maxTextRaw) && maxTextRaw > 0 ? maxTextRaw : 5000,
+          ttsProvider: ttsProviderRaw || "none",
           sttProvider: sttProviderRaw || "groq",
           sttLanguage: data["voice.stt_language"] || navigator.language || "en-US",
           ttsSpeed: Number.isFinite(ttsSpeedRaw) ? Math.max(0.7, Math.min(2, ttsSpeedRaw)) : 1.2,
@@ -415,6 +427,53 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     return !isChatStreamingNow();
   }, [isChatStreamingNow]);
 
+  const releaseVoiceInputStream = useCallback(() => {
+    if (!voiceInputStreamRef.current) return;
+    voiceInputStreamRef.current.getTracks().forEach((track) => track.stop());
+    voiceInputStreamRef.current = null;
+  }, []);
+
+  const ensureVoiceInputStream = useCallback(async (): Promise<MediaStream> => {
+    const existing = voiceInputStreamRef.current;
+    if (existing && existing.active) {
+      const tracks = existing.getAudioTracks();
+      const hasHealthyTrack = tracks.some((t) => t.readyState === "live" && t.enabled && !t.muted);
+      if (hasHealthyTrack) {
+        return existing;
+      }
+      existing.getTracks().forEach((track) => track.stop());
+      voiceInputStreamRef.current = null;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+    });
+    voiceInputStreamRef.current = stream;
+    return stream;
+  }, []);
+
+  const pickRecorderMimeType = useCallback((): string | null => {
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",
+      "audio/aac",
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(candidate)) {
+          return candidate;
+        }
+      } catch {}
+    }
+    return null;
+  }, []);
+
   const stopBargeInMonitor = useCallback(() => {
     if (typeof window !== "undefined" && bargeInMonitorFrameRef.current != null) {
       window.cancelAnimationFrame(bargeInMonitorFrameRef.current);
@@ -439,7 +498,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
   const splitSpeakableChunks = useCallback((value: string): { chunks: string[]; remainder: string } => {
     const chunks: string[] = [];
-    const regex = /([.!?]+(?:["')\]]+)?\s+|[,;:]\s+|\n{2,})/g;
+    const regex = /([.!?]+(?:["')\]]+)?\s+|\n{2,})/g;
     let cursor = 0;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(value)) !== null) {
@@ -449,7 +508,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       cursor = end;
     }
     let remainder = value.slice(cursor);
-    const MAX_PENDING_CHARS = 90;
+    const MAX_PENDING_CHARS = 180;
     if (remainder.length >= MAX_PENDING_CHARS) {
       const lastWhitespace = Math.max(remainder.lastIndexOf(" "), remainder.lastIndexOf("\n"));
       const splitAt = lastWhitespace > 40 ? lastWhitespace : MAX_PENDING_CHARS;
@@ -465,8 +524,16 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     streamSpeechLoopActiveRef.current = true;
     try {
       while (voiceModeRef.current && streamSpeechQueueRef.current.length > 0) {
-        const next = streamSpeechQueueRef.current.shift();
+        const combineTarget = voiceSettingsRef.current.ttsProvider === "groq" ? 160 : 220;
+        let next = streamSpeechQueueRef.current.shift();
         if (!next) continue;
+        while (next.length < combineTarget && streamSpeechQueueRef.current.length > 0) {
+          const followUp = streamSpeechQueueRef.current[0];
+          if (!followUp) break;
+          if ((next.length + 1 + followUp.length) > combineTarget) break;
+          streamSpeechQueueRef.current.shift();
+          next = `${next} ${followUp}`.trim();
+        }
         await playTtsRef.current(next);
       }
     } finally {
@@ -485,8 +552,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
   const enqueueLiveSpeechChunks = useCallback((chunks: string[]) => {
     if (chunks.length === 0) return;
+    const sanitized = chunks
+      .map((chunk) => prepareTextForSpeech(chunk, Math.max(120, Math.floor(voiceSettingsRef.current.maxTextLength / 2))))
+      .filter((chunk) => chunk.length > 1);
+    if (sanitized.length === 0) return;
     streamSpeechUsedRef.current = true;
-    streamSpeechQueueRef.current.push(...chunks);
+    streamSpeechQueueRef.current.push(...sanitized);
     void runLiveSpeechQueue();
   }, [runLiveSpeechQueue]);
 
@@ -533,7 +604,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   }, [clearAwaitingReply, resetLiveSpeechState, waitForChatIdle]);
 
   const playBrowserTts = useCallback(async (text: string) => {
-    const spokenText = text.slice(0, voiceSettings.maxTextLength).trim();
+    const spokenText = prepareTextForSpeech(text, voiceSettings.maxTextLength);
     if (!spokenText) return;
     if (typeof window === "undefined" || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
       throw new Error("Browser speech synthesis is not supported in this browser.");
@@ -559,52 +630,112 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     });
   }, [voiceSettings.maxTextLength, voiceSettings.sttLanguage, voiceSettings.ttsSpeed]);
 
-  const playTts = useCallback(async (text: string) => {
-    const spokenText = text.slice(0, voiceSettings.maxTextLength).trim();
-    if (!spokenText) return;
+  const splitForTtsRequests = useCallback((value: string, maxChars: number): string[] => {
+    const normalized = value.trim();
+    if (!normalized) return [];
+    if (normalized.length <= maxChars) return [normalized];
 
-    try {
-      const response = await gatewayFetch("/api/voice/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: spokenText }),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "TTS failed");
+    const sentenceParts = normalized.match(/[^.!?\n]+[.!?]?/g) || [normalized];
+    const chunks: string[] = [];
+    let current = "";
+
+    const pushChunk = (chunk: string) => {
+      const cleaned = chunk.trim();
+      if (cleaned) chunks.push(cleaned);
+    };
+
+    for (const part of sentenceParts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const candidate = current ? `${current} ${trimmed}` : trimmed;
+      if (candidate.length <= maxChars) {
+        current = candidate;
+        continue;
+      }
+      if (current) pushChunk(current);
+      current = "";
+
+      if (trimmed.length <= maxChars) {
+        current = trimmed;
+        continue;
       }
 
-      const blob = await response.blob();
-      if (!blob.size) throw new Error("TTS returned empty audio");
-      const url = URL.createObjectURL(blob);
-      setTtsPlaying(true);
-      await new Promise<void>((resolve, reject) => {
-        const audio = new Audio(url);
-        activeAudioRef.current = audio;
-        audio.playbackRate = Math.max(0.7, Math.min(2, voiceSettings.ttsSpeed || 1.2));
-        audio.onended = () => {
-          URL.revokeObjectURL(url);
-          activeAudioRef.current = null;
-          setTtsPlaying(false);
-          resolve();
-        };
-        audio.onerror = () => {
-          URL.revokeObjectURL(url);
-          activeAudioRef.current = null;
-          setTtsPlaying(false);
-          reject(new Error("Audio playback failed"));
-        };
-        audio.play().catch((err) => {
-          URL.revokeObjectURL(url);
-          activeAudioRef.current = null;
-          setTtsPlaying(false);
-          reject(err);
-        });
-      });
-    } catch {
-      await playBrowserTts(spokenText);
+      let rest = trimmed;
+      while (rest.length > maxChars) {
+        const slice = rest.slice(0, maxChars);
+        const splitAt = Math.max(slice.lastIndexOf(" "), slice.lastIndexOf("\n"));
+        const boundary = splitAt > 40 ? splitAt : maxChars;
+        pushChunk(rest.slice(0, boundary));
+        rest = rest.slice(boundary).trimStart();
+      }
+      current = rest;
     }
-  }, [playBrowserTts, voiceSettings.maxTextLength, voiceSettings.ttsSpeed]);
+
+    if (current) pushChunk(current);
+    return chunks;
+  }, []);
+
+  const playTts = useCallback(async (text: string) => {
+    const spokenText = prepareTextForSpeech(text, voiceSettings.maxTextLength);
+    if (!spokenText) return;
+    if (voiceSettings.ttsProvider === "groq" && groqTtsUnavailableRef.current) {
+      await playBrowserTts(spokenText);
+      return;
+    }
+    const perRequestLimit = voiceSettings.ttsProvider === "groq" ? 180 : Math.max(160, voiceSettings.maxTextLength);
+    const requestChunks = splitForTtsRequests(spokenText, perRequestLimit);
+    if (requestChunks.length === 0) return;
+    let playedAny = false;
+
+    try {
+      for (const chunk of requestChunks) {
+        const response = await gatewayFetch("/api/voice/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: chunk }),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          const errorMessage = String(data.error || "TTS failed");
+          if (voiceSettings.ttsProvider === "groq" && /terms/i.test(errorMessage)) {
+            groqTtsUnavailableRef.current = true;
+          }
+          throw new Error(errorMessage);
+        }
+
+        const blob = await response.blob();
+        if (!blob.size) throw new Error("TTS returned empty audio");
+        const url = URL.createObjectURL(blob);
+        setTtsPlaying(true);
+        await new Promise<void>((resolve, reject) => {
+          const audio = new Audio(url);
+          activeAudioRef.current = audio;
+          audio.playbackRate = Math.max(0.7, Math.min(2, voiceSettings.ttsSpeed || 1.2));
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            activeAudioRef.current = null;
+            setTtsPlaying(false);
+            resolve();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            activeAudioRef.current = null;
+            setTtsPlaying(false);
+            reject(new Error("Audio playback failed"));
+          };
+          audio.play().catch((err) => {
+            URL.revokeObjectURL(url);
+            activeAudioRef.current = null;
+            setTtsPlaying(false);
+            reject(err);
+          });
+        });
+        playedAny = true;
+      }
+    } catch {
+      if (!playedAny) await playBrowserTts(spokenText);
+    }
+  }, [playBrowserTts, splitForTtsRequests, voiceSettings.maxTextLength, voiceSettings.ttsProvider, voiceSettings.ttsSpeed]);
 
   const getBrowserSpeechCtor = useCallback((): BrowserSpeechRecognitionCtor | null => {
     if (typeof window === "undefined") return null;
@@ -709,9 +840,11 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const stream = await ensureVoiceInputStream();
+      const mimeType = pickRecorderMimeType();
+      const mediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -720,9 +853,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
         const blobType = mediaRecorder.mimeType || "audio/webm";
-        const ext = blobType.includes("ogg") ? "ogg" : blobType.includes("wav") ? "wav" : "webm";
+        const ext = blobType.includes("ogg")
+          ? "ogg"
+          : blobType.includes("wav")
+            ? "wav"
+            : blobType.includes("mp4") || blobType.includes("m4a")
+              ? "m4a"
+              : "webm";
         const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
         if (audioBlob.size < 100) return;
 
@@ -730,6 +868,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         try {
           const formData = new FormData();
           formData.append("audio", audioBlob, `recording.${ext}`);
+          formData.append("language", voiceSettings.sttLanguage || "en-US");
           const res = await gatewayFetch("/api/voice/stt", { method: "POST", body: formData });
           if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
@@ -762,45 +901,93 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
         const audioCtx = new AudioContext();
         const source = audioCtx.createMediaStreamSource(stream);
         const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 512;
+        analyser.fftSize = 1024;
         source.connect(analyser);
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        let silenceStart = 0;
+        const dataArray = new Uint8Array(analyser.fftSize);
+        let noiseFloor = 0.008;
+        let speakingMs = 0;
+        let silenceMs = 0;
         let speechDetected = false;
-        const SILENCE_THRESHOLD = 12;
-        const SILENCE_DURATION = 2500; // ms of silence before auto-stop
-        const MIN_RECORD_TIME = 1000; // minimum recording time before checking silence
+        let lastTickAt = performance.now();
+        const startedAt = performance.now();
+        const CALIBRATION_MS = 700;
+        const MIN_RECORD_MS = 900;
+        const MIN_SPEECH_MS = 280;
+        const SILENCE_STOP_MS = 1400;
+        const HARD_STOP_MS = 18000;
+
+        const stopAndClose = () => {
+          if (audioCtx.state !== "closed") {
+            void audioCtx.close().catch(() => {});
+          }
+          if (mediaRecorder.state === "recording") {
+            mediaRecorder.stop();
+            setRecording(false);
+          }
+        };
 
         const checkSilence = () => {
           if (mediaRecorder.state !== "recording") {
-            audioCtx.close();
+            if (audioCtx.state !== "closed") void audioCtx.close().catch(() => {});
             return;
           }
-          analyser.getByteFrequencyData(dataArray);
-          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
 
-          if (avg > SILENCE_THRESHOLD) {
-            speechDetected = true;
-            silenceStart = 0;
-          } else if (speechDetected) {
-            if (!silenceStart) silenceStart = Date.now();
-            else if (Date.now() - silenceStart > SILENCE_DURATION) {
-              audioCtx.close();
-              mediaRecorder.stop();
-              setRecording(false);
-              return;
-            }
+          const now = performance.now();
+          const dt = Math.max(16, now - lastTickAt);
+          lastTickAt = now;
+          analyser.getByteTimeDomainData(dataArray);
+          let sqSum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            const centered = (dataArray[i] - 128) / 128;
+            sqSum += centered * centered;
           }
+          const rms = Math.sqrt(sqSum / dataArray.length);
+
+          if (!speechDetected && now - startedAt < CALIBRATION_MS) {
+            noiseFloor = noiseFloor * 0.9 + rms * 0.1;
+            requestAnimationFrame(checkSilence);
+            return;
+          }
+
+          const dynamicThreshold = Math.max(0.012, noiseFloor * 2.2);
+          const isSpeechLike = rms > dynamicThreshold;
+
+          if (isSpeechLike) {
+            speechDetected = true;
+            speakingMs += dt;
+            silenceMs = 0;
+          } else if (speechDetected) {
+            silenceMs += dt;
+            noiseFloor = noiseFloor * 0.97 + rms * 0.03;
+          } else {
+            noiseFloor = noiseFloor * 0.95 + rms * 0.05;
+          }
+
+          const recordElapsed = now - startedAt;
+          if (recordElapsed >= HARD_STOP_MS) {
+            stopAndClose();
+            return;
+          }
+          if (
+            speechDetected
+            && speakingMs >= MIN_SPEECH_MS
+            && silenceMs >= SILENCE_STOP_MS
+            && recordElapsed >= MIN_RECORD_MS
+          ) {
+            stopAndClose();
+            return;
+          }
+
           requestAnimationFrame(checkSilence);
         };
-        // Delay VAD start to avoid cutting off immediately
-        setTimeout(checkSilence, MIN_RECORD_TIME);
+        requestAnimationFrame(checkSilence);
       }
     } catch {
+      autoListenBackoffUntilRef.current = Date.now() + 5000;
       toast.error("Microphone access denied");
       if (autoSend) clearAwaitingReply();
     }
-  }, [clearAwaitingReply, interruptAssistantTurn, isAssistantBusyNow, markAwaitingReply, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttProvider]);
+  }, [clearAwaitingReply, ensureVoiceInputStream, interruptAssistantTurn, isAssistantBusyNow, markAwaitingReply, pickRecorderMimeType, recording, sendTextDirect, startBrowserRecognition, transcribing, voiceSettings.sttLanguage, voiceSettings.sttProvider]);
 
   const toggleVoiceMode = useCallback(async () => {
     if (voiceModeRef.current) {
@@ -808,6 +995,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       clearAwaitingReply();
       resetLiveSpeechState();
       stopRecording();
+      releaseVoiceInputStream();
       if (activeAudioRef.current) {
         activeAudioRef.current.pause();
         activeAudioRef.current = null;
@@ -823,12 +1011,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     setVoiceMode(true);
     clearAwaitingReply();
     resetLiveSpeechState();
+    autoListenBackoffUntilRef.current = 0;
     toast.success("Voice mode on");
 
     if (voiceSettings.autoTranscribe && !isChatStreamingNow() && !recording && !transcribing) {
       await startRecording(true);
     }
-  }, [clearAwaitingReply, isChatStreamingNow, recording, resetLiveSpeechState, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
+  }, [clearAwaitingReply, isChatStreamingNow, recording, releaseVoiceInputStream, resetLiveSpeechState, startRecording, stopRecording, transcribing, voiceSettings.autoTranscribe]);
 
   useEffect(() => {
     playTtsRef.current = playTts;
@@ -841,6 +1030,44 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     waitForChatIdleRef.current = waitForChatIdle;
   }, [waitForChatIdle]);
+
+  // Voice-mode watchdog: if we are idle in voice mode, automatically return to listening.
+  useEffect(() => {
+    if (!voiceMode || !voiceSettings.autoTranscribe) return;
+    let cancelled = false;
+
+    const maybeResumeListening = async () => {
+      if (cancelled) return;
+      if (
+        recordingRef.current
+        || transcribingRef.current
+        || voiceAwaitingReplyRef.current
+        || chatStreamingRef.current
+        || ttsPlayingRef.current
+        || streamSpeechLoopActiveRef.current
+        || Boolean(activeAudioRef.current)
+      ) {
+        return;
+      }
+
+      const now = Date.now();
+      if (now < autoListenBackoffUntilRef.current) return;
+      if (now - lastAutoListenAttemptRef.current < 2500) return;
+
+      lastAutoListenAttemptRef.current = now;
+      await startRecordingRef.current(true);
+    };
+
+    const interval = window.setInterval(() => {
+      void maybeResumeListening();
+    }, 1200);
+
+    void maybeResumeListening();
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [voiceMode, voiceSettings.autoTranscribe]);
 
   // Barge-in monitor: if user starts speaking while assistant is generating, interrupt and listen.
   useEffect(() => {
@@ -993,33 +1220,69 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     return () => window.removeEventListener("synapse:assistant_stream_delta", handler);
   }, [enqueueLiveSpeechChunks, splitSpeakableChunks]);
 
-  // If a response is aborted, return to listening mode immediately.
+  // Stream completion handler for voice mode turn-taking.
   useEffect(() => {
     const handler = async (event: Event) => {
-      const detail = (event as CustomEvent).detail as { sessionId?: string; aborted?: boolean } | undefined;
+      const detail = (event as CustomEvent).detail as { sessionId?: string; aborted?: boolean; content?: string } | undefined;
       if (detail?.sessionId && detail.sessionId !== sessionIdRef.current) return;
-      if (!detail?.aborted) return;
       if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
+      if (processingVoiceTurnRef.current) return;
+      processingVoiceTurnRef.current = true;
 
-      clearAwaitingReply();
-      resetLiveSpeechState();
-      if (voiceSettingsRef.current.autoTranscribe) {
-        await waitForChatIdleRef.current(1500);
-        await startRecordingRef.current(true);
+      try {
+        if (detail?.aborted) {
+          clearAwaitingReply();
+          resetLiveSpeechState();
+          if (voiceSettingsRef.current.autoTranscribe) {
+            await waitForChatIdleRef.current(1500);
+            await startRecordingRef.current(true);
+          }
+          return;
+        }
+
+        const streamContent = typeof detail?.content === "string" ? detail.content.trim() : "";
+        try {
+          if (streamContent && voiceSettingsRef.current.autoRead) {
+            if (streamSpeechUsedRef.current) {
+              const tail = streamSpeechBufferRef.current.trim();
+              if (tail) {
+                streamSpeechQueueRef.current.push(tail);
+                streamSpeechBufferRef.current = "";
+              }
+              void runLiveSpeechQueue();
+              await waitForLiveSpeechDrain();
+            } else {
+              await playTtsRef.current(streamContent);
+            }
+          }
+        } catch (err: any) {
+          toast.error("Voice playback failed: " + (err.message || "unknown error"));
+        } finally {
+          clearAwaitingReply();
+          resetLiveSpeechState();
+        }
+
+        if (voiceModeRef.current && voiceSettingsRef.current.autoTranscribe) {
+          await waitForChatIdleRef.current();
+          await startRecordingRef.current(true);
+        }
+      } finally {
+        processingVoiceTurnRef.current = false;
       }
     };
 
     window.addEventListener("synapse:assistant_stream_done", handler);
     return () => window.removeEventListener("synapse:assistant_stream_done", handler);
-  }, [clearAwaitingReply, resetLiveSpeechState]);
+  }, [clearAwaitingReply, resetLiveSpeechState, runLiveSpeechQueue, waitForLiveSpeechDrain]);
 
-  // Voice mode turn-taking: when a new assistant message arrives, speak it then listen again.
+  // Fallback turn-taking via persisted assistant messages (e.g., non-stream channels).
   useEffect(() => {
     const handler = async (event: Event) => {
       const detail = (event as CustomEvent).detail as { content?: string; sessionId?: string; createdAt?: number } | undefined;
       if (typeof detail?.content !== "string" || !detail.content.trim()) return;
       if (detail.sessionId && detail.sessionId !== sessionIdRef.current) return;
       if (!voiceModeRef.current || !voiceAwaitingReplyRef.current) return;
+      if (processingVoiceTurnRef.current) return;
       if (typeof detail.createdAt === "number" && awaitingSinceRef.current > 0 && detail.createdAt < (awaitingSinceRef.current - 500)) {
         return;
       }
@@ -1077,8 +1340,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       }
       stopBargeInMonitor();
       resetLiveSpeechState();
+      releaseVoiceInputStream();
     };
-  }, [resetLiveSpeechState, stopBargeInMonitor]);
+  }, [releaseVoiceInputStream, resetLiveSpeechState, stopBargeInMonitor]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showSuggestions) {

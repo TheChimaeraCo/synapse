@@ -146,6 +146,24 @@ export const PROVIDERS: ProviderConfig[] = [
     helpUrl: "https://console.x.ai",
   },
   {
+    slug: "groq",
+    name: "Groq",
+    description: "Fast inference for Llama, DeepSeek, and others",
+    authFields: [
+      { key: "api_key", label: "API Key", type: "password", required: true },
+    ],
+    defaultModel: "llama-3.3-70b-versatile",
+    models: [
+      "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant",
+      "deepseek-r1-distill-llama-70b",
+      "openai/gpt-oss-120b",
+    ],
+    apiBase: "https://api.groq.com/openai/v1",
+    helpUrl: "https://console.groq.com/keys",
+    testable: true,
+  },
+  {
     slug: "openrouter",
     name: "OpenRouter",
     description: "Access many models via one key",

@@ -5,10 +5,13 @@ import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { sendMessage, sendMessageWithButtons, sendTypingAction } from "./send";
-import { executeTools, toProviderTools } from "../toolExecutor";
-import { BUILTIN_TOOLS } from "../builtinTools";
-import { applyResponsePrefix, normalizeChunkMode, parseChunkLimit } from "@/lib/messageFormatting";
+import { sendMessage, sendTypingAction } from "./send";
+import { normalizeChunkMode, parseChunkLimit } from "@/lib/messageFormatting";
+import { parseTelegram } from "@/lib/normalizedMessage";
+import { createTelegramAttachmentResolver } from "@/lib/agent-sdk/telegram";
+import { ingestInboundAttachments, mergeContentWithFileRefs } from "@/lib/agent-sdk/attachments";
+import { runAgentTurn } from "@/lib/agent-sdk/turn";
+import { MODEL_COSTS } from "@/lib/types";
 
 // --- Deduplication ---
 const DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -26,6 +29,12 @@ function dedupCheck(updateId: number): boolean {
   if (recentUpdates.has(key)) return true;
   recentUpdates.set(key, now);
   return false;
+}
+
+function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
+  const costs = MODEL_COSTS[model] || { inputPerMillion: 3, outputPerMillion: 15 };
+  return (inputTokens / 1_000_000 * costs.inputPerMillion) +
+    (outputTokens / 1_000_000 * costs.outputPerMillion);
 }
 
 // --- Sequentialization ---
@@ -71,11 +80,14 @@ export function createBot(config: BotConfig): Bot {
       if (dedupCheck(ctx.update.update_id)) return;
       if (!msg.text && !msg.caption && !msg.photo && !msg.document && !msg.voice) return;
 
-      const chatId = String(msg.chat.id);
-      const userId = String(msg.from!.id);
+      const inbound = parseTelegram(ctx.update as any);
+      if (!inbound) return;
+
+      const chatId = inbound.externalChatId;
+      const userId = inbound.externalUserId;
       const displayName = msg.from!.first_name + (msg.from!.last_name ? ` ${msg.from!.last_name}` : "");
       const username = msg.from!.username;
-      const text = msg.text || msg.caption || "[media]";
+      const text = inbound.text || "[media]";
 
       // --- Telegram Auth Check ---
       try {
@@ -201,13 +213,36 @@ export function createBot(config: BotConfig): Bot {
         console.error("[telegram] Failed to resolve conversation:", err);
       }
 
+      // Materialize inbound Telegram attachments into Convex files and reference them in content.
+      let messageContent = text.trim();
+      if (inbound.attachments && inbound.attachments.length > 0) {
+        try {
+          const resolver = createTelegramAttachmentResolver(config.token);
+          const { files, failed } = await ingestInboundAttachments({
+            convex,
+            gatewayId,
+            sessionId,
+            conversationId,
+            attachments: inbound.attachments,
+            resolveAttachment: resolver,
+          });
+          messageContent = mergeContentWithFileRefs(messageContent, files);
+          if (failed > 0) {
+            console.warn(`[telegram] ${failed} attachment(s) failed to ingest for update ${ctx.update.update_id}`);
+          }
+        } catch (err) {
+          console.error("[telegram] Attachment ingestion failed:", err);
+        }
+      }
+      if (!messageContent) messageContent = "[empty message]";
+
       // Store user message
       const userMessageId = await convex.mutation(api.functions.messages.create, {
         gatewayId,
         sessionId,
         agentId,
         role: "user",
-        content: text,
+        content: messageContent,
         channelMessageId: String(msg.message_id),
         conversationId,
       });
@@ -228,232 +263,94 @@ export function createBot(config: BotConfig): Bot {
         status: "thinking",
       });
 
-      // Process AI response server-side (same as web chat - Convex actions can't reliably fetch in self-hosted)
+      // Process AI response via shared Agent SDK turn pipeline.
       try {
-        const agent = await convex.query(api.functions.agents.get, { id: agentId });
-        if (!agent) throw new Error("Agent not found");
-
-        // Get response/chunk formatting settings.
-        let responsePrefix: string | null = null;
         let chunkLimitRaw: string | null = null;
         let chunkModeRaw: string | null = null;
         if (config.gatewayId) {
           const { getGatewayConfig } = await import("./config");
-          [responsePrefix, chunkLimitRaw, chunkModeRaw] = await Promise.all([
-            getGatewayConfig(config.gatewayId, "messages.response_prefix"),
+          [chunkLimitRaw, chunkModeRaw] = await Promise.all([
             getGatewayConfig(config.gatewayId, "messages.chunk_limit"),
             getGatewayConfig(config.gatewayId, "messages.chunk_mode"),
           ]);
-          if (!responsePrefix) responsePrefix = await convex.query(api.functions.config.get, { key: "messages.response_prefix" });
           if (!chunkLimitRaw) chunkLimitRaw = await convex.query(api.functions.config.get, { key: "messages.chunk_limit" });
           if (!chunkModeRaw) chunkModeRaw = await convex.query(api.functions.config.get, { key: "messages.chunk_mode" });
         } else {
-          [responsePrefix, chunkLimitRaw, chunkModeRaw] = await Promise.all([
-            convex.query(api.functions.config.get, { key: "messages.response_prefix" }),
+          [chunkLimitRaw, chunkModeRaw] = await Promise.all([
             convex.query(api.functions.config.get, { key: "messages.chunk_limit" }),
             convex.query(api.functions.config.get, { key: "messages.chunk_mode" }),
           ]);
         }
 
-        const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
-        registerBuiltInApiProviders();
-        const customRoutes = await convex.query(api.functions.modelRoutes.list, { gatewayId });
-        const { resolveAiSelection } = await import("../aiRouting");
-        const selection = await resolveAiSelection({
-          gatewayId,
-          capability: "tool_use",
-          message: text,
-          agentModel: agent.model,
-          customRoutes: customRoutes as any,
-        });
-        const provider = selection.provider;
-        const key = selection.apiKey;
-        if (!key) throw new Error("No API key configured");
-        const modelId = selection.model;
-        const model = getModel(provider as any, modelId as any);
-        if (!model) throw new Error(`Model "${modelId}" not found`);
-
-        const enabledTools = await convex.query(api.functions.tools.getEnabled, { gatewayId });
-        const builtinToolDefs = BUILTIN_TOOLS.map((t) => ({
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        }));
-        const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
-        const allToolDefs = [
-          ...builtinToolDefs.filter((t) => !dbToolNames.has(t.name)),
-          ...enabledTools,
-        ];
-        const providerTools = toProviderTools(allToolDefs as any);
-
-        // Build full context (soul, knowledge, memory, messages - same as web chat)
-        let systemPrompt: string;
-        let claudeMessages: Array<{ role: "user" | "assistant"; content: string }>;
-        let responseConversationId = conversationId;
-        let movedUserMessageToNewConversation = false;
-        try {
-          const { buildContext } = await import("../contextBuilder");
-          const ctx = await buildContext(sessionId, agentId, text, 5000, responseConversationId);
-          systemPrompt = ctx.systemPrompt;
-          claudeMessages = ctx.messages;
-        } catch (e) {
-          console.warn("[telegram] buildContext failed, using fallback:", e);
-          // Fallback: basic messages only
-          const recentMessages = await convex.query(api.functions.messages.getRecent, {
-            sessionId,
-            limit: 15,
-          });
-          claudeMessages = recentMessages
-            .map((m: any) => ({ role: m.role, content: m.content }))
-            .filter((m: any) => m.role === "user" || m.role === "assistant");
-          systemPrompt = agent.systemPrompt || "You are a helpful assistant.";
-        }
-
-        // Build context for pi-ai
-        const context: any = {
-          systemPrompt,
-          messages: claudeMessages.map((m: any) =>
-            m.role === "user"
-              ? { role: "user" as const, content: m.content, timestamp: Date.now() }
-              : { role: "assistant" as const, content: [{ type: "text" as const, text: m.content }], timestamp: Date.now() }
-          ),
-          ...(providerTools ? { tools: providerTools } : {}),
-        };
-
-        const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
-        if (agent.temperature !== undefined) options.temperature = agent.temperature;
-
-        // Update to streaming
         await convex.mutation(api.functions.activeRuns.updateStatus, {
           id: runId,
           status: "streaming",
         });
 
-        // Keep sending typing while processing
         const typingInterval = setInterval(() => {
           sendTypingAction(config.token, chatId).catch(() => {});
         }, 4000);
 
-        const startMs = Date.now();
-        let fullContent = "";
-        let usage = { input: 0, output: 0 };
-        const MAX_TOOL_ROUNDS = 5;
-
+        let turn;
         try {
-          for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-            const toolCalls: any[] = [];
-            let roundText = "";
-            const stream = streamSimple(model, context, options);
-            for await (const event of stream) {
-              if (event.type === "text_delta") {
-                roundText += event.delta;
-              } else if (event.type === "toolcall_end") {
-                toolCalls.push(event.toolCall);
-              } else if (event.type === "done") {
-                usage.input += event.message.usage.input;
-                usage.output += event.message.usage.output;
-                context.messages.push(event.message);
-              }
-            }
-            fullContent += roundText;
-            if (toolCalls.length === 0) break;
-
-            const toolContext = {
-              gatewayId: gatewayId as string,
-              agentId: agentId as string,
-              sessionId: sessionId as string,
-              userRole: "viewer",
-            };
-            const toolResults = await executeTools(toolCalls, toolContext, allToolDefs as any);
-            const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
-            if (switchedConvoId) {
-              responseConversationId = switchedConvoId;
-              delete (toolContext as any).__newConversationId;
-              console.log(`[telegram] Tool requested conversation switch -> ${responseConversationId}`);
-              if (!movedUserMessageToNewConversation) {
-                try {
-                  await convex.mutation(api.functions.messages.updateConversationId, {
-                    id: userMessageId as Id<"messages">,
-                    conversationId: responseConversationId,
-                  });
-                  movedUserMessageToNewConversation = true;
-                } catch (err) {
-                  console.error("[telegram] Failed to move triggering user message:", err);
-                }
-              }
-            }
-
-            for (const result of toolResults) {
-              context.messages.push({
-                role: "toolResult" as const,
-                toolCallId: result.toolCallId,
-                toolName: result.toolName,
-                content: [{ type: "text" as const, text: result.content }],
-                isError: result.isError,
-                timestamp: Date.now(),
-              });
-            }
-          }
+          turn = await runAgentTurn({
+            convex,
+            sessionId,
+            gatewayId,
+            agentId,
+            latestUserMessage: messageContent,
+            initialConversationId: conversationId,
+            userMessageId: userMessageId as Id<"messages">,
+            suggestedModel: budget.suggestedModel || undefined,
+            userRole: "viewer",
+            maxToolRounds: 5,
+          });
         } finally {
           clearInterval(typingInterval);
         }
 
-        const latencyMs = Date.now() - startMs;
-
-        const MODEL_COSTS: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
-          "claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
-          "claude-opus-4-20250514": { inputPerMillion: 15, outputPerMillion: 75 },
-          "claude-haiku-3-20250514": { inputPerMillion: 0.25, outputPerMillion: 1.25 },
-        };
-        const costs = MODEL_COSTS[modelId] || { inputPerMillion: 3, outputPerMillion: 15 };
-        const cost = (usage.input / 1_000_000 * costs.inputPerMillion) + (usage.output / 1_000_000 * costs.outputPerMillion);
-
+        const responseConversationId = turn.responseConversationId || conversationId;
+        const cost = calculateCost(turn.modelId, turn.usage.input, turn.usage.output);
         const chunkLimit = parseChunkLimit(chunkLimitRaw, 4096);
         const chunkMode = normalizeChunkMode(chunkModeRaw);
-        const finalContent = applyResponsePrefix(fullContent, responsePrefix);
 
-        // Store assistant message
         const msgId = await convex.mutation(api.functions.messages.create, {
           gatewayId,
           sessionId,
           agentId,
           role: "assistant",
-          content: finalContent,
-          tokens: usage,
+          content: turn.content,
+          tokens: turn.usage,
           cost,
-          model: modelId,
-          latencyMs,
+          model: turn.modelId,
+          latencyMs: turn.latencyMs,
           conversationId: responseConversationId,
         });
 
-        // Record usage
         await convex.mutation(api.functions.usage.record, {
           gatewayId,
           agentId,
           sessionId,
           messageId: msgId,
-          model: modelId,
-          inputTokens: usage.input,
-          outputTokens: usage.output,
+          model: turn.modelId,
+          inputTokens: turn.usage.input,
+          outputTokens: turn.usage.output,
           cost,
         });
 
-        // Send to Telegram
-        await sendMessage(config.token, chatId, finalContent, {
+        await sendMessage(config.token, chatId, turn.content, {
           replyToMessageId: msg.message_id,
           chunkLimit,
           chunkMode,
         });
 
-        // Complete run
         await convex.mutation(api.functions.activeRuns.complete, { id: runId });
 
-        console.log(`[telegram] Response sent (${latencyMs}ms, ${usage.input}+${usage.output} tokens)`);
+        console.log(`[telegram] Response sent (${turn.latencyMs}ms, ${turn.usage.input}+${turn.usage.output} tokens)`);
 
-        // Send push notification to web subscribers
         try {
           const { sendPushToAll } = await import("../pushService");
-          const preview = finalContent.length > 100 ? finalContent.slice(0, 100) + "..." : finalContent;
+          const preview = turn.content.length > 100 ? turn.content.slice(0, 100) + "..." : turn.content;
           await sendPushToAll({ title: "Synapse - New Message", body: preview, url: "/chat" });
         } catch (pushErr) {
           console.error("[telegram] Push notification error:", pushErr);

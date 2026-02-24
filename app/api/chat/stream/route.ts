@@ -12,6 +12,7 @@ import { createHash } from "crypto";
 import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPrompt } from "@/lib/promptDefense";
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
 
 // Simple request deduplication: track recent request hashes to prevent double-sends
 const recentRequests = new Map<string, number>();
@@ -44,12 +45,40 @@ function sseEvent(data: Record<string, any>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
+function buildToolFallbackMessage(
+  toolLogs: Array<{ tool: string; summary: string; isError: boolean }>
+): string {
+  if (!toolLogs.length) {
+    return "I couldn't produce a final response this turn. Ask me to continue and I'll pick it up.";
+  }
+
+  const successful = toolLogs.filter((t) => !t.isError).slice(-4);
+  if (successful.length > 0) {
+    const lines = successful.map((t) => `- ${t.tool}: ${t.summary}`);
+    return [
+      "I completed tool work but didn't produce a final narrative response.",
+      "Key results:",
+      ...lines,
+    ].join("\n");
+  }
+
+  const failed = toolLogs.filter((t) => t.isError).slice(-4);
+  const errorLines = failed.map((t) => `- ${t.tool}: ${t.summary}`);
+  return [
+    "I couldn't produce a final response because tool calls failed.",
+    "Last errors:",
+    ...errorLines,
+  ].join("\n");
+}
+
 class ClientAbortError extends Error {
   constructor() {
     super("Client disconnected");
     this.name = "ClientAbortError";
   }
 }
+
+const CONTINUE_ON_DISCONNECT = process.env.CHAT_CONTINUE_ON_DISCONNECT !== "false";
 
 export async function POST(req: NextRequest) {
   let ctx;
@@ -196,15 +225,40 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       let clientAborted = req.signal.aborted;
-      const abortHandler = () => { clientAborted = true; };
+      let streamWritable = !clientAborted;
+      const abortHandler = () => {
+        clientAborted = true;
+        streamWritable = false;
+        if (CONTINUE_ON_DISCONNECT) {
+          console.log("[ChatStream] Client disconnected; continuing generation on server.");
+        }
+      };
       req.signal.addEventListener("abort", abortHandler);
       const throwIfAborted = () => {
-        if (clientAborted || req.signal.aborted) throw new ClientAbortError();
+        if (!CONTINUE_ON_DISCONNECT && (clientAborted || req.signal.aborted)) throw new ClientAbortError();
       };
+      const emit = (payload: Record<string, any>) => {
+        if (!streamWritable) return;
+        try {
+          controller.enqueue(encoder.encode(sseEvent(payload)));
+        } catch {
+          streamWritable = false;
+        }
+      };
+
+      let responseConversationId = conversationId;
+      let responsePrefix: string | null = null;
+      let modelId = "";
+      let fullContent = "";
+      let usage = { input: 0, output: 0 };
+      let streamedTokenEstimate = 0;
+      let generatedAnyAssistantText = false;
+      let assistantPersisted = false;
+      const toolLogsForFallback: Array<{ tool: string; summary: string; isError: boolean }> = [];
+
       try {
         throwIfAborted();
-        controller.enqueue(encoder.encode(sseEvent({ type: "typing", status: true })));
-        let responseConversationId = conversationId;
+        emit({ type: "typing", status: true });
 
         // Build context
         const { systemPrompt: rawSystemPrompt, messages: claudeMessages } = await buildContext(
@@ -230,10 +284,11 @@ export async function POST(req: NextRequest) {
             return await convexClient.query(api.functions.config.get, { key });
           }
         };
-        const [defaultThinkingLevelRaw, responsePrefix] = await Promise.all([
+        const [defaultThinkingLevelRaw, loadedResponsePrefix] = await Promise.all([
           getGwConfig("models.thinking_level"),
           getGwConfig("messages.response_prefix"),
         ]);
+        responsePrefix = loadedResponsePrefix;
 
         const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
         registerBuiltInApiProviders();
@@ -267,10 +322,17 @@ export async function POST(req: NextRequest) {
         const provider = selection.provider;
         const key = selection.apiKey;
         if (!key) throw new Error("No API key configured");
-        const modelId = selection.model;
+        modelId = selection.model;
+        let model = getModel(provider as any, modelId as any);
+        if (!model) {
+          const fallbackModelId = defaultModelForProvider(provider);
+          const fallbackModel = getModel(provider as any, fallbackModelId as any);
+          if (!fallbackModel) throw new Error(`Model "${modelId}" not found`);
+          console.warn(`[Chat] Model "${modelId}" not found for provider=${provider}; falling back to ${fallbackModelId}`);
+          modelId = fallbackModelId;
+          model = fallbackModel;
+        }
         console.log(`[Chat] Using provider=${provider} model=${modelId} agent=${agent.name}`);
-        const model = getModel(provider as any, modelId as any);
-        if (!model) throw new Error(`Model "${modelId}" not found`);
 
         // Get thinking level from session metadata
         const defaultThinkingLevel = (defaultThinkingLevelRaw || "off").toLowerCase();
@@ -357,7 +419,7 @@ export async function POST(req: NextRequest) {
         };
 
         const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key, ...thinkingParams };
-        options.signal = req.signal;
+        if (!CONTINUE_ON_DISCONNECT) options.signal = req.signal;
         if (agent.temperature !== undefined) options.temperature = agent.temperature;
 
         // Cache check
@@ -369,28 +431,25 @@ export async function POST(req: NextRequest) {
         if (cacheHash) {
           const cached = await convexClient.query(api.functions.responseCache.getCached, { hash: cacheHash });
           if (cached) {
-            controller.enqueue(encoder.encode(sseEvent({ type: "token", content: cached.response })));
+            emit({ type: "token", content: cached.response });
             const msgId = await convexClient.mutation(api.functions.messages.create, {
               gatewayId: gatewayId as Id<"gateways">, sessionId: sessionId as Id<"sessions">, agentId: sessionDoc.agentId,
               role: "assistant", content: cached.response, tokens: cached.tokens, cost: cached.cost, model: cached.model, latencyMs: 0,
               conversationId: responseConversationId,
             });
-            controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId })));
+            emit({ type: "done", messageId: msgId });
             controller.close();
             return;
           }
         }
 
         const startMs = Date.now();
-        let fullContent = "";
         const trimmedPrefix = (responsePrefix || "").trim();
         if (trimmedPrefix) {
           const prefixText = `${trimmedPrefix} `;
           fullContent = prefixText;
-          controller.enqueue(encoder.encode(sseEvent({ type: "token", content: prefixText })));
+          emit({ type: "token", content: prefixText });
         }
-        let usage = { input: 0, output: 0 };
-        let streamedTokenEstimate = 0;
         let movedUserMessageToNewConversation = false;
         const MAX_TOOL_ROUNDS = 25;
 
@@ -402,21 +461,25 @@ export async function POST(req: NextRequest) {
           const aiStream = streamSimple(model, context, options);
           for await (const event of aiStream) {
             if (clientAborted || req.signal.aborted) {
-              if (typeof (aiStream as any).return === "function") {
-                try { await (aiStream as any).return(); } catch {}
+              streamWritable = false;
+              if (!CONTINUE_ON_DISCONNECT) {
+                if (typeof (aiStream as any).return === "function") {
+                  try { await (aiStream as any).return(); } catch {}
+                }
+                throw new ClientAbortError();
               }
-              throw new ClientAbortError();
             }
             if (event.type === "text_delta") {
               // Post-process: replace em dashes with hyphens
               const cleanDelta = event.delta.replace(/—/g, " - ");
               roundText += cleanDelta;
+              if (cleanDelta.trim().length > 0) generatedAnyAssistantText = true;
               // Rough token estimate: ~4 chars per token
               streamedTokenEstimate += Math.ceil(cleanDelta.length / 4);
-              controller.enqueue(encoder.encode(sseEvent({ type: "token", content: cleanDelta })));
+              emit({ type: "token", content: cleanDelta });
               // Send token count update every ~20 tokens
               if (streamedTokenEstimate % 20 < 5) {
-                controller.enqueue(encoder.encode(sseEvent({ type: "token_count", estimated: streamedTokenEstimate })));
+                emit({ type: "token_count", estimated: streamedTokenEstimate });
               }
             } else if (event.type === "toolcall_end") {
               toolCalls.push(event.toolCall);
@@ -434,9 +497,9 @@ export async function POST(req: NextRequest) {
 
           // Stream individual tool call notifications
           for (const tc of toolCalls) {
-            controller.enqueue(encoder.encode(sseEvent({ type: "tool_start", tool: tc.name, args: Object.keys(tc.arguments) })));
+            emit({ type: "tool_start", tool: tc.name, args: Object.keys(tc.arguments) });
           }
-          controller.enqueue(encoder.encode(sseEvent({ type: "tool_use", tools: toolCalls.map(t => t.name) })));
+          emit({ type: "tool_use", tools: toolCalls.map(t => t.name) });
 
           // Create worker agent records for each tool call
           const workerIds: string[] = [];
@@ -450,7 +513,7 @@ export async function POST(req: NextRequest) {
                 context: JSON.stringify(tc.arguments).slice(0, 200),
               });
               workerIds.push(wId);
-              controller.enqueue(encoder.encode(sseEvent({ type: "agent_start", agentId: wId, label: tc.name })));
+              emit({ type: "agent_start", agentId: wId, label: tc.name });
             } catch { workerIds.push(""); }
           }
 
@@ -492,19 +555,25 @@ export async function POST(req: NextRequest) {
                 result: toolResults[i].content.slice(0, 500),
                 error: toolResults[i].isError ? toolResults[i].content.slice(0, 300) : undefined,
               });
-              controller.enqueue(encoder.encode(sseEvent({ type: "agent_complete", agentId: wId })));
+              emit({ type: "agent_complete", agentId: wId });
             } catch {}
             // Stream tool result summary to UI
-            controller.enqueue(encoder.encode(sseEvent({
+            emit({
               type: "tool_result",
               tool: toolCalls[i]?.name || "unknown",
               success: !toolResults[i].isError,
               summary: toolResults[i].content.slice(0, 200),
               round: round + 1,
-            })));
+            });
           }
 
           for (const result of toolResults) {
+            toolLogsForFallback.push({
+              tool: result.toolName,
+              summary: result.content.slice(0, 200),
+              isError: result.isError,
+            });
+            if (toolLogsForFallback.length > 20) toolLogsForFallback.shift();
             context.messages.push({
               role: "toolResult" as const,
               toolCallId: result.toolCallId,
@@ -527,9 +596,16 @@ export async function POST(req: NextRequest) {
           if (!outputDefense.allowed) {
             console.warn(`[DEFENSE] Blocked output for session ${sessionId}: ${outputDefense.blocked}`, { flags: outputDefense.flags });
             fullContent = "I'm sorry, but I can't provide that response due to security constraints.";
-            controller.enqueue(encoder.encode(sseEvent({ type: "clear" })));
-            controller.enqueue(encoder.encode(sseEvent({ type: "token", content: fullContent })));
+            generatedAnyAssistantText = true;
+            emit({ type: "clear" });
+            emit({ type: "token", content: fullContent });
           }
+        }
+
+        if (!generatedAnyAssistantText) {
+          fullContent = buildToolFallbackMessage(toolLogsForFallback);
+          emit({ type: "clear" });
+          emit({ type: "token", content: fullContent });
         }
 
         const cost = calculateCost(modelId, usage.input, usage.output);
@@ -547,6 +623,7 @@ export async function POST(req: NextRequest) {
           latencyMs,
           conversationId: responseConversationId,
         });
+        assistantPersisted = true;
 
         await convexClient.mutation(api.functions.usage.record, {
           gatewayId: gatewayId as Id<"gateways">,
@@ -565,16 +642,49 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        controller.enqueue(encoder.encode(sseEvent({ type: "done", messageId: msgId, tokens: usage, cost })));
+        emit({ type: "done", messageId: msgId, tokens: usage, cost });
 
       } catch (err: any) {
-        if (err instanceof ClientAbortError || req.signal.aborted) {
+        if (err instanceof ClientAbortError || (!CONTINUE_ON_DISCONNECT && req.signal.aborted)) {
           console.log("[ChatStream] Client aborted request; stopping generation early.");
+          if (!CONTINUE_ON_DISCONNECT && !assistantPersisted && generatedAnyAssistantText && fullContent.trim().length > 0) {
+            try {
+              const partialContent = `${applyResponsePrefix(fullContent, responsePrefix)}\n\n[Response interrupted: client disconnected]`;
+              await convexClient.mutation(api.functions.messages.create, {
+                gatewayId: gatewayId as Id<"gateways">,
+                sessionId: sessionId as Id<"sessions">,
+                agentId: sessionDoc.agentId,
+                role: "assistant",
+                content: partialContent,
+                ...(usage.input || usage.output ? { tokens: usage } : {}),
+                ...(modelId ? { model: modelId } : {}),
+                conversationId: responseConversationId,
+              });
+            } catch (persistErr) {
+              console.error("[ChatStream] Failed to persist partial response after abort:", persistErr);
+            }
+          }
           return;
         }
         console.error("SSE stream error:", err);
+        if (!assistantPersisted) {
+          try {
+            await convexClient.mutation(api.functions.messages.create, {
+              gatewayId: gatewayId as Id<"gateways">,
+              sessionId: sessionId as Id<"sessions">,
+              agentId: sessionDoc.agentId,
+              role: "assistant",
+              content: `I hit an error while generating a response: ${err?.message || "Unknown stream error"}`,
+              ...(usage.input || usage.output ? { tokens: usage } : {}),
+              ...(modelId ? { model: modelId } : {}),
+              conversationId: responseConversationId,
+            });
+          } catch (persistErr) {
+            console.error("[ChatStream] Failed to persist stream error message:", persistErr);
+          }
+        }
         try {
-          controller.enqueue(encoder.encode(sseEvent({ type: "error", message: err.message || "Stream error" })));
+          emit({ type: "error", message: err.message || "Stream error" });
         } catch {}
       } finally {
         req.signal.removeEventListener("abort", abortHandler);

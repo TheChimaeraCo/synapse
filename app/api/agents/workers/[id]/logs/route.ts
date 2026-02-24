@@ -2,15 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await getGatewayContext(req);
+    const { gatewayId } = await getGatewayContext(req);
     const { id } = await params;
-
-    const all = await convexClient.query(api.functions.workerAgents.listAll, { limit: 50 });
-    const agent = all.find((a: any) => a._id === id);
-    if (!agent) return NextResponse.json({ logs: [], error: "Agent not found" });
+    const agent = await convexClient.query(api.functions.workerAgents.get, {
+      id: id as Id<"workerAgents">,
+    });
+    if (!agent || String(agent.gatewayId) !== String(gatewayId)) {
+      return NextResponse.json({ logs: [], error: "Agent not found" }, { status: 404 });
+    }
 
     return NextResponse.json({
       logs: agent.logs || [],

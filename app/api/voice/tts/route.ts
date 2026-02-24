@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { textToSpeech, getVoiceConfigFromDb } from "@/lib/voice";
 import type { Id } from "@/convex/_generated/dataModel";
+import { prepareTextForSpeech } from "@/lib/voiceText";
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,13 +21,20 @@ export async function POST(req: NextRequest) {
 
     if (voice) config.ttsVoice = voice;
 
-    const audioBuffer = await textToSpeech(text, config);
+    const cleanedText = prepareTextForSpeech(text, 5000);
+    if (!cleanedText) {
+      return NextResponse.json({ error: "No speakable text after formatting" }, { status: 400 });
+    }
+
+    const audioBuffer = await textToSpeech(cleanedText, config);
+    const contentType = config.ttsProvider === "groq" ? "audio/wav" : "audio/mpeg";
+    const filename = config.ttsProvider === "groq" ? "speech.wav" : "speech.mp3";
 
     return new NextResponse(new Uint8Array(audioBuffer), {
       headers: {
-        "Content-Type": "audio/mpeg",
+        "Content-Type": contentType,
         "Content-Length": audioBuffer.length.toString(),
-        "Content-Disposition": 'inline; filename="speech.mp3"',
+        "Content-Disposition": `inline; filename="${filename}"`,
       },
     });
   } catch (err) {

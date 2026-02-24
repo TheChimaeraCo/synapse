@@ -8,6 +8,33 @@ const TEXT_EXT_RE = /\.(txt|md|markdown|csv|json|js|ts|tsx|jsx|py|rb|go|rs|java|
 const IMAGE_EXT_RE = /\.(jpg|jpeg|png|gif|webp|svg)$/i;
 const EXCEL_EXT_RE = /\.(xls|xlsx|xlsm|xlsb|ods|csv|tsv)$/i;
 
+function isGenericMimeType(mimeType?: string | null): boolean {
+  if (!mimeType) return true;
+  const value = mimeType.toLowerCase().trim();
+  return value === "application/octet-stream" || value === "binary/octet-stream";
+}
+
+function mimeFromFilename(filename: string): string | null {
+  const lower = (filename || "").toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  return null;
+}
+
+function pickMimeType(
+  preferred: string | null | undefined,
+  filename: string,
+  fallback?: string | null,
+): string {
+  if (!isGenericMimeType(preferred)) return String(preferred).trim();
+  if (!isGenericMimeType(fallback)) return String(fallback).trim();
+  return mimeFromFilename(filename) || "application/octet-stream";
+}
+
 function isTextLike(mimeType: string, filename: string): boolean {
   const mime = (mimeType || "").toLowerCase();
   if (mime.startsWith("text/")) return true;
@@ -156,8 +183,8 @@ export async function runFileReaderModel(opts: {
       if (imgRes.ok) {
         const buf = Buffer.from(await imgRes.arrayBuffer());
         const b64 = buf.toString("base64");
-        const mime = imgRes.headers.get("content-type") || opts.mimeType || "image/png";
-        imagePart = { type: "image", source: { type: "base64", media_type: mime, data: b64 } };
+        const mime = pickMimeType(imgRes.headers.get("content-type"), opts.filename, opts.mimeType || "image/png");
+        imagePart = { type: "image", data: b64, mimeType: mime };
       }
     } catch {}
     if (!imagePart) {
@@ -185,9 +212,36 @@ ${docText}`,
     });
   }
 
-  const stream = streamSimple(model, { systemPrompt, messages }, { maxTokens: 1400, apiKey: selection.apiKey });
-  for await (const event of stream) {
-    if (event.type === "text_delta") text += event.delta;
+  const runStream = async (streamMessages: any[]) => {
+    let output = "";
+    let streamError = "";
+    const stream = streamSimple(model, { systemPrompt, messages: streamMessages }, { maxTokens: 1400, apiKey: selection.apiKey });
+    for await (const event of stream as any) {
+      if (event.type === "text_delta") output += event.delta;
+      if (event.type === "error") streamError = event.error?.errorMessage || event.error?.message || "File reader model failed";
+    }
+    return { output: output.trim(), streamError };
+  };
+
+  const firstPass = await runStream(messages);
+  text = firstPass.output;
+
+  if (!text && opts.extracted?.mode === "image") {
+    // Retry once with a stricter visual instruction if the first pass produced no text.
+    const retryMessages = [
+      {
+        role: "user",
+        content: [
+          (messages[0]?.content || [])[0],
+          { type: "text", text: `You are given an image file.\nFilename: ${opts.filename}\nMIME: ${opts.mimeType}\nDescribe what is visible in the image, then answer: ${question}` },
+        ],
+        timestamp: Date.now(),
+      },
+    ];
+    const retryPass = await runStream(retryMessages);
+    text = retryPass.output || firstPass.streamError || retryPass.streamError;
+  } else if (!text) {
+    text = firstPass.streamError;
   }
 
   return {

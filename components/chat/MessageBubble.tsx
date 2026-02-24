@@ -9,6 +9,7 @@ import { cn, formatRelativeTime, formatCost, formatTokens } from "@/lib/utils";
 import type { MessageDisplay } from "@/lib/types";
 import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { Check, Copy, Download, FileIcon, ImageIcon, Volume2, Loader2, RotateCcw, GitBranch, Star, SmilePlus } from "lucide-react";
+import { preprocessMarkdownTables } from "@/lib/markdownFormatting";
 
 function CodeBlock({ language, children }: { language?: string; children: string }) {
   const [copied, setCopied] = useState(false);
@@ -184,41 +185,6 @@ function TelegramAccessActions({ message }: { message: MessageDisplay }) {
       </button>
     </div>
   );
-}
-
-/**
- * Pre-process markdown to fix malformed tables.
- * Detects pipe-delimited rows missing the header separator and inserts one.
- */
-function preprocessMarkdown(content: string): string {
-  const lines = content.split("\n");
-  const result: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    result.push(line);
-
-    // Check if this looks like a table header row (has pipes)
-    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
-      const cols = trimmed.split("|").filter((c) => c.trim() !== "").length;
-      if (cols > 0) {
-        // Check next line - if it's NOT a separator row but IS another pipe row (or empty), inject separator
-        const nextLine = i + 1 < lines.length ? lines[i + 1]?.trim() : "";
-        const isSeparator = /^\|[\s\-:|]+\|$/.test(nextLine);
-        const prevLine = i > 0 ? lines[i - 1]?.trim() : "";
-        const prevIsPipe = prevLine.startsWith("|") && prevLine.endsWith("|");
-
-        // Only inject if this is the FIRST pipe row (not preceded by another pipe row) and next is not a separator
-        if (!isSeparator && !prevIsPipe) {
-          const sep = "|" + " --- |".repeat(cols);
-          result.push(sep);
-        }
-      }
-    }
-  }
-
-  return result.join("\n");
 }
 
 /**
@@ -522,7 +488,7 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
               remarkPlugins={remarkPlugins}
               components={markdownComponents}
             >
-              {preprocessMarkdown(stripFileRefs(message.content))}
+              {preprocessMarkdownTables(stripFileRefs(message.content))}
             </ReactMarkdown>
           </div>
         )}

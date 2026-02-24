@@ -5,14 +5,10 @@ import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { buildContext } from "@/lib/contextBuilder";
-import { executeTools, toProviderTools } from "@/lib/toolExecutor";
-import type { TaskType } from "@/lib/modelRouter";
 import { createHash } from "crypto";
 import { fireWebhook } from "@/lib/webhooks";
 import { resolveConversation } from "@/lib/conversationManager";
-import { applyResponsePrefix } from "@/lib/messageFormatting";
-import { resolveAiSelection } from "@/lib/aiRouting";
+import { runAgentTurn } from "@/lib/agent-sdk/turn";
 
 // Simple request deduplication
 const recentRequests = new Map<string, number>();
@@ -101,6 +97,7 @@ export async function POST(req: NextRequest) {
       sessionId as Id<"sessions">,
       gatewayId as Id<"gateways">,
       sessionDoc.agentId,
+      content.trim(),
       conversationId,
       messageId as Id<"messages">,
       budgetCheck.suggestedModel || undefined,
@@ -119,6 +116,7 @@ async function processAIResponse(
   sessionId: Id<"sessions">,
   gatewayId: Id<"gateways">,
   agentId: Id<"agents">,
+  latestUserMessage: string,
   initialConversationId?: Id<"conversations">,
   userMessageId?: Id<"messages">,
   suggestedModel?: string,
@@ -130,172 +128,33 @@ async function processAIResponse(
     status: "thinking",
   });
 
+  let responseConversationId = initialConversationId;
+  let usage = { input: 0, output: 0 };
+  let modelId = "";
+
   try {
-    let responseConversationId = initialConversationId;
-    const { systemPrompt, messages: claudeMessages } = await buildContext(
-      sessionId, agentId, "", 5000, responseConversationId
-    );
-
-    const agent = await convexClient.query(api.functions.agents.get, { id: agentId });
-    if (!agent) throw new Error("Agent not found");
-
-    // Try gateway config first, fall back to systemConfig
-    const getConfig = async (key: string) => {
-      try {
-        const result = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
-          gatewayId,
-          key,
-        });
-        return result?.value || null;
-      } catch {
-        return await convexClient.query(api.functions.config.get, { key });
-      }
-    };
-
-    const responsePrefix = await getConfig("messages.response_prefix");
-
-    const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
-    registerBuiltInApiProviders();
-
-    const enabledTools = await convexClient.query(api.functions.tools.getEnabled, { gatewayId });
-    const customRoutes = await convexClient.query(api.functions.modelRoutes.list, { gatewayId });
-    const { BUILTIN_TOOLS } = await import("@/lib/builtinTools");
-    const builtinToolDefs = BUILTIN_TOOLS.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
-    const dbToolNames = new Set(enabledTools.map((t: any) => t.name));
-    const allToolDefs = [
-      ...builtinToolDefs.filter(t => !dbToolNames.has(t.name)),
-      ...enabledTools,
-    ];
-    const providerTools = toProviderTools(allToolDefs);
-    const taskType: TaskType = "tool_use";
-
-    const budgetState = {
-      allowed: true,
-      suggestedModel,
-      remainingUsd: undefined as number | undefined,
-    };
-    const lastUserContent = claudeMessages.filter((m: any) => m.role === "user").pop()?.content;
-    const selection = await resolveAiSelection({
-      gatewayId,
-      capability: taskType,
-      message: lastUserContent,
-      agentModel: agent.model || undefined,
-      budget: budgetState,
-      customRoutes: customRoutes as any,
-    });
-    const provider = selection.provider;
-    const key = selection.apiKey;
-    if (!key) throw new Error("No API key configured");
-    const modelId = selection.model;
-    console.log(`[Chat] Using provider=${selection.provider} model=${modelId}`);
-    const model = getModel(provider as any, modelId as any);
-    if (!model) throw new Error(`Model "${modelId}" not found`);
-
-    const context: any = {
-      systemPrompt,
-      messages: claudeMessages.map((m: any) =>
-        m.role === "user"
-          ? { role: "user" as const, content: m.content, timestamp: Date.now() }
-          : { role: "assistant" as const, content: [{ type: "text" as const, text: m.content }], timestamp: Date.now() }
-      ),
-      ...(providerTools ? { tools: providerTools } : {}),
-    };
-
-    const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
-    if (agent.temperature !== undefined) options.temperature = agent.temperature;
-
-    const lastUserMsg = claudeMessages.filter((m: any) => m.role === "user").pop();
-    const cacheHash = enabledTools.length === 0 && lastUserMsg
-      ? createHash("sha256").update(systemPrompt + "|" + lastUserMsg.content).digest("hex")
-      : null;
-
-    if (cacheHash) {
-      const cached = await convexClient.query(api.functions.responseCache.getCached, { hash: cacheHash });
-      if (cached) {
-        await convexClient.mutation(api.functions.messages.create, {
-          gatewayId, sessionId, agentId,
-          role: "assistant", content: cached.response, tokens: cached.tokens, cost: cached.cost, model: cached.model, latencyMs: 0,
-          conversationId: responseConversationId,
-        });
-        await convexClient.mutation(api.functions.activeRuns.complete, { id: runId });
-        return;
-      }
-    }
-
-    const startMs = Date.now();
-    let fullContent = "";
-    let usage = { input: 0, output: 0 };
-    let movedUserMessageToNewConversation = false;
-    const MAX_TOOL_ROUNDS = 5;
-
     await convexClient.mutation(api.functions.activeRuns.updateStatus, { id: runId, status: "streaming" });
-
-    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      const toolCalls: Array<{ type: "toolCall"; id: string; name: string; arguments: Record<string, any> }> = [];
-      let roundText = "";
-
-      const stream = streamSimple(model, context, options);
-      for await (const event of stream) {
-        if (event.type === "text_delta") {
-          const cleanDelta = event.delta.replace(/—/g, " - ");
-          roundText += cleanDelta;
-          await convexClient.mutation(api.functions.activeRuns.appendStream, { id: runId, chunk: cleanDelta });
-        } else if (event.type === "toolcall_end") {
-          toolCalls.push(event.toolCall);
-        } else if (event.type === "done") {
-          usage.input += event.message.usage.input;
-          usage.output += event.message.usage.output;
-          context.messages.push(event.message);
-        }
-      }
-
-      fullContent += roundText;
-      if (toolCalls.length === 0) break;
-
-      const toolContext = {
-        gatewayId: gatewayId as string,
-        agentId: agentId as string,
-        sessionId: sessionId as string,
-        userRole,
-      };
-      const toolResults = await executeTools(toolCalls, toolContext, enabledTools as any);
-      const switchedConvoId = (toolContext as any).__newConversationId as Id<"conversations"> | undefined;
-      if (switchedConvoId) {
-        responseConversationId = switchedConvoId;
-        delete (toolContext as any).__newConversationId;
-        console.log(`[ConvoSegmentation] Tool requested conversation switch -> ${responseConversationId}`);
-        if (userMessageId && !movedUserMessageToNewConversation) {
-          try {
-            await convexClient.mutation(api.functions.messages.updateConversationId, {
-              id: userMessageId,
-              conversationId: responseConversationId,
-            });
-            movedUserMessageToNewConversation = true;
-          } catch (err) {
-            console.error("[ConvoSegmentation] Failed to move triggering user message:", err);
-          }
-        }
-      }
-
-      for (const result of toolResults) {
-        context.messages.push({
-          role: "toolResult" as const,
-          toolCallId: result.toolCallId,
-          toolName: result.toolName,
-          content: [{ type: "text" as const, text: result.content }],
-          isError: result.isError,
-          timestamp: Date.now(),
-        });
-      }
-    }
-
-    const latencyMs = Date.now() - startMs;
+    const turn = await runAgentTurn({
+      convex: convexClient as any,
+      sessionId,
+      gatewayId,
+      agentId,
+      latestUserMessage,
+      initialConversationId,
+      userMessageId,
+      suggestedModel,
+      userRole,
+      maxToolRounds: 5,
+    });
+    usage = turn.usage;
+    modelId = turn.modelId;
+    responseConversationId = turn.responseConversationId;
+    const finalContent = turn.content;
+    const latencyMs = turn.latencyMs;
     const cost = calculateCost(modelId, usage.input, usage.output);
-
-    const formattedContent = applyResponsePrefix(fullContent, responsePrefix);
     const msgId = await convexClient.mutation(api.functions.messages.create, {
       gatewayId, sessionId, agentId,
-      role: "assistant", content: formattedContent, tokens: usage, cost, model: modelId, latencyMs,
+      role: "assistant", content: finalContent, tokens: usage, cost, model: modelId, latencyMs,
       conversationId: responseConversationId,
     });
 
@@ -303,12 +162,6 @@ async function processAIResponse(
       gatewayId, agentId, sessionId, messageId: msgId,
       model: modelId, inputTokens: usage.input, outputTokens: usage.output, cost,
     });
-
-    if (cacheHash && enabledTools.length === 0) {
-      await convexClient.mutation(api.functions.responseCache.setCache, {
-        hash: cacheHash, response: formattedContent, model: modelId, tokens: usage, cost,
-      });
-    }
 
     await convexClient.mutation(api.functions.activeRuns.complete, { id: runId });
 
@@ -318,6 +171,20 @@ async function processAIResponse(
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
     console.error("processAIResponse error:", errorMsg);
+    try {
+      await convexClient.mutation(api.functions.messages.create, {
+        gatewayId,
+        sessionId,
+        agentId,
+        role: "assistant",
+        content: `I hit an error while generating a response: ${errorMsg}`,
+        ...(usage.input || usage.output ? { tokens: usage } : {}),
+        ...(modelId ? { model: modelId } : {}),
+        conversationId: responseConversationId,
+      });
+    } catch (persistErr) {
+      console.error("processAIResponse failed to persist assistant error message:", persistErr);
+    }
     await convexClient.mutation(api.functions.activeRuns.updateStatus, {
       id: runId, status: "error", error: errorMsg,
     });

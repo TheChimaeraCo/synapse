@@ -8,6 +8,8 @@ export async function POST(req: NextRequest) {
     const { gatewayId } = await getGatewayContext(req);
     const formData = await req.formData();
     const file = formData.get("audio") as File | null;
+    const languageRaw = formData.get("language");
+    const language = typeof languageRaw === "string" ? languageRaw.trim() : "";
 
     if (!file) {
       return NextResponse.json({ error: "Missing 'audio' field" }, { status: 400 });
@@ -34,6 +36,7 @@ export async function POST(req: NextRequest) {
     const text = await speechToText(buffer, config, {
       mimeType: file.type || "audio/webm",
       filename: file.name || undefined,
+      language: language || undefined,
     });
 
     console.log("[STT] result:", JSON.stringify(text).slice(0, 200));

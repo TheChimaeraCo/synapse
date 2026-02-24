@@ -75,6 +75,13 @@ export const listAll = query({
   },
 });
 
+export const get = query({
+  args: { id: v.id("workerAgents") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
+});
+
 export const getBySession = query({
   args: { parentSessionId: v.id("sessions") },
   handler: async (ctx, args) => {
@@ -138,6 +145,54 @@ export const getRecentByUser = query({
     return all
       .filter((a) => userSessionIds.has(a.parentSessionId) && (a.status === "running" || a.startedAt > cutoff))
       .sort((a, b) => b.startedAt - a.startedAt)
+      .slice(0, limit);
+  },
+});
+
+export const getSidebarFeed = query({
+  args: {
+    gatewayId: v.id("gateways"),
+    userId: v.optional(v.id("authUsers")),
+    limit: v.optional(v.number()),
+    historyHours: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(args.limit || 80, 200));
+    const historyHours = Math.max(1, Math.min(args.historyHours || 24, 24 * 14));
+    const cutoff = Date.now() - historyHours * 60 * 60 * 1000;
+
+    let userSessionIds: Set<string> | null = null;
+    if (args.userId) {
+      const userSessions = await ctx.db
+        .query("sessions")
+        .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+        .collect();
+      userSessionIds = new Set(
+        userSessions
+          .filter((s) => String(s.gatewayId) === String(args.gatewayId))
+          .map((s) => String(s._id))
+      );
+    }
+
+    const workers = await ctx.db
+      .query("workerAgents")
+      .withIndex("by_gateway_status", (q) => q.eq("gatewayId", args.gatewayId))
+      .collect();
+
+    return workers
+      .filter((w) => {
+        if (userSessionIds && !userSessionIds.has(String(w.parentSessionId))) return false;
+        if (w.status === "running") return true;
+        return (w.completedAt || w.startedAt) >= cutoff;
+      })
+      .sort((a, b) => {
+        const aRunning = a.status === "running" ? 0 : 1;
+        const bRunning = b.status === "running" ? 0 : 1;
+        if (aRunning !== bRunning) return aRunning - bRunning;
+        const aTs = a.status === "running" ? a.startedAt : (a.completedAt || a.startedAt);
+        const bTs = b.status === "running" ? b.startedAt : (b.completedAt || b.startedAt);
+        return bTs - aTs;
+      })
       .slice(0, limit);
   },
 });

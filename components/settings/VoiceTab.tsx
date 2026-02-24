@@ -23,6 +23,10 @@ const DEFAULT_ELEVEN_MODELS: ElevenModel[] = [
 
 const OPENAI_TTS_MODELS = ["gpt-4o-mini-tts", "gpt-4o-realtime-preview", "gpt-4o-audio-preview"];
 const GOOGLE_TTS_MODELS = ["chirp-3-hd", "gemini-2.0-flash-exp"];
+const GROQ_TTS_MODELS = ["canopylabs/orpheus-v1-english", "canopylabs/orpheus-arabic-saudi"];
+const OPENAI_STT_MODELS = ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"];
+const GROQ_STT_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-large-v3-en"];
+const GOOGLE_STT_MODELS = ["latest_long", "latest_short", "telephony_short"];
 
 export function VoiceTab() {
   const { get, set, save, saving, loading } = useConfigSettings("voice.");
@@ -61,6 +65,22 @@ export function VoiceTab() {
   const provider = get("tts_provider", "none");
   const ttsApiKey = get("tts_api_key", "");
   const selectedModel = get("tts_model", "");
+  const sttProvider = get("stt_provider", "groq");
+  const selectedSttModel = get("stt_model", "");
+
+  const applyDrivingPreset = () => {
+    set("auto_read", "true");
+    set("stream_tts", "false");
+    set("barge_in", "true");
+    set("auto_transcribe", "true");
+    set("stt_provider", "groq");
+    set("stt_model", "whisper-large-v3");
+    set("stt_language", get("stt_language", "en-US") || "en-US");
+    if (get("tts_provider", "none") === "none") set("tts_provider", "groq");
+    if (!get("tts_model", "")) set("tts_model", "canopylabs/orpheus-v1-english");
+    if (!get("tts_voice", "")) set("tts_voice", "tara");
+    if (!get("speed", "")) set("speed", "1");
+  };
 
   const loadElevenModels = async (apiKey?: string) => {
     setLoadingElevenModels(true);
@@ -146,12 +166,27 @@ export function VoiceTab() {
       ? OPENAI_TTS_MODELS
       : provider === "google"
         ? GOOGLE_TTS_MODELS
+        : provider === "groq"
+          ? GROQ_TTS_MODELS
         : [];
     const out = new Set<string>(defaults);
     for (const model of providerModelOptions) out.add(model);
     if (selectedModel) out.add(selectedModel);
     return Array.from(out).sort((a, b) => a.localeCompare(b));
   }, [provider, providerModelOptions, selectedModel]);
+
+  const sttModelOptions = useMemo(() => {
+    const defaults = sttProvider === "openai"
+      ? OPENAI_STT_MODELS
+      : sttProvider === "groq"
+        ? GROQ_STT_MODELS
+        : sttProvider === "google"
+          ? GOOGLE_STT_MODELS
+          : [];
+    const out = new Set<string>(defaults);
+    if (selectedSttModel) out.add(selectedSttModel);
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+  }, [selectedSttModel, sttProvider]);
 
   if (loading) return <div className="text-zinc-400">Loading...</div>;
 
@@ -160,6 +195,11 @@ export function VoiceTab() {
       <div>
         <h2 className="text-xl font-semibold text-white mb-1">Voice & Audio<HelpTooltip title="Voice & Audio" content="Configure text-to-speech and speech-to-text settings. Choose voices, languages, and audio processing options." /></h2>
         <p className="text-sm text-zinc-400">Configure text-to-speech and speech-to-text settings.</p>
+        <div className="mt-3">
+          <Button type="button" variant="outline" onClick={applyDrivingPreset}>
+            Apply Driving Quality Preset
+          </Button>
+        </div>
       </div>
 
       {/* TTS Provider */}
@@ -178,6 +218,7 @@ export function VoiceTab() {
                 <SelectItem value="none">Disabled</SelectItem>
                 <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
                 <SelectItem value="openai">OpenAI</SelectItem>
+                <SelectItem value="groq">Groq</SelectItem>
                 <SelectItem value="google">Google Cloud</SelectItem>
               </SelectContent>
             </Select>
@@ -200,7 +241,15 @@ export function VoiceTab() {
                 <Input
                   value={get("tts_voice", "")}
                   onChange={(e) => set("tts_voice", e.target.value)}
-                  placeholder={provider === "elevenlabs" ? "e.g. EXAVITQu4vr4xnSDxMaL" : provider === "openai" ? "alloy, echo, fable, onyx, nova, shimmer" : "en-US-Neural2-F"}
+                  placeholder={
+                    provider === "elevenlabs"
+                      ? "e.g. EXAVITQu4vr4xnSDxMaL"
+                      : provider === "openai"
+                        ? "alloy, echo, fable, onyx, nova, shimmer"
+                        : provider === "groq"
+                          ? "tara, leah, jess, leo, dan"
+                          : "en-US-Neural2-F"
+                  }
                   className="bg-white/[0.06] border-white/[0.08] text-white"
                 />
               </div>
@@ -244,10 +293,15 @@ export function VoiceTab() {
                     value={get("tts_model", "")}
                     onChange={(value) => set("tts_model", value)}
                     options={genericModelOptions}
-                    placeholder={provider === "openai" ? "gpt-4o-mini-tts" : "Google voice model (optional)"}
+                    placeholder={provider === "openai" ? "gpt-4o-mini-tts" : provider === "groq" ? "canopylabs/orpheus-v1-english" : "Google voice model (optional)"}
                     className="bg-white/[0.06] border-white/[0.08] text-white"
                     listId={`voice-model-${provider}`}
                   />
+                  {provider === "groq" && (
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Groq Orpheus currently supports short utterances (~200 chars) and WAV output.
+                    </p>
+                  )}
                 </div>
               )}
             </>
@@ -275,7 +329,7 @@ export function VoiceTab() {
               <label className="text-sm text-zinc-400 mb-1 block">Speed ({get("speed", "1.2")})</label>
               <Slider min={0.5} max={2} step={0.1} value={parseFloat(get("speed", "1.2"))} onChange={(v) => set("speed", String(v))} />
               <p className="text-xs text-zinc-500 mt-1">
-                OpenAI/Google apply this in synthesis. ElevenLabs uses client playback speed.
+                OpenAI/Groq/Google apply this in synthesis. ElevenLabs uses client playback speed.
               </p>
             </div>
           )}
@@ -290,19 +344,35 @@ export function VoiceTab() {
         <CardContent className="space-y-4">
           <div>
             <label className="text-sm text-zinc-400 mb-1 block">STT Provider</label>
-            <Select value={get("stt_provider", "groq")} onValueChange={(val) => set("stt_provider", val)}>
+            <Select value={sttProvider} onValueChange={(val) => set("stt_provider", val)}>
               <SelectTrigger className="w-full bg-white/[0.04] border-white/[0.08] text-zinc-200 rounded-xl">
                 <SelectValue placeholder="Select..." />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Disabled</SelectItem>
                 <SelectItem value="browser">Browser Native (Free, local)</SelectItem>
-                <SelectItem value="groq">Groq Whisper (Free)</SelectItem>
-                <SelectItem value="openai">OpenAI Whisper</SelectItem>
+                <SelectItem value="groq">Groq (Whisper)</SelectItem>
+                <SelectItem value="openai">OpenAI (4o Transcribe)</SelectItem>
                 <SelectItem value="google">Google Cloud</SelectItem>
               </SelectContent>
             </Select>
           </div>
+          {sttProvider !== "none" && sttProvider !== "browser" && (
+            <div>
+              <label className="text-sm text-zinc-400 mb-1 block">STT Model</label>
+              <ModelSearchInput
+                value={selectedSttModel}
+                onChange={(value) => set("stt_model", value)}
+                options={sttModelOptions}
+                placeholder={sttProvider === "openai" ? "gpt-4o-transcribe" : sttProvider === "groq" ? "whisper-large-v3" : "latest_long"}
+                className="bg-white/[0.06] border-white/[0.08] text-white"
+                listId={`voice-stt-model-${sttProvider}`}
+              />
+              <p className="text-xs text-zinc-500 mt-1">
+                Recommended for driving: {sttProvider === "openai" ? "gpt-4o-transcribe" : sttProvider === "groq" ? "whisper-large-v3" : "latest_long"}.
+              </p>
+            </div>
+          )}
           <div>
             <label className="text-sm text-zinc-400 mb-1 block">STT Language</label>
             <Input
@@ -312,7 +382,7 @@ export function VoiceTab() {
               className="bg-white/[0.06] border-white/[0.08] text-white"
             />
           </div>
-          {get("stt_provider", "groq") !== "none" && get("stt_provider", "groq") !== "browser" && (
+          {sttProvider !== "none" && sttProvider !== "browser" && (
             <div>
               <label className="text-sm text-zinc-400 mb-1 block">STT API Key (leave blank to use TTS key)</label>
               <Input
@@ -324,7 +394,7 @@ export function VoiceTab() {
               />
             </div>
           )}
-          {get("stt_provider", "groq") === "browser" && (
+          {sttProvider === "browser" && (
             <p className="text-xs text-zinc-500">
               Browser-native recognition runs locally in supported browsers (Chrome/Edge). No STT API key required.
             </p>
@@ -354,7 +424,7 @@ export function VoiceTab() {
               <p className="text-xs text-zinc-500">Start speaking partial response chunks before full completion</p>
             </div>
             <Toggle
-              checked={get("stream_tts", "true") === "true"}
+              checked={get("stream_tts", "false") === "true"}
               onChange={(v) => set("stream_tts", v ? "true" : "false")}
             />
           </div>

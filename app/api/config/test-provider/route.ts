@@ -151,6 +151,9 @@ export async function POST(req: NextRequest) {
       case "google":
         if (!key || key.length < 5) return NextResponse.json({ valid: false, error: "Key is too short" });
         return NextResponse.json(await testGoogle(key));
+      case "groq":
+        if (!key || key.length < 5) return NextResponse.json({ valid: false, error: "Key is too short" });
+        return NextResponse.json(await testOpenAI(key, "https://api.groq.com/openai/v1"));
       case "openai-codex":
       case "google-gemini-cli":
       case "google-antigravity": {

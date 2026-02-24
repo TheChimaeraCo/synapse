@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { formatStreamingMarkdown } from "@/lib/markdownFormatting";
 
 interface Message {
   _id: string;
@@ -96,6 +97,17 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
     const controller = new AbortController();
     abortRef.current = controller;
     let accumulated = "";
+    let streamDoneDispatched = false;
+    const dispatchStreamDone = (aborted: boolean, contentOverride?: string) => {
+      if (streamDoneDispatched) return;
+      streamDoneDispatched = true;
+      const finalContent = typeof contentOverride === "string" ? contentOverride : accumulated;
+      window.dispatchEvent(
+        new CustomEvent("synapse:assistant_stream_done", {
+          detail: { sessionId, content: finalContent, aborted },
+        })
+      );
+    };
 
     try {
       const res = await fetch("/api/chat/stream", {
@@ -136,7 +148,7 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
               setIsTyping(false);
               setToolStatus(null);
               accumulated += data.content;
-              setStreamingContent(accumulated);
+              setStreamingContent(formatStreamingMarkdown(accumulated));
               window.dispatchEvent(
                 new CustomEvent("synapse:assistant_stream_delta", {
                   detail: { sessionId, delta: data.content, accumulated },
@@ -160,7 +172,7 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
               accumulated = `Error: ${data.message}`;
               setStreamingContent(accumulated);
             } else if (data.type === "done") {
-              // Stream complete
+              dispatchStreamDone(false);
             }
           } catch {}
         }
@@ -170,11 +182,7 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
       if (commandResult?.action === "new_session") {
         setIsStreaming(false);
         setIsTyping(false);
-        window.dispatchEvent(
-          new CustomEvent("synapse:assistant_stream_done", {
-            detail: { sessionId, content: accumulated, aborted: false },
-          })
-        );
+        dispatchStreamDone(false);
         return { action: "new_session" };
       }
 
@@ -189,29 +197,17 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
             _creationTime: Date.now(),
           },
         ]);
-        window.dispatchEvent(
-          new CustomEvent("synapse:assistant_stream_done", {
-            detail: { sessionId, content: accumulated, aborted: false },
-          })
-        );
+        dispatchStreamDone(false);
       } else {
         // Refresh messages from server to get the saved versions
         // Small delay to ensure Convex has written the assistant message
         await new Promise(r => setTimeout(r, 500));
         await fetchMessages();
-        window.dispatchEvent(
-          new CustomEvent("synapse:assistant_stream_done", {
-            detail: { sessionId, content: accumulated, aborted: false },
-          })
-        );
+        dispatchStreamDone(false);
       }
     } catch (err: any) {
       if (err.name === "AbortError") {
-        window.dispatchEvent(
-          new CustomEvent("synapse:assistant_stream_done", {
-            detail: { sessionId, content: accumulated, aborted: true },
-          })
-        );
+        dispatchStreamDone(true);
         // User cancelled - not an error
       } else {
         console.error("Chat stream error:", err);
@@ -228,11 +224,7 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
             _creationTime: Date.now(),
           },
         ]);
-        window.dispatchEvent(
-          new CustomEvent("synapse:assistant_stream_done", {
-            detail: { sessionId, content: accumulated, aborted: false },
-          })
-        );
+        dispatchStreamDone(false, accumulated);
       }
     } finally {
       setIsStreaming(false);
