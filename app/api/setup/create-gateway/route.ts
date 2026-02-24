@@ -4,6 +4,7 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import { buildDefaultSystemPrompt } from "@/lib/templates";
 import type { Id } from "@/convex/_generated/dataModel";
+import { invalidateWorkspacePathCache } from "@/lib/workspace";
 
 /**
  * POST /api/setup/create-gateway
@@ -106,6 +107,7 @@ export async function POST(req: NextRequest) {
       id: userId as Id<"authUsers">,
       gatewayId: gatewayId as Id<"gateways">,
     });
+    invalidateWorkspacePathCache(gatewayId);
 
     return NextResponse.json({ gatewayId, success: true }, { status: 201 });
   } catch (err: any) {

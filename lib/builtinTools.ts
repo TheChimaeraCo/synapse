@@ -47,7 +47,8 @@ const SYNAPSE_ROOT = "/root/clawd/projects/chimera-gateway/synapse";
  * Get workspace root for a tool context. Uses per-gateway workspace when gatewayId available.
  */
 async function getWorkspaceRoot(gatewayId?: string): Promise<string> {
-  return getWorkspacePath(gatewayId);
+  // Always refresh for tool execution so workspace path edits apply immediately.
+  return getWorkspacePath(gatewayId, { forceRefresh: true });
 }
 // Sync version for places that can't await (falls back to cache or default)
 function getWorkspaceRootSync(gatewayId?: string): string {
@@ -55,11 +56,20 @@ function getWorkspaceRootSync(gatewayId?: string): string {
 }
 
 function resolveSafePath(userPath: string, root: string): string {
-  const resolved = path.resolve(root, userPath);
-  if (!resolved.startsWith(root)) {
-    throw new Error(`Path "${userPath}" is outside allowed directory`);
+  const rootAbs = path.resolve(root);
+  const targetAbs = path.isAbsolute(userPath)
+    ? path.resolve(userPath)
+    : path.resolve(rootAbs, userPath);
+
+  const normalizedRoot = process.platform === "win32" ? rootAbs.toLowerCase() : rootAbs;
+  const normalizedTarget = process.platform === "win32" ? targetAbs.toLowerCase() : targetAbs;
+  const within = normalizedTarget === normalizedRoot
+    || normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`);
+
+  if (!within) {
+    throw new Error(`Path "${userPath}" is outside allowed directory "${rootAbs}"`);
   }
-  return resolved;
+  return targetAbs;
 }
 
 function isPrivateIP(ip: string): boolean {
@@ -1051,7 +1061,8 @@ const shellExec: BuiltinTool = {
     }
 
     const timeout = Math.min(args.timeout || 30000, 60000);
-    const cwd = args.cwd || await getWorkspaceRoot(context.gatewayId);
+    const workspaceRoot = await getWorkspaceRoot(context.gatewayId);
+    const cwd = args.cwd ? resolveSafePath(args.cwd, workspaceRoot) : workspaceRoot;
     const env: NodeJS.ProcessEnv = { ...process.env };
 
     if (commandLikelyUsesGit(args.command)) {
@@ -1246,9 +1257,54 @@ function registerDynamicTool(name: string, description: string, parameters: any,
   });
 }
 
+interface WorkerInstruction {
+  id: string;
+  message: string;
+  from: string;
+  at: number;
+}
+
+interface WorkerRuntimeContext extends Record<string, unknown> {
+  instructions?: WorkerInstruction[];
+}
+
+function parseWorkerRuntimeContext(raw?: string): WorkerRuntimeContext {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return {};
+    const instructions = Array.isArray(parsed.instructions)
+      ? (parsed.instructions as any[])
+          .map((item: any) => {
+            if (!item || typeof item !== "object") return null;
+            const id = String(item.id || "").trim();
+            const message = String(item.message || "").trim();
+            const from = String(item.from || "").trim();
+            const at = Number(item.at || Date.now());
+            if (!id || !message) return null;
+            return { id, message, from: from || "coordinator", at: Number.isFinite(at) ? at : Date.now() } as WorkerInstruction;
+          })
+          .filter(Boolean) as WorkerInstruction[]
+      : [];
+    return {
+      ...parsed,
+      instructions,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function serializeWorkerRuntimeContext(ctx: WorkerRuntimeContext): string {
+  return JSON.stringify({
+    ...ctx,
+    instructions: (ctx.instructions || []).slice(-50),
+  });
+}
+
 const spawnAgent: BuiltinTool = {
   name: "spawn_agent",
-  description: "Spawn a sub-agent to work on a task independently. The sub-agent gets its own session and runs in parallel. Use for heavy tasks, research, code generation, or anything you want to delegate. Returns immediately with the agent ID - results appear when the agent completes.",
+  description: "Spawn a sub-agent to work on a task. Supports async orchestration: use async=true, then coordinate with message_worker and await_agent for iterative multi-step delegation. Prefer explicit verification steps (e.g., list/read checks) before accepting completion.",
   category: "agents",
   requiresApproval: true,
   parameters: Type.Object({
@@ -1257,6 +1313,7 @@ const spawnAgent: BuiltinTool = {
     model: Type.Optional(Type.String({ description: "Model to use (default: same as parent)" })),
     systemPrompt: Type.Optional(Type.String({ description: "Custom system prompt for the sub-agent (default: inherited)" })),
     tools: Type.Optional(Type.Array(Type.String(), { description: "Tool names to give the sub-agent (default: all)" })),
+    maxRounds: Type.Optional(Type.Number({ description: "Max thinking/tool rounds for this worker (default: 16, max: 30)" })),
     async: Type.Optional(Type.Boolean({ description: "If true, fire and forget. If false (default), wait for result." })),
   }),
   handler: async (args, context) => {
@@ -1305,7 +1362,21 @@ const spawnAgent: BuiltinTool = {
       const sysPrompt = args.systemPrompt || "You are a worker agent. Complete the task and return results. Be thorough but efficient. Use your tools when needed. When done, provide a clear summary of what you found or accomplished.";
 
       // Determine tools for the sub-agent - safe subset only
-      const BLOCKED_TOOLS = ["spawn_agent", "kill_agent", "list_agents", "shell_exec", "convex_deploy", "file_write", "create_tool", "forge_module", "save_soul", "memory_store", "new_conversation"];
+      const BLOCKED_TOOLS = [
+        "spawn_agent",
+        "kill_agent",
+        "list_agents",
+        "message_worker",
+        "await_agent",
+        "shell_exec",
+        "convex_deploy",
+        "file_write",
+        "create_tool",
+        "forge_module",
+        "save_soul",
+        "memory_store",
+        "new_conversation",
+      ];
       const { BUILTIN_TOOLS: allTools } = await import("@/lib/builtinTools");
       const availableTools = args.tools
         ? allTools.filter(t => args.tools!.includes(t.name) && !BLOCKED_TOOLS.includes(t.name))
@@ -1358,13 +1429,38 @@ const spawnAgent: BuiltinTool = {
           const piOptions: any = { maxTokens: 4096, apiKey: key };
           let totalTokens = { input: 0, output: 0 };
           let finalResult = "";
-          const MAX_TOOL_ROUNDS = 10;
+          const MAX_TOOL_ROUNDS = Math.max(1, Math.min(Number(args.maxRounds || 16), 30));
+          const consumedInstructionIds = new Set<string>();
 
           for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
             if (abortController.signal.aborted) {
               await log("Aborted by kill_agent");
               throw new Error("Agent was killed");
             }
+
+            // Pull live controller instructions (main-agent follow-ups) before each round.
+            try {
+              const sessionWorkers = await convexClient.query(api.functions.workerAgents.getBySession, {
+                parentSessionId: context.sessionId as any,
+              });
+              const me = sessionWorkers.find((w: any) => String(w._id) === String(workerId));
+              const runtimeCtx = parseWorkerRuntimeContext(me?.context);
+              const pending = (runtimeCtx.instructions || []).filter((ins) => !consumedInstructionIds.has(ins.id));
+              if (pending.length > 0) {
+                for (const ins of pending.slice(0, 8)) {
+                  consumedInstructionIds.add(ins.id);
+                  piContext.messages.push({
+                    role: "user" as const,
+                    content: `Coordinator instruction (${ins.from || "main-agent"}): ${ins.message}`,
+                    timestamp: Date.now(),
+                  });
+                  await log(`Received instruction ${ins.id}`);
+                }
+              }
+            } catch (pullErr: any) {
+              await log(`Instruction pull failed: ${pullErr?.message || String(pullErr)}`);
+            }
+
             await log(`Round ${round + 1}/${MAX_TOOL_ROUNDS}`);
             const toolCalls: Array<{ type: "toolCall"; id: string; name: string; arguments: Record<string, any> }> = [];
             let roundText = "";
@@ -1527,20 +1623,135 @@ const listAgents: BuiltinTool = {
   description: "List all running and recent sub-agents with their status, tokens, and results.",
   category: "agents",
   requiresApproval: false,
-  parameters: Type.Object({}),
-  handler: async (_args, context) => {
+  parameters: Type.Object({
+    scope: Type.Optional(Type.String({ description: "session (default), gateway, or all" })),
+    includeLogs: Type.Optional(Type.Boolean({ description: "Include last log line per worker" })),
+  }),
+  handler: async (args, context) => {
     try {
       const { convexClient } = await import("@/lib/convex");
       const { api } = await import("@/convex/_generated/api");
-      const agents = await convexClient.query(api.functions.workerAgents.listAll, { limit: 20 });
+      const scope = String(args.scope || "session").toLowerCase();
+      let agents: any[] = [];
+      if (scope === "all") {
+        agents = await convexClient.query(api.functions.workerAgents.listAll, { limit: 50 });
+      } else if (scope === "gateway") {
+        const agent = await convexClient.query(api.functions.agents.get, { id: context.agentId as any });
+        if (!agent) return "Error: agent not found";
+        agents = await convexClient.query(api.functions.workerAgents.getRecent, {
+          gatewayId: agent.gatewayId,
+          limit: 50,
+        });
+      } else {
+        agents = await convexClient.query(api.functions.workerAgents.getBySession, {
+          parentSessionId: context.sessionId as any,
+        });
+      }
       if (!agents.length) return "No agents found.";
       return agents.map((a: any) => {
         const tokens = a.tokens ? `${a.tokens.input + a.tokens.output} tokens` : "no tokens";
         const elapsed = a.completedAt ? `${((a.completedAt - a.startedAt) / 1000).toFixed(1)}s` : "running";
-        return `[${a.status}] ${a.label} (${a._id}) - ${elapsed}, ${tokens}${a.error ? ` | Error: ${a.error}` : ""}${a.result ? ` | Result: ${a.result.slice(0, 200)}` : ""}`;
+        const lastLog = args.includeLogs && Array.isArray(a.logs) && a.logs.length
+          ? ` | Log: ${String(a.logs[a.logs.length - 1]).slice(0, 180)}`
+          : "";
+        return `[${a.status}] ${a.label} (${a._id}) - ${elapsed}, ${tokens}${a.error ? ` | Error: ${a.error}` : ""}${a.result ? ` | Result: ${a.result.slice(0, 200)}` : ""}${lastLog}`;
       }).join("\n");
     } catch (e: any) {
       return `List failed: ${e.message}`;
+    }
+  },
+};
+
+const messageWorker: BuiltinTool = {
+  name: "message_worker",
+  description: "Send a follow-up instruction to a running sub-agent in this session. Use with spawn_agent(async=true) to coordinate multi-step work.",
+  category: "agents",
+  requiresApproval: false,
+  parameters: Type.Object({
+    id: Type.String({ description: "Worker agent ID" }),
+    message: Type.String({ description: "Instruction/message for the worker" }),
+  }),
+  handler: async (args, context) => {
+    try {
+      const { convexClient } = await import("@/lib/convex");
+      const { api } = await import("@/convex/_generated/api");
+      const workers = await convexClient.query(api.functions.workerAgents.getBySession, {
+        parentSessionId: context.sessionId as any,
+      });
+      const worker = workers.find((w: any) => String(w._id) === String(args.id));
+      if (!worker) return `Worker ${args.id} not found in this session.`;
+      if (worker.status !== "running") return `Worker ${args.id} is ${worker.status}, not running.`;
+
+      const runtimeCtx = parseWorkerRuntimeContext(worker.context);
+      const instructions = runtimeCtx.instructions || [];
+      const message = String(args.message || "").trim();
+      if (!message) return "Message cannot be empty.";
+      instructions.push({
+        id: `ins_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        message,
+        from: "main-agent",
+        at: Date.now(),
+      });
+
+      await convexClient.mutation(api.functions.workerAgents.update, {
+        id: worker._id,
+        context: serializeWorkerRuntimeContext({ instructions }),
+      });
+      await convexClient.mutation(api.functions.workerAgents.appendLog, {
+        id: worker._id,
+        entry: `Coordinator instruction queued: ${String(args.message || "").slice(0, 160)}`,
+      });
+      return `Instruction queued for worker ${args.id}.`;
+    } catch (e: any) {
+      return `Failed to message worker: ${e.message}`;
+    }
+  },
+};
+
+const awaitAgent: BuiltinTool = {
+  name: "await_agent",
+  description: "Wait for a sub-agent to complete and return its latest status/result. Useful after spawn_agent(async=true).",
+  category: "agents",
+  requiresApproval: false,
+  parameters: Type.Object({
+    id: Type.String({ description: "Worker agent ID" }),
+    timeoutSeconds: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 60, max: 300)" })),
+    pollMs: Type.Optional(Type.Number({ description: "Polling interval ms (default: 1500, min: 500)" })),
+  }),
+  handler: async (args, context) => {
+    try {
+      const { convexClient } = await import("@/lib/convex");
+      const { api } = await import("@/convex/_generated/api");
+      const timeoutMs = Math.max(1000, Math.min(Number(args.timeoutSeconds || 60) * 1000, 300000));
+      const pollMs = Math.max(500, Math.min(Number(args.pollMs || 1500), 10000));
+      const started = Date.now();
+
+      while (Date.now() - started < timeoutMs) {
+        const workers = await convexClient.query(api.functions.workerAgents.getBySession, {
+          parentSessionId: context.sessionId as any,
+        });
+        const worker = workers.find((w: any) => String(w._id) === String(args.id));
+        if (!worker) return `Worker ${args.id} not found in this session.`;
+        if (worker.status === "completed" || worker.status === "failed") {
+          const elapsed = worker.completedAt
+            ? `${((worker.completedAt - worker.startedAt) / 1000).toFixed(1)}s`
+            : `${((Date.now() - worker.startedAt) / 1000).toFixed(1)}s`;
+          const tokens = worker.tokens
+            ? `${worker.tokens.input + worker.tokens.output} tokens`
+            : "no tokens";
+          const tailLog = Array.isArray(worker.logs) && worker.logs.length
+            ? `\nLast log: ${String(worker.logs[worker.logs.length - 1]).slice(0, 200)}`
+            : "";
+          return `[${worker.status}] ${worker.label} (${worker._id}) - ${elapsed}, ${tokens}`
+            + `${worker.error ? `\nError: ${worker.error}` : ""}`
+            + `${worker.result ? `\nResult:\n${String(worker.result).slice(0, 3000)}` : ""}`
+            + tailLog;
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+      return `Timed out waiting for worker ${args.id}. Use list_agents to inspect progress.`;
+    } catch (e: any) {
+      return `Failed waiting for worker: ${e.message}`;
     }
   },
 };
@@ -2487,6 +2698,8 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   spawnAgent,
   killAgent,
   listAgents,
+  messageWorker,
+  awaitAgent,
   setReminder,
   listReminders,
   cancelReminder,

@@ -4,6 +4,7 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { canCreateGateway, upgradeMessage } from "@/lib/license";
+import { invalidateWorkspacePathCache } from "@/lib/workspace";
 
 export async function GET() {
   try {
@@ -61,6 +62,7 @@ export async function POST(req: Request) {
       icon: icon || undefined,
       workspacePath: workspacePath || undefined,
     });
+    invalidateWorkspacePathCache(String(gatewayId));
 
     // Auto-create owner membership
     try {

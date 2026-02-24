@@ -3,6 +3,7 @@ import { getAuthContext, handleGatewayError, GatewayError } from "@/lib/gateway-
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { invalidateWorkspacePathCache } from "@/lib/workspace";
 
 async function requireMembership(userId: string, gatewayId: string, minRole?: string) {
   const role = await convexClient.query(api.functions.gatewayMembers.getRole, {
@@ -48,6 +49,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       id: id as Id<"gateways">,
       ...body,
     });
+    invalidateWorkspacePathCache(id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return handleGatewayError(err);
@@ -64,6 +66,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     await convexClient.mutation(api.functions.gateways.remove, {
       id: id as Id<"gateways">,
     });
+    invalidateWorkspacePathCache(id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return handleGatewayError(err);

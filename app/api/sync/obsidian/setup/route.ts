@@ -77,6 +77,7 @@ export async function GET(req: NextRequest) {
       gatewayName: gateway?.name || "",
       synapseBaseUrl: baseUrl,
       syncEndpoint: `${baseUrl}/sync/obsidian`,
+      yjsEndpoint: `${baseUrl}/sync/obsidian/yjs`,
       liveSyncProxyEndpoint: gateway?.slug ? `${baseUrl}/sync/obsidian/livesync/${gateway.slug}/` : "",
       defaultVaultPath: vaultPath,
       tokenConfigured,
@@ -129,4 +130,3 @@ export async function POST(req: NextRequest) {
     return handleGatewayError(err);
   }
 }
-

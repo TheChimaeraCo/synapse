@@ -17,6 +17,7 @@ interface ObsidianSetupResponse {
   gatewayName: string;
   synapseBaseUrl: string;
   syncEndpoint: string;
+  yjsEndpoint?: string;
   liveSyncProxyEndpoint: string;
   defaultVaultPath: string;
   tokenConfigured: boolean;
@@ -346,6 +347,13 @@ export function ObsidianTab() {
             <div className="flex gap-2">
               <Input readOnly value={data?.syncEndpoint || ""} className="bg-white/[0.06] border-white/[0.08] text-white" />
               <Button variant="outline" onClick={() => copyToClipboard(data?.syncEndpoint || "", "Sync endpoint")}>Copy</Button>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500 uppercase tracking-wide block mb-1">Yjs Endpoint</label>
+            <div className="flex gap-2">
+              <Input readOnly value={data?.yjsEndpoint || ""} className="bg-white/[0.06] border-white/[0.08] text-white" />
+              <Button variant="outline" onClick={() => copyToClipboard(data?.yjsEndpoint || "", "Yjs endpoint")}>Copy</Button>
             </div>
           </div>
           <div>

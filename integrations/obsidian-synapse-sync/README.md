@@ -5,6 +5,7 @@ This plugin syncs an Obsidian vault with Synapse using:
 - `GET /sync/obsidian` for snapshot
 - `GET /sync/obsidian?stream=true` for live updates
 - `POST /sync/obsidian` for local change push
+- `POST /sync/obsidian/yjs` for Yjs doc-channel sync payloads (state vector + update exchange)
 
 It does not use CouchDB and does not require Obsidian LiveSync.
 
@@ -46,3 +47,5 @@ Then click:
   - One active client: normal queued sync behavior
   - Two or more active clients: plugin switches to fast live typing push mode automatically
 - Presence is in-memory on the Synapse server process (best for single-host deployments).
+- Yjs channel is now available at `/sync/obsidian/yjs` for CRDT-aware clients.
+- Yjs room state hydrates from vault files on first open and persists updates back to vault files.

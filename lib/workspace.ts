@@ -7,6 +7,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
 const DEFAULT_WORKSPACE = "/root/clawd";
+const CACHE_TTL_MS = 5000;
 let _cached: string | null = null;
 let _cacheTime = 0;
 const _gwCache: Record<string, { value: string; time: number }> = {};
@@ -18,11 +19,15 @@ const _gwCache: Record<string, { value: string; time: number }> = {};
  * 3. Fall back to systemConfig global workspace_path
  * 4. Default: /root/clawd
  */
-export async function getWorkspacePath(gatewayId?: string): Promise<string> {
+export async function getWorkspacePath(
+  gatewayId?: string,
+  opts?: { forceRefresh?: boolean },
+): Promise<string> {
+  const forceRefresh = Boolean(opts?.forceRefresh);
   // Per-gateway workspace
   if (gatewayId) {
     const cached = _gwCache[gatewayId];
-    if (cached && Date.now() - cached.time < 60000) return cached.value;
+    if (!forceRefresh && cached && Date.now() - cached.time < CACHE_TTL_MS) return cached.value;
     try {
       const convex = new ConvexHttpClient(process.env.CONVEX_SELF_HOSTED_URL || "http://127.0.0.1:3220");
       
@@ -57,7 +62,7 @@ export async function getWorkspacePath(gatewayId?: string): Promise<string> {
   }
 
   // Global workspace path
-  if (_cached && Date.now() - _cacheTime < 60000) return _cached;
+  if (!forceRefresh && _cached && Date.now() - _cacheTime < CACHE_TTL_MS) return _cached;
   try {
     const convex = new ConvexHttpClient(process.env.CONVEX_SELF_HOSTED_URL || "http://127.0.0.1:3220");
     const namespaced = await convex.query(api.functions.config.get, { key: "identity.workspace_path" });
@@ -76,9 +81,21 @@ export async function getWorkspacePath(gatewayId?: string): Promise<string> {
 export function getWorkspacePathSync(gatewayId?: string): string {
   if (gatewayId) {
     const cached = _gwCache[gatewayId];
-    if (cached && Date.now() - cached.time < 60000) return cached.value;
+    if (cached && Date.now() - cached.time < CACHE_TTL_MS) return cached.value;
   }
   return _cached || DEFAULT_WORKSPACE;
+}
+
+export function invalidateWorkspacePathCache(gatewayId?: string): void {
+  if (gatewayId) {
+    delete _gwCache[gatewayId];
+  } else {
+    for (const key of Object.keys(_gwCache)) {
+      delete _gwCache[key];
+    }
+    _cached = null;
+    _cacheTime = 0;
+  }
 }
 
 /**
@@ -87,7 +104,7 @@ export function getWorkspacePathSync(gatewayId?: string): string {
 const _slugCache: Record<string, { value: string; time: number }> = {};
 export async function getGatewaySlug(gatewayId: string): Promise<string | null> {
   const cached = _slugCache[gatewayId];
-  if (cached && Date.now() - cached.time < 60000) return cached.value;
+  if (cached && Date.now() - cached.time < CACHE_TTL_MS) return cached.value;
   try {
     const convex = new ConvexHttpClient(process.env.CONVEX_SELF_HOSTED_URL || "http://127.0.0.1:3220");
     const gateway = await convex.query(api.functions.gateways.get, {
