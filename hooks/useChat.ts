@@ -22,6 +22,8 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [toolLogs, setToolLogs] = useState<Array<{ tool: string; success: boolean; summary: string; round: number }>>([]);
   const [streamingContent, setStreamingContent] = useState("");
   const [loaded, setLoaded] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -87,6 +89,8 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
     setMessages((prev) => [...prev, userMsg]);
     setIsStreaming(true);
     setIsTyping(true);
+    setToolLogs([]);
+    setToolStatus(null);
     setStreamingContent("");
 
     const controller = new AbortController();
@@ -130,6 +134,7 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
               setIsTyping(true);
             } else if (data.type === "token") {
               setIsTyping(false);
+              setToolStatus(null);
               accumulated += data.content;
               setStreamingContent(accumulated);
               window.dispatchEvent(
@@ -139,8 +144,15 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
               );
             } else if (data.type === "command") {
               commandResult = data;
+            } else if (data.type === "tool_start") {
+              setToolStatus(`Using ${data.tool}...`);
+              setIsTyping(true);
+            } else if (data.type === "tool_result") {
+              setToolLogs(prev => [...prev, { tool: data.tool, success: data.success, summary: data.summary, round: data.round }]);
             } else if (data.type === "tool_use") {
-              // Could show tool use indicator
+              const toolNames = (data.tools || []).join(", ");
+              setToolStatus(`Running: ${toolNames}`);
+              setIsTyping(true);
             } else if (data.type === "agent_start" || data.type === "agent_complete") {
               window.dispatchEvent(new Event("synapse:agent_update"));
             } else if (data.type === "error") {
@@ -225,6 +237,8 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
     } finally {
       setIsStreaming(false);
       setIsTyping(false);
+      setToolStatus(null);
+      setToolLogs([]);
       setStreamingContent("");
       abortRef.current = null;
     }
@@ -251,6 +265,8 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
     messages,
     isStreaming,
     isTyping,
+    toolStatus,
+    toolLogs,
     streamingContent,
     loaded,
     sendMessage,

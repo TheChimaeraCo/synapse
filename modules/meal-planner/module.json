@@ -1,0 +1,203 @@
+{
+  "manifestVersion": 1,
+  "id": "meal-planner",
+  "name": "Meal Planner",
+  "version": "0.1.0",
+  "description": "Plan meals, save recipes, generate weekly shopping lists, and lookup nutrition.",
+  "author": "Synapse Forge",
+  "toolPrefixes": [
+    "meal-planner"
+  ],
+  "routes": [
+    {
+      "path": "/modules/meal-planner",
+      "title": "Meal Planner",
+      "icon": "utensils"
+    }
+  ],
+  "permissions": [
+    "module_store",
+    "network"
+  ],
+  "tools": [
+    {
+      "name": "meal-planner.save_recipe",
+      "description": "Save or update a recipe with ingredients and instructions.",
+      "category": "module",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Optional recipe id (slug). If omitted, generated from name."
+          },
+          "name": {
+            "type": "string",
+            "description": "Recipe name"
+          },
+          "servings": {
+            "type": "number",
+            "description": "Default servings",
+            "default": 1
+          },
+          "ingredients": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "item"
+              ]
+            }
+          },
+          "instructions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "handlerCode": "const slug = (value) => String(value || \"\").toLowerCase().trim().replace(/[^a-z0-9]+/g, \"-\").replace(/^-+|-+$/g, \"\");\nconst id = slug(args.id || args.name);\nif (!id) return \"Recipe id or name is required.\";\nconst existing = await moduleStore.get(\"recipes\", id);\nconst existingData = existing && existing.data && typeof existing.data === \"object\" ? existing.data : {};\nconst ingredients = Array.isArray(args.ingredients) ? args.ingredients : (Array.isArray(existingData.ingredients) ? existingData.ingredients : []);\nconst instructions = Array.isArray(args.instructions) ? args.instructions : (Array.isArray(existingData.instructions) ? existingData.instructions : []);\nconst tags = Array.isArray(args.tags) ? args.tags.map((v) => String(v).trim()).filter(Boolean) : (Array.isArray(existingData.tags) ? existingData.tags : []);\nconst recipe = {\n  id,\n  name: String(args.name || existingData.name || id),\n  servings: Number(args.servings || existingData.servings || 1),\n  ingredients,\n  instructions,\n  tags,\n  notes: typeof args.notes === \"string\" ? args.notes : (typeof existingData.notes === \"string\" ? existingData.notes : \"\"),\n  createdAt: Number(existingData.createdAt || Date.now()),\n  updatedAt: Date.now(),\n};\nawait moduleStore.upsert(\"recipes\", id, recipe, tags);\nreturn \"Saved recipe \\\"\" + recipe.name + \"\\\" (\" + recipe.ingredients.length + \" ingredients, \" + recipe.instructions.length + \" steps).\";"
+    },
+    {
+      "name": "meal-planner.list_recipes",
+      "description": "List or search saved recipes by query or tag.",
+      "category": "module",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Text search over recipe data"
+          },
+          "tag": {
+            "type": "string",
+            "description": "Filter by tag"
+          },
+          "limit": {
+            "type": "number",
+            "default": 20
+          }
+        }
+      },
+      "handlerCode": "const query = String(args.query || \"\").trim().toLowerCase();\nconst tag = String(args.tag || \"\").trim().toLowerCase();\nconst limit = Math.max(1, Math.min(100, Number(args.limit || 20)));\nconst rows = query ? await moduleStore.search(\"recipes\", query, limit * 3) : await moduleStore.list(\"recipes\");\nconst out = [];\nfor (const row of rows) {\n  const recipe = row && row.data && typeof row.data === \"object\" ? row.data : {};\n  const tags = Array.isArray(recipe.tags) ? recipe.tags : [];\n  if (tag && !tags.some((t) => String(t).toLowerCase() === tag)) continue;\n  out.push({\n    id: recipe.id || row.id,\n    name: recipe.name || row.id,\n    servings: recipe.servings || 1,\n    ingredientCount: Array.isArray(recipe.ingredients) ? recipe.ingredients.length : 0,\n    tags,\n    updatedAt: recipe.updatedAt || row.updatedAt,\n  });\n  if (out.length >= limit) break;\n}\nif (out.length === 0) return \"No recipes found.\";\nreturn JSON.stringify(out, null, 2);"
+    },
+    {
+      "name": "meal-planner.plan_week",
+      "description": "Create or replace a weekly meal plan using saved recipe ids.",
+      "category": "module",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "weekStart": {
+            "type": "string",
+            "description": "Week start date (YYYY-MM-DD)"
+          },
+          "meals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "mealType": {
+                  "type": "string",
+                  "description": "breakfast, lunch, dinner, snack"
+                },
+                "recipeId": {
+                  "type": "string"
+                },
+                "servings": {
+                  "type": "number"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "day",
+                "mealType",
+                "recipeId"
+              ]
+            }
+          }
+        },
+        "required": [
+          "weekStart",
+          "meals"
+        ]
+      },
+      "handlerCode": "const weekStart = String(args.weekStart || \"\").trim();\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(weekStart)) return \"weekStart must be YYYY-MM-DD.\";\nif (!Array.isArray(args.meals) || args.meals.length === 0) return \"Provide at least one meal.\";\nconst cleanedMeals = args.meals.map((meal) => ({\n  day: String(meal.day || \"\").trim(),\n  mealType: String(meal.mealType || \"meal\").trim().toLowerCase(),\n  recipeId: String(meal.recipeId || \"\").trim(),\n  servings: Number(meal.servings || 1),\n  notes: typeof meal.notes === \"string\" ? meal.notes : \"\",\n})).filter((meal) => meal.day && meal.recipeId);\nif (cleanedMeals.length === 0) return \"No valid meals found.\";\nconst plan = {\n  weekStart,\n  meals: cleanedMeals,\n  updatedAt: Date.now(),\n};\nawait moduleStore.upsert(\"plans\", weekStart, plan, [\"weekly-plan\"]);\nreturn \"Saved weekly plan for \" + weekStart + \" with \" + cleanedMeals.length + \" meals.\";"
+    },
+    {
+      "name": "meal-planner.shopping_list",
+      "description": "Generate an aggregated shopping list from a weekly meal plan.",
+      "category": "module",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "weekStart": {
+            "type": "string",
+            "description": "Week start date (YYYY-MM-DD)"
+          }
+        },
+        "required": [
+          "weekStart"
+        ]
+      },
+      "handlerCode": "const weekStart = String(args.weekStart || \"\").trim();\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(weekStart)) return \"weekStart must be YYYY-MM-DD.\";\nconst planRow = await moduleStore.get(\"plans\", weekStart);\nif (!planRow || !planRow.data) return \"No plan found for \" + weekStart + \".\";\nconst plan = planRow.data;\nconst meals = Array.isArray(plan.meals) ? plan.meals : [];\nconst bucket = new Map();\nfor (const meal of meals) {\n  const recipeId = String(meal.recipeId || \"\").trim();\n  if (!recipeId) continue;\n  const recipeRow = await moduleStore.get(\"recipes\", recipeId);\n  if (!recipeRow || !recipeRow.data) continue;\n  const recipe = recipeRow.data;\n  const servings = Number(meal.servings || recipe.servings || 1);\n  const baseServings = Number(recipe.servings || 1) || 1;\n  const scale = servings / baseServings;\n  const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];\n  for (const ingredient of ingredients) {\n    const name = typeof ingredient === \"string\" ? ingredient : String(ingredient.item || \"\").trim();\n    if (!name) continue;\n    const unit = typeof ingredient === \"string\" ? \"\" : String(ingredient.unit || \"\").trim();\n    const amountRaw = typeof ingredient === \"string\" ? 1 : Number(ingredient.amount || 1);\n    const amount = Number.isFinite(amountRaw) ? amountRaw * scale : 1;\n    const category = typeof ingredient === \"string\" ? \"\" : String(ingredient.category || \"\").trim().toLowerCase();\n    const key = (name.toLowerCase() + \"|\" + unit.toLowerCase() + \"|\" + category);\n    const existing = bucket.get(key) || { item: name, unit, amount: 0, category };\n    existing.amount += amount;\n    bucket.set(key, existing);\n  }\n}\nconst items = Array.from(bucket.values())\n  .sort((a, b) => (a.category || \"zzz\").localeCompare(b.category || \"zzz\") || a.item.localeCompare(b.item))\n  .map((item) => ({ ...item, amount: Math.round(item.amount * 100) / 100 }));\nconst shopping = { weekStart, items, generatedAt: Date.now() };\nawait moduleStore.upsert(\"shopping_lists\", weekStart, shopping, [\"shopping\"]);\nif (items.length === 0) return \"No ingredients found from that plan.\";\nconst lines = [];\nlet currentCategory = \"\";\nfor (const item of items) {\n  const category = item.category || \"other\";\n  if (category !== currentCategory) {\n    currentCategory = category;\n    lines.push(\"\\n[\" + category.toUpperCase() + \"]\");\n  }\n  lines.push(\"- \" + item.item + \": \" + item.amount + (item.unit ? \" \" + item.unit : \"\"));\n}\nreturn \"Shopping list for \" + weekStart + \":\" + lines.join(\"\\n\");"
+    },
+    {
+      "name": "meal-planner.nutrition_lookup",
+      "description": "Lookup nutrition facts for an ingredient/food via OpenFoodFacts.",
+      "category": "module",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Food query text"
+          },
+          "limit": {
+            "type": "number",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "handlerCode": "const query = String(args.query || \"\").trim();\nif (!query) return \"query is required.\";\nconst limit = Math.max(1, Math.min(10, Number(args.limit || 5)));\nconst url = \"https://world.openfoodfacts.org/cgi/search.pl?search_terms=\" + encodeURIComponent(query) + \"&search_simple=1&action=process&json=1&page_size=\" + limit;\nconst res = await fetch(url, { headers: { \"accept\": \"application/json\" } });\nif (!res.ok) return \"Nutrition lookup failed: \" + res.status;\nconst data = await res.json();\nconst products = Array.isArray(data.products) ? data.products : [];\nconst mapped = products.slice(0, limit).map((p) => ({\n  name: p.product_name || p.generic_name || p.brands || \"Unknown\",\n  calories_kcal_100g: p.nutriments?.[\"energy-kcal_100g\"] ?? null,\n  protein_g_100g: p.nutriments?.proteins_100g ?? null,\n  carbs_g_100g: p.nutriments?.carbohydrates_100g ?? null,\n  fat_g_100g: p.nutriments?.fat_100g ?? null,\n  fiber_g_100g: p.nutriments?.fiber_100g ?? null,\n  sugars_g_100g: p.nutriments?.sugars_100g ?? null,\n});\nif (mapped.length === 0) return \"No nutrition entries found.\";\nreturn JSON.stringify(mapped, null, 2);"
+    }
+  ]
+}

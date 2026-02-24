@@ -1,0 +1,245 @@
+<div id="app" class="max-w-4xl mx-auto space-y-6">
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-white">🍽 Meal Planner</h1>
+    <button onclick="showTab('recipes')" class="px-4 py-2 rounded-xl bg-indigo-500/20 text-indigo-300 text-sm hover:bg-indigo-500/30 transition">
+      + New Recipe
+    </button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-2 border-b border-white/10 pb-2">
+    <button onclick="showTab('planner')" id="tab-planner" class="tab-btn active px-4 py-2 rounded-t-lg text-sm font-medium transition">Weekly Plan</button>
+    <button onclick="showTab('recipes')" id="tab-recipes" class="tab-btn px-4 py-2 rounded-t-lg text-sm font-medium transition">Recipes</button>
+    <button onclick="showTab('shopping')" id="tab-shopping" class="tab-btn px-4 py-2 rounded-t-lg text-sm font-medium transition">Shopping List</button>
+  </div>
+
+  <!-- Weekly Planner Tab -->
+  <div id="panel-planner" class="tab-panel">
+    <div class="grid grid-cols-7 gap-2">
+      <div class="text-center text-xs text-zinc-500 font-medium" id="day-headers"></div>
+    </div>
+    <div id="week-grid" class="grid grid-cols-7 gap-2 mt-2"></div>
+    <div class="mt-4 flex gap-2">
+      <button onclick="generateShoppingList()" class="px-4 py-2 rounded-xl bg-green-500/20 text-green-300 text-sm hover:bg-green-500/30 transition">
+        🛒 Generate Shopping List
+      </button>
+    </div>
+  </div>
+
+  <!-- Recipes Tab -->
+  <div id="panel-recipes" class="tab-panel hidden">
+    <div class="mb-4">
+      <input id="recipe-search" type="text" placeholder="Search recipes..." oninput="searchRecipes()" 
+        class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-zinc-500 text-sm focus:border-indigo-500/50 focus:outline-none" />
+    </div>
+    <!-- Add Recipe Form -->
+    <div id="add-recipe-form" class="hidden mb-6 p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
+      <h3 class="text-sm font-semibold text-zinc-200">Add New Recipe</h3>
+      <input id="new-recipe-name" type="text" placeholder="Recipe name" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none" />
+      <textarea id="new-recipe-ingredients" placeholder="Ingredients (one per line)" rows="4" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none"></textarea>
+      <textarea id="new-recipe-instructions" placeholder="Instructions" rows="3" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none"></textarea>
+      <input id="new-recipe-tags" type="text" placeholder="Tags (comma separated)" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none" />
+      <div class="flex gap-2">
+        <button onclick="saveRecipe()" class="px-4 py-2 rounded-lg bg-indigo-500/20 text-indigo-300 text-sm hover:bg-indigo-500/30 transition">Save</button>
+        <button onclick="toggleAddForm()" class="px-4 py-2 rounded-lg bg-white/5 text-zinc-400 text-sm hover:bg-white/10 transition">Cancel</button>
+      </div>
+    </div>
+    <div id="recipes-list" class="space-y-2"></div>
+  </div>
+
+  <!-- Shopping List Tab -->
+  <div id="panel-shopping" class="tab-panel hidden">
+    <div id="shopping-list" class="space-y-4">
+      <p class="text-zinc-500 text-sm italic">Generate a shopping list from your weekly plan.</p>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div id="status" class="hidden fixed bottom-4 right-4 px-4 py-2 rounded-xl text-sm font-medium shadow-lg transition-all"></div>
+</div>
+
+<style>
+  .tab-btn { color: #71717a; }
+  .tab-btn.active { color: #818cf8; border-bottom: 2px solid #818cf8; }
+  .tab-panel.hidden { display: none; }
+  .meal-slot { min-height: 60px; }
+  .meal-slot:hover { background: rgba(255,255,255,0.06); }
+  .recipe-card:hover { background: rgba(255,255,255,0.06); }
+</style>
+
+<script>
+  let recipes = [];
+  let weekPlan = {};
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const meals = ['Breakfast','Lunch','Dinner'];
+
+  function showStatus(msg, type = 'info') {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = 'fixed bottom-4 right-4 px-4 py-2 rounded-xl text-sm font-medium shadow-lg transition-all';
+    const classes = type === 'error' ? ['bg-red-500/20', 'text-red-300', 'border', 'border-red-500/30'] : ['bg-indigo-500/20', 'text-indigo-300', 'border', 'border-indigo-500/30'];
+    el.classList.add(...classes);
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 3000);
+  }
+
+  function showTab(name) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.remove('hidden');
+    document.getElementById('tab-' + name).classList.add('active');
+    if (name === 'recipes') loadRecipes();
+  }
+
+  function renderWeekGrid() {
+    const grid = document.getElementById('week-grid');
+    let html = '';
+    // Day headers
+    html += days.map(d => `<div class="text-center text-xs text-zinc-400 font-semibold py-1">${d}</div>`).join('');
+    // Meal rows
+    for (const meal of meals) {
+      for (const day of days) {
+        const key = `${day}-${meal}`;
+        const assigned = weekPlan[key];
+        html += `<div class="meal-slot rounded-lg border border-white/5 p-2 cursor-pointer transition" onclick="assignMeal('${day}','${meal}')">
+          <div class="text-[10px] text-zinc-600 uppercase">${meal}</div>
+          ${assigned ? `<div class="text-xs text-zinc-300 mt-1">${assigned}</div>` : '<div class="text-[10px] text-zinc-700 mt-1">+ Add</div>'}
+        </div>`;
+      }
+    }
+    grid.innerHTML = html;
+  }
+
+  async function assignMeal(day, mealType) {
+    if (recipes.length === 0) {
+      await loadRecipes();
+    }
+    if (recipes.length === 0) {
+      showStatus('Add some recipes first!', 'error');
+      showTab('recipes');
+      return;
+    }
+    const names = recipes.map(r => r.name || r.item?.name || 'Unknown');
+    const choice = prompt('Pick a recipe:\\n' + names.map((n,i) => `${i+1}. ${n}`).join('\\n') + '\\n\\nEnter number:');
+    if (!choice) return;
+    const idx = parseInt(choice) - 1;
+    if (idx >= 0 && idx < names.length) {
+      weekPlan[`${day}-${mealType}`] = names[idx];
+      renderWeekGrid();
+      showStatus(`Added ${names[idx]} to ${day} ${mealType}`);
+    }
+  }
+
+  async function loadRecipes() {
+    try {
+      showStatus('Loading recipes...');
+      const result = await window.callTool('meal-planner.list_recipes', {});
+      recipes = result.recipes || result.items || [];
+      renderRecipesList(recipes);
+    } catch(e) {
+      console.error('Failed to load recipes:', e);
+      renderRecipesList([]);
+    }
+  }
+
+  function renderRecipesList(list) {
+    const el = document.getElementById('recipes-list');
+    if (!list || list.length === 0) {
+      el.innerHTML = '<p class="text-zinc-500 text-sm italic">No recipes yet. Add one above!</p>';
+      return;
+    }
+    el.innerHTML = list.map(r => {
+      const name = r.name || r.item?.name || 'Unnamed';
+      const tags = r.tags || r.item?.tags || [];
+      const ingredients = r.ingredients || r.item?.ingredients || [];
+      return `<div class="recipe-card p-3 rounded-xl border border-white/5 transition cursor-pointer">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-medium text-zinc-200">${name}</span>
+          <div class="flex gap-1">${tags.map(t => `<span class="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 text-[10px]">${t}</span>`).join('')}</div>
+        </div>
+        ${ingredients.length > 0 ? `<div class="text-[11px] text-zinc-500 mt-1">${ingredients.slice(0,5).join(', ')}${ingredients.length > 5 ? '...' : ''}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  function searchRecipes() {
+    const q = document.getElementById('recipe-search').value.toLowerCase();
+    const filtered = recipes.filter(r => {
+      const name = (r.name || r.item?.name || '').toLowerCase();
+      const tags = (r.tags || r.item?.tags || []).join(' ').toLowerCase();
+      return name.includes(q) || tags.includes(q);
+    });
+    renderRecipesList(filtered);
+  }
+
+  function toggleAddForm() {
+    document.getElementById('add-recipe-form').classList.toggle('hidden');
+  }
+
+  async function saveRecipe() {
+    const name = document.getElementById('new-recipe-name').value.trim();
+    const ingredients = document.getElementById('new-recipe-ingredients').value.trim().split('\n').filter(Boolean);
+    const instructions = document.getElementById('new-recipe-instructions').value.trim();
+    const tags = document.getElementById('new-recipe-tags').value.trim().split(',').map(t => t.trim()).filter(Boolean);
+    if (!name) { showStatus('Recipe name required', 'error'); return; }
+    try {
+      showStatus('Saving recipe...');
+      await window.callTool('meal-planner.save_recipe', { item: { name, ingredients, instructions, tags } });
+      showStatus('Recipe saved!');
+      toggleAddForm();
+      document.getElementById('new-recipe-name').value = '';
+      document.getElementById('new-recipe-ingredients').value = '';
+      document.getElementById('new-recipe-instructions').value = '';
+      document.getElementById('new-recipe-tags').value = '';
+      await loadRecipes();
+    } catch(e) {
+      showStatus('Failed to save: ' + e.message, 'error');
+    }
+  }
+
+  async function generateShoppingList() {
+    const assigned = Object.entries(weekPlan).filter(([k,v]) => v);
+    if (assigned.length === 0) {
+      showStatus('Add meals to your week first!', 'error');
+      return;
+    }
+    try {
+      showStatus('Generating shopping list...');
+      const mealEntries = assigned.map(([key, recipeName]) => {
+        const [day, mealType] = key.split('-');
+        const recipe = recipes.find(r => (r.name || r.item?.name) === recipeName);
+        return { day, mealType, recipeName, recipeId: recipe?.id || recipe?._id || recipeName };
+      });
+      const result = await window.callTool('meal-planner.shopping_list', {
+        weekStart: new Date().toISOString().split('T')[0],
+        meals: mealEntries
+      });
+      renderShoppingList(result);
+      showTab('shopping');
+    } catch(e) {
+      showStatus('Failed: ' + e.message, 'error');
+    }
+  }
+
+  function renderShoppingList(data) {
+    const el = document.getElementById('shopping-list');
+    const items = data.items || data.list || data.categories || [];
+    if (typeof items === 'string') {
+      el.innerHTML = `<pre class="text-sm text-zinc-300 whitespace-pre-wrap">${items}</pre>`;
+      return;
+    }
+    if (Array.isArray(items) && items.length > 0) {
+      el.innerHTML = items.map(item => {
+        if (typeof item === 'string') return `<div class="flex items-center gap-2 py-1"><input type="checkbox" class="rounded"><span class="text-sm text-zinc-300">${item}</span></div>`;
+        return `<div class="flex items-center gap-2 py-1"><input type="checkbox" class="rounded"><span class="text-sm text-zinc-300">${item.name || item.item || JSON.stringify(item)}</span></div>`;
+      }).join('');
+    } else {
+      el.innerHTML = `<pre class="text-sm text-zinc-300 whitespace-pre-wrap">${JSON.stringify(data, null, 2)}</pre>`;
+    }
+  }
+
+  // Init
+  renderWeekGrid();
+  showTab('planner');
+</script>

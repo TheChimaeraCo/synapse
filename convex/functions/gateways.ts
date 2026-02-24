@@ -206,6 +206,9 @@ export const update = mutation({
     if (updates.name !== undefined) filtered.name = updates.name;
     if (updates.slug !== undefined) filtered.slug = updates.slug;
     if (updates.status !== undefined) filtered.status = updates.status;
+    if (updates.description !== undefined) filtered.description = updates.description;
+    if (updates.icon !== undefined) filtered.icon = updates.icon;
+    if (updates.workspacePath !== undefined) filtered.workspacePath = updates.workspacePath;
 
     await ctx.db.patch(id, filtered);
   },

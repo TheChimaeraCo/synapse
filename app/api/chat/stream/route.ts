@@ -392,7 +392,7 @@ export async function POST(req: NextRequest) {
         let usage = { input: 0, output: 0 };
         let streamedTokenEstimate = 0;
         let movedUserMessageToNewConversation = false;
-        const MAX_TOOL_ROUNDS = 5;
+        const MAX_TOOL_ROUNDS = 25;
 
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
           throwIfAborted();
@@ -494,6 +494,14 @@ export async function POST(req: NextRequest) {
               });
               controller.enqueue(encoder.encode(sseEvent({ type: "agent_complete", agentId: wId })));
             } catch {}
+            // Stream tool result summary to UI
+            controller.enqueue(encoder.encode(sseEvent({
+              type: "tool_result",
+              tool: toolCalls[i]?.name || "unknown",
+              success: !toolResults[i].isError,
+              summary: toolResults[i].content.slice(0, 200),
+              round: round + 1,
+            })));
           }
 
           for (const result of toolResults) {

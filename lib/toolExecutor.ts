@@ -453,6 +453,8 @@ export async function executeTools(
   }
 
   for (const call of toolCalls) {
+    // Reverse provider-safe name mapping (dots replaced with __ in toProviderTools)
+    call.name = call.name.replace(/__/g, ".");
     const previousToolOverride = (context as any).__toolModelOverride;
     const dbTool = dbToolMap.get(call.name);
     const moduleRoute = resolveModuleToolRoute(
@@ -616,7 +618,7 @@ export function toProviderTools(
   dbTools: Array<{ name: string; description: string; parameters: any }>,
 ): Tool[] {
   return dbTools.map((t) => ({
-    name: t.name,
+    name: t.name.replace(/\./g, "__"),
     description: t.description,
     parameters: t.parameters || Type.Object({}),
   }));

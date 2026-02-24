@@ -329,6 +329,113 @@ function AgentItem({ agent, onKill }: { agent: WorkerAgent; onKill?: (id: string
   );
 }
 
+interface InstalledModule {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  enabled?: boolean;
+  tools?: Array<{ name: string; description: string }>;
+  routes?: Array<{ path: string; title?: string; icon?: string }>;
+  installedAt?: number;
+  version?: string;
+}
+
+function SidebarModules({ onClose }: { onClose?: () => void }) {
+  const [modules, setModules] = useState<InstalledModule[]>([]);
+  const [expanded, setExpanded] = useState(true);
+  const [selectedModule, setSelectedModule] = useState<InstalledModule | null>(null);
+
+  useEffect(() => {
+    const fetchModules = async () => {
+      try {
+        const res = await gatewayFetch("/api/modules");
+        if (res.ok) {
+          const data = await res.json();
+          const installed = (data.installed || data.modules || []).filter((m: InstalledModule) => m.enabled !== false);
+          setModules(installed);
+        }
+      } catch {}
+    };
+    fetchModules();
+    const interval = setInterval(fetchModules, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (modules.length === 0) return null;
+
+  return (
+    <div className="px-2 py-2 space-y-1">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-1.5 px-1 mb-1 w-full text-left hover:text-zinc-300 transition-colors"
+      >
+        <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-500 transition-transform", !expanded && "-rotate-90")} />
+        <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Modules</span>
+        <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 text-purple-400 border-purple-500/30 ml-auto">
+          {modules.length}
+        </Badge>
+      </button>
+      {expanded && (
+        <div className="space-y-0.5">
+          {modules.map((mod) => {
+            const mainRoute = mod.routes?.[0];
+            const hasUI = Boolean(mainRoute?.path);
+            return (
+              <div key={mod.name}>
+                <button
+                  onClick={() => setSelectedModule(selectedModule?.name === mod.name ? null : mod)}
+                  className={cn(
+                    "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs transition-all duration-200",
+                    selectedModule?.name === mod.name
+                      ? "bg-gradient-to-r from-purple-500/10 to-blue-500/10 text-purple-300 border border-purple-500/15"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
+                  )}
+                >
+                  <span className="text-sm shrink-0">{mod.icon || "📦"}</span>
+                  <span className="truncate capitalize">{mod.name.replace(/-/g, " ")}</span>
+                  {mod.tools && mod.tools.length > 0 && (
+                    <span className="text-[10px] text-zinc-600 ml-auto">{mod.tools.length}</span>
+                  )}
+                </button>
+                {selectedModule?.name === mod.name && (
+                  <div className="ml-6 mt-1 space-y-1">
+                    <Link
+                      href={`/modules/${mod.id}`}
+                      onClick={onClose}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-purple-300 hover:bg-purple-500/10 transition-all"
+                    >
+                      <span className="text-xs">🖥</span>
+                      <span>Open UI</span>
+                    </Link>
+                    {mod.routes?.map((route) => (
+                      <Link
+                        key={route.path}
+                        href={route.path}
+                        onClick={onClose}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-purple-300 hover:bg-purple-500/10 transition-all"
+                      >
+                        <span className="text-xs">{route.icon || "📄"}</span>
+                        <span>{route.title || route.path}</span>
+                      </Link>
+                    ))}
+                    {mod.tools && mod.tools.length > 0 && (
+                      <div className="px-3 py-1 text-[10px] text-zinc-600">
+                        {mod.tools.length} tool{mod.tools.length !== 1 ? "s" : ""}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+{/* Modal removed - using inline expand with route links */}
+    </div>
+  );
+}
+
 function SidebarAgents() {
   const [agents, setAgents] = useState<WorkerAgent[]>([]);
 
@@ -877,6 +984,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
       {/* Channels + agents - fills remaining space */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         {pathname.startsWith("/chat") && <SidebarChannels />}
+        <SidebarModules onClose={onClose} />
         <SidebarAgents />
       </div>
 

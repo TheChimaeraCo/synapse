@@ -115,6 +115,8 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     messages,
     isStreaming,
     isTyping,
+    toolStatus,
+    toolLogs,
     streamingContent,
     loaded,
     sendMessage,
@@ -269,18 +271,6 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
           );
         })}
 
-        {isTyping && (
-          <div className="flex justify-start">
-            <div className="max-w-[92%] sm:max-w-[75%] rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl px-5 py-3">
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-blue-400/60 animate-bounce" style={{ animationDelay: "0ms" }} />
-                <span className="h-2 w-2 rounded-full bg-blue-400/60 animate-bounce" style={{ animationDelay: "150ms" }} />
-                <span className="h-2 w-2 rounded-full bg-blue-400/60 animate-bounce" style={{ animationDelay: "300ms" }} />
-              </div>
-            </div>
-          </div>
-        )}
-
         {streamingContent && (
           <div className="flex justify-start">
             <div className="max-w-[92%] sm:max-w-[75%] rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl px-5 py-3 text-sm animate-fade-in">
@@ -290,6 +280,43 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
                 </ReactMarkdown>
               </div>
               <span className="inline-block h-4 w-0.5 animate-pulse bg-primary ml-0.5" />
+            </div>
+          </div>
+        )}
+
+        {(isTyping || isStreaming || (toolLogs && toolLogs.length > 0)) && (
+          <div className="flex justify-start">
+            <div className="max-w-[92%] sm:max-w-[75%] rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl px-5 py-3 space-y-2">
+              {toolLogs && toolLogs.length > 0 && (
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {toolLogs.map((log, i) => (
+                    <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
+                      <span className={log.success ? "text-green-400" : "text-red-400"}>
+                        {log.success ? "✓" : "✗"}
+                      </span>
+                      <span className="text-zinc-500">R{log.round}</span>
+                      <span className="text-blue-300">{log.tool}</span>
+                      <span className="text-zinc-600 truncate max-w-[200px]">{log.summary}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {isTyping && (
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-blue-400/60 animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="h-2 w-2 rounded-full bg-blue-400/60 animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="h-2 w-2 rounded-full bg-blue-400/60 animate-bounce" style={{ animationDelay: "300ms" }} />
+                  {toolStatus && (
+                    <span className="ml-2 text-xs text-blue-300/70 font-mono">{toolStatus}</span>
+                  )}
+                  <button
+                    onClick={stopStreaming}
+                    className="ml-auto px-2 py-0.5 rounded-md text-[10px] text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all font-medium"
+                  >
+                    Stop
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
