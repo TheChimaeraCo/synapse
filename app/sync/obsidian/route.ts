@@ -48,6 +48,21 @@ interface ObsidianOperation {
   encoding?: "utf8" | "base64";
 }
 
+interface SyncAuditPayload {
+  gatewayId?: string;
+  userId?: string;
+  method: "GET" | "POST";
+  outcome: "success" | "error";
+  authMode?: "session" | "token";
+  vaultPath?: string;
+  stream?: boolean;
+  filePath?: string;
+  operations?: number;
+  applied?: number;
+  statusCode?: number;
+  message?: string;
+}
+
 function clampPollMs(input?: string | null): number {
   const value = Number.parseInt(input || "", 10);
   if (!Number.isFinite(value)) return DEFAULT_POLL_MS;
@@ -256,25 +271,73 @@ function withCors(response: NextResponse | Response): NextResponse | Response {
   return response;
 }
 
+function getRequestIp(req: NextRequest): string | undefined {
+  const forwarded = req.headers.get("x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0]?.trim();
+  return req.headers.get("x-real-ip") || undefined;
+}
+
+async function writeSyncAuditLog(req: NextRequest, payload: SyncAuditPayload): Promise<void> {
+  try {
+    await convexClient.mutation(api.functions.auditLog.log, {
+      userId: payload.userId ? (payload.userId as Id<"authUsers">) : undefined,
+      action: `sync.obsidian.${payload.outcome}`,
+      resource: "obsidian_sync",
+      resourceId: payload.gatewayId,
+      ip: getRequestIp(req),
+      details: JSON.stringify({
+        method: payload.method,
+        authMode: payload.authMode,
+        vaultPath: payload.vaultPath,
+        stream: payload.stream,
+        filePath: payload.filePath,
+        operations: payload.operations,
+        applied: payload.applied,
+        statusCode: payload.statusCode,
+        message: payload.message,
+      }),
+    });
+  } catch (logErr) {
+    console.error("[obsidian-sync] Failed to write audit log:", logErr);
+  }
+}
+
 export async function OPTIONS() {
   return withCors(new NextResponse(null, { status: 204 }));
 }
 
 export async function GET(req: NextRequest) {
+  let syncCtx: SyncContext | undefined;
+  let vaultPath: string | undefined;
+  let stream = false;
+  let filePath: string | null = null;
   try {
     const url = new URL(req.url);
-    const syncCtx = await resolveSyncContext(req);
-    const stream = url.searchParams.get("stream") === "true";
+    syncCtx = await resolveSyncContext(req);
+    const syncAuthMode = syncCtx.authMode;
+    stream = url.searchParams.get("stream") === "true";
     const pollMs = clampPollMs(url.searchParams.get("pollMs"));
-    const filePath = url.searchParams.get("file");
+    filePath = url.searchParams.get("file");
     const encoding = url.searchParams.get("encoding") === "utf8" ? "utf8" : "base64";
-    const { vaultRoot, vaultPath } = await resolveVaultRoot(
+    const resolvedVault = await resolveVaultRoot(
       syncCtx.gatewayId,
       url.searchParams.get("vaultPath"),
     );
+    const { vaultRoot } = resolvedVault;
+    vaultPath = resolvedVault.vaultPath;
 
     if (filePath) {
       const file = await readFileContent(vaultRoot, filePath, encoding);
+      await writeSyncAuditLog(req, {
+        gatewayId: syncCtx.gatewayId,
+        userId: syncCtx.userId,
+        method: "GET",
+        outcome: "success",
+        authMode: syncCtx.authMode,
+        vaultPath,
+        filePath: normalizeRelative(filePath) ?? filePath,
+        message: "file-read",
+      });
       return withCors(NextResponse.json({
         vaultPath,
         filePath: normalizeRelative(filePath),
@@ -284,6 +347,16 @@ export async function GET(req: NextRequest) {
 
     if (!stream) {
       const files = await listVaultFiles(vaultRoot);
+      await writeSyncAuditLog(req, {
+        gatewayId: syncCtx.gatewayId,
+        userId: syncCtx.userId,
+        method: "GET",
+        outcome: "success",
+        authMode: syncCtx.authMode,
+        vaultPath,
+        operations: files.length,
+        message: "vault-snapshot",
+      });
       return withCors(NextResponse.json({
         vaultPath,
         revision: computeRevision(files),
@@ -344,7 +417,7 @@ export async function GET(req: NextRequest) {
             type: "ready",
             vaultPath,
             pollMs,
-            authMode: syncCtx.authMode,
+            authMode: syncAuthMode,
             ts: Date.now(),
           });
           await sendSnapshot();
@@ -368,6 +441,17 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    await writeSyncAuditLog(req, {
+      gatewayId: syncCtx.gatewayId,
+      userId: syncCtx.userId,
+      method: "GET",
+      outcome: "success",
+      authMode: syncCtx.authMode,
+      vaultPath,
+      stream: true,
+      message: "stream-started",
+    });
+
     return withCors(new Response(streamBody, {
       headers: {
         "Content-Type": "text/event-stream",
@@ -376,11 +460,27 @@ export async function GET(req: NextRequest) {
       },
     }));
   } catch (err) {
+    const statusCode = err instanceof GatewayError ? err.statusCode : 500;
+    await writeSyncAuditLog(req, {
+      gatewayId: syncCtx?.gatewayId,
+      userId: syncCtx?.userId,
+      method: "GET",
+      outcome: "error",
+      authMode: syncCtx?.authMode,
+      vaultPath,
+      stream,
+      filePath: filePath ? (normalizeRelative(filePath) ?? filePath) : undefined,
+      statusCode,
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
     return withCors(handleGatewayError(err));
   }
 }
 
 export async function POST(req: NextRequest) {
+  let syncCtx: SyncContext | undefined;
+  let vaultPath: string | undefined;
+  let operationCount = 0;
   try {
     const rawBody = await req.text();
     let body: {
@@ -395,24 +495,55 @@ export async function POST(req: NextRequest) {
         operations?: ObsidianOperation[];
       };
     } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+      await writeSyncAuditLog(req, {
+        method: "POST",
+        outcome: "error",
+        statusCode: 400,
+        message: "Invalid JSON body",
+      });
+      return withCors(NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }));
     }
-    const syncCtx = await resolveSyncContext(req, body.gatewayId);
+    syncCtx = await resolveSyncContext(req, body.gatewayId);
     ensureWriteAllowed(syncCtx);
-    const { vaultRoot, vaultPath } = await resolveVaultRoot(syncCtx.gatewayId, body.vaultPath);
+    const resolvedVault = await resolveVaultRoot(syncCtx.gatewayId, body.vaultPath);
+    const { vaultRoot } = resolvedVault;
+    vaultPath = resolvedVault.vaultPath;
     const operations = Array.isArray(body.operations) ? body.operations : [];
+    operationCount = operations.length;
 
     if (operations.length === 0) {
       const files = await listVaultFiles(vaultRoot);
-      return NextResponse.json({
+      await writeSyncAuditLog(req, {
+        gatewayId: syncCtx.gatewayId,
+        userId: syncCtx.userId,
+        method: "POST",
+        outcome: "success",
+        authMode: syncCtx.authMode,
+        vaultPath,
+        operations: 0,
+        applied: 0,
+        message: "no-ops",
+      });
+      return withCors(NextResponse.json({
         ok: true,
         applied: 0,
         vaultPath,
         revision: computeRevision(files),
         files,
-      });
+      }));
     }
     if (operations.length > MAX_OPERATIONS) {
+      await writeSyncAuditLog(req, {
+        gatewayId: syncCtx.gatewayId,
+        userId: syncCtx.userId,
+        method: "POST",
+        outcome: "error",
+        authMode: syncCtx.authMode,
+        vaultPath,
+        operations: operations.length,
+        statusCode: 413,
+        message: `Too many operations (max ${MAX_OPERATIONS})`,
+      });
       return withCors(NextResponse.json(
         { error: `Too many operations (max ${MAX_OPERATIONS})` },
         { status: 413 },
@@ -464,6 +595,17 @@ export async function POST(req: NextRequest) {
     }
 
     const files = await listVaultFiles(vaultRoot);
+    await writeSyncAuditLog(req, {
+      gatewayId: syncCtx.gatewayId,
+      userId: syncCtx.userId,
+      method: "POST",
+      outcome: "success",
+      authMode: syncCtx.authMode,
+      vaultPath,
+      operations: operations.length,
+      applied,
+      message: "operations-applied",
+    });
     return withCors(NextResponse.json({
       ok: true,
       applied,
@@ -472,6 +614,18 @@ export async function POST(req: NextRequest) {
       files,
     }));
   } catch (err) {
+    const statusCode = err instanceof GatewayError ? err.statusCode : 500;
+    await writeSyncAuditLog(req, {
+      gatewayId: syncCtx?.gatewayId,
+      userId: syncCtx?.userId,
+      method: "POST",
+      outcome: "error",
+      authMode: syncCtx?.authMode,
+      vaultPath,
+      operations: operationCount,
+      statusCode,
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
     return withCors(handleGatewayError(err));
   }
 }

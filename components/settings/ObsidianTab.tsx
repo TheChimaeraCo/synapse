@@ -23,6 +23,30 @@ interface ObsidianSetupResponse {
   pluginInstallPath: string;
 }
 
+interface ObsidianSyncLogEntry {
+  _id: string;
+  timestamp: number;
+  action: string;
+  ip?: string;
+  details?: string;
+  detailsJson?: {
+    method?: string;
+    authMode?: string;
+    vaultPath?: string;
+    stream?: boolean;
+    filePath?: string;
+    operations?: number;
+    applied?: number;
+    statusCode?: number;
+    message?: string;
+  } | null;
+}
+
+interface ObsidianSyncLogsResponse {
+  logs: ObsidianSyncLogEntry[];
+  count: number;
+}
+
 function copyToClipboard(value: string, label: string) {
   if (!value) return;
   navigator.clipboard
@@ -43,6 +67,12 @@ function downloadPluginFile(file: string) {
 
 export function ObsidianTab() {
   const { data, loading, error, refetch } = useFetch<ObsidianSetupResponse>("/api/sync/obsidian/setup");
+  const {
+    data: logsData,
+    loading: logsLoading,
+    error: logsError,
+    refetch: refetchLogs,
+  } = useFetch<ObsidianSyncLogsResponse>("/api/sync/obsidian/logs?limit=40");
   const [token, setToken] = useState("");
   const [vaultPath, setVaultPath] = useState("");
   const [busy, setBusy] = useState<string>("");
@@ -262,6 +292,77 @@ export function ObsidianTab() {
           <Button variant="ghost" onClick={() => refetch()}>
             <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh Info
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white/[0.04] border-white/[0.06]">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm text-zinc-300">Sync Logs</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-400">
+              Recent Obsidian sync requests and failures from this gateway.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => refetchLogs()}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh Logs
+            </Button>
+          </div>
+
+          {logsError && (
+            <div className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+              {logsError}
+            </div>
+          )}
+
+          {logsLoading && !logsData && (
+            <div className="text-sm text-zinc-400">Loading logs...</div>
+          )}
+
+          {!logsLoading && !logsError && (logsData?.logs?.length || 0) === 0 && (
+            <div className="text-sm text-zinc-400">No sync logs yet.</div>
+          )}
+
+          {!!logsData?.logs?.length && (
+            <div className="space-y-2 max-h-80 overflow-auto pr-1">
+              {logsData.logs.map((entry) => {
+                const isError = entry.action.endsWith(".error");
+                const details = entry.detailsJson;
+                return (
+                  <div
+                    key={entry._id}
+                    className={`rounded-lg border px-3 py-2 ${
+                      isError
+                        ? "border-red-500/30 bg-red-500/10"
+                        : "border-white/[0.08] bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className={isError ? "text-red-300 font-medium" : "text-emerald-300 font-medium"}>
+                        {isError ? "ERROR" : "OK"}
+                      </span>
+                      <span className="text-zinc-500">•</span>
+                      <span className="text-zinc-300">{details?.method || "?"}</span>
+                      <span className="text-zinc-500">•</span>
+                      <span className="text-zinc-400">{new Date(entry.timestamp).toLocaleString()}</span>
+                      {typeof details?.statusCode === "number" && (
+                        <>
+                          <span className="text-zinc-500">•</span>
+                          <span className="text-zinc-400">HTTP {details.statusCode}</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-300 break-all">
+                      {details?.message || "No message"}
+                    </div>
+                    <div className="mt-1 text-[11px] text-zinc-500">
+                      vault: {details?.vaultPath || "-"} | ops: {typeof details?.operations === "number" ? details.operations : "-"} | applied: {typeof details?.applied === "number" ? details.applied : "-"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
