@@ -52,6 +52,9 @@ export async function proxy(req: NextRequest) {
     pathname === "/api/config/test-telegram" ||
     pathname === "/api/config/exchange-token" ||
     pathname === "/api/config/register-webhook" ||
+    // Obsidian sync endpoints authenticate with bearer/basic at route level.
+    // Must bypass middleware cookie auth so CORS preflight OPTIONS isn't redirected.
+    pathname.startsWith("/sync/obsidian") ||
     pathname.startsWith("/login") ||
     pathname.startsWith("/register") ||
     pathname.startsWith("/setup") ||
