@@ -16,6 +16,7 @@ import {
   FileText,
   FolderKanban,
   FolderOpen,
+  BookOpen,
   Globe,
   Hash,
   LayoutDashboard,
@@ -102,6 +103,7 @@ function InstallAppButton() {
 const navLinks = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/vault", label: "Vault", icon: BookOpen },
   { href: "/knowledge", label: "Knowledge", icon: Brain },
   { href: "/files", label: "Files", icon: FolderOpen },
   { href: "/settings", label: "Settings", icon: Settings },

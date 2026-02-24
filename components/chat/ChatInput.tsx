@@ -230,6 +230,21 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     return () => window.removeEventListener("synapse:inject-quote", handler);
   }, []);
 
+  // Consume one-time draft text set by other pages (for example Vault -> Analyze with Agent)
+  useEffect(() => {
+    try {
+      const draft = sessionStorage.getItem("synapse_chat_draft");
+      if (draft && !content) {
+        setContent(draft);
+      }
+      if (draft) {
+        sessionStorage.removeItem("synapse_chat_draft");
+      }
+    } catch {}
+    // Intentionally run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Update suggestions when content changes
   useEffect(() => {
     if (content.startsWith("/") && !content.includes(" ")) {

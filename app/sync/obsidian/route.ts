@@ -7,6 +7,20 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import { getWorkspacePath } from "@/lib/workspace";
 import { extractBearerToken, safeEqualSecret } from "@/lib/security";
+import { backupVaultEntryToConvex, isConvexVaultBackupEnabled } from "@/lib/vaultBackup";
+import {
+  isObsidianLiveMode,
+  listObsidianPresence,
+  presenceRevision,
+  removeObsidianPresence,
+  upsertObsidianPresence,
+} from "@/lib/obsidianPresence";
+import {
+  matchVaultKey,
+  OBSIDIAN_VAULTS_CONFIG_KEY,
+  parseVaults,
+  serializeVaults,
+} from "@/lib/obsidianVaults";
 import type { Id } from "@/convex/_generated/dataModel";
 
 export const runtime = "nodejs";
@@ -33,6 +47,7 @@ interface SyncContext {
   userId?: string;
   role?: "owner" | "admin" | "member" | "viewer" | string;
   authMode: "session" | "token";
+  vaultPathScope?: string;
 }
 
 interface VaultFileMeta {
@@ -61,6 +76,28 @@ interface SyncAuditPayload {
   applied?: number;
   statusCode?: number;
   message?: string;
+}
+
+interface PresencePayload {
+  clientId?: string;
+  clientName?: string;
+  activeFile?: string;
+  cursor?: {
+    line?: unknown;
+    ch?: unknown;
+    anchorLine?: unknown;
+    anchorCh?: unknown;
+    headLine?: unknown;
+    headCh?: unknown;
+  };
+  isTyping?: boolean;
+  mode?: "sync" | "live";
+  offline?: boolean;
+}
+
+function cleanString(value: unknown, maxLen = 256): string {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, maxLen);
 }
 
 function clampPollMs(input?: string | null): number {
@@ -187,7 +224,42 @@ async function getGatewayAuthToken(gatewayId: string): Promise<string> {
   }
 }
 
-async function resolveSyncContext(req: NextRequest, bodyGatewayId?: string): Promise<SyncContext> {
+async function getObsidianVaults(gatewayId: string) {
+  try {
+    const row = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+      gatewayId: gatewayId as Id<"gateways">,
+      key: OBSIDIAN_VAULTS_CONFIG_KEY,
+    });
+    return parseVaults(row?.value || "");
+  } catch {
+    return [];
+  }
+}
+
+async function touchVaultKeyLastUsed(gatewayId: string, vaultId: string, keyId: string): Promise<void> {
+  try {
+    const row = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+      gatewayId: gatewayId as Id<"gateways">,
+      key: OBSIDIAN_VAULTS_CONFIG_KEY,
+    });
+    const vaults = parseVaults(row?.value || "");
+    const vault = vaults.find((v) => v.id === vaultId);
+    if (!vault) return;
+    const key = vault.keys.find((k) => k.id === keyId);
+    if (!key) return;
+    key.lastUsedAt = Date.now();
+    await convexClient.mutation(api.functions.gatewayConfig.set, {
+      gatewayId: gatewayId as Id<"gateways">,
+      key: OBSIDIAN_VAULTS_CONFIG_KEY,
+      value: serializeVaults(vaults),
+    });
+  } catch {}
+}
+
+async function resolveSyncContext(
+  req: NextRequest,
+  opts?: { gatewayId?: string; vaultPath?: string | null },
+): Promise<SyncContext> {
   try {
     const sessionCtx = await getGatewayContext(req);
     return {
@@ -203,11 +275,26 @@ async function resolveSyncContext(req: NextRequest, bodyGatewayId?: string): Pro
     const url = new URL(req.url);
     const gatewayId = req.headers.get("X-Gateway-Id")
       || url.searchParams.get("gatewayId")
-      || bodyGatewayId;
+      || opts?.gatewayId;
     if (!gatewayId) {
       throw new GatewayError(400, "gatewayId is required for token auth");
     }
 
+    const requestedVaultPath = opts?.vaultPath || url.searchParams.get("vaultPath");
+
+    // Try per-vault key auth first
+    const vaults = await getObsidianVaults(gatewayId);
+    const match = matchVaultKey(vaults, token, requestedVaultPath);
+    if (match) {
+      void touchVaultKeyLastUsed(gatewayId, match.vault.id, match.key.id);
+      return {
+        gatewayId,
+        authMode: "token",
+        vaultPathScope: match.vault.path,
+      };
+    }
+
+    // Fallback to legacy gateway-wide token
     const expected = await getGatewayAuthToken(gatewayId);
     if (!expected || !safeEqualSecret(token, expected)) {
       throw new GatewayError(403, "Invalid gateway auth token");
@@ -223,12 +310,16 @@ async function resolveSyncContext(req: NextRequest, bodyGatewayId?: string): Pro
 async function resolveVaultRoot(
   gatewayId: string,
   explicitVaultPath?: string | null,
+  scopedVaultPath?: string,
 ): Promise<{ workspace: string; vaultRoot: string; vaultPath: string }> {
   const workspace = await getWorkspacePath(gatewayId);
-  const configuredVaultPath = explicitVaultPath || DEFAULT_VAULT_PATH;
+  const configuredVaultPath = explicitVaultPath || scopedVaultPath || DEFAULT_VAULT_PATH;
   const cleanVaultPath = normalizeRelative(configuredVaultPath);
   if (cleanVaultPath === null) throw new GatewayError(400, "Invalid vaultPath");
   const vaultPath = cleanVaultPath || DEFAULT_VAULT_PATH;
+  if (scopedVaultPath && vaultPath !== scopedVaultPath) {
+    throw new GatewayError(403, "Token is scoped to a different vault path");
+  }
   const vaultRoot = resolveWithinRoot(workspace, vaultPath);
   await fs.mkdir(vaultRoot, { recursive: true });
   return { workspace, vaultRoot, vaultPath };
@@ -302,6 +393,73 @@ async function writeSyncAuditLog(req: NextRequest, payload: SyncAuditPayload): P
   }
 }
 
+function normalizePresenceActiveFile(value?: string): string | undefined {
+  const cleaned = cleanString(value || "", 1024);
+  if (!cleaned) return undefined;
+  const normalized = normalizeRelative(cleaned);
+  if (normalized === null) return undefined;
+  return normalized || undefined;
+}
+
+function normalizePresenceCursor(
+  cursor?: PresencePayload["cursor"],
+): {
+  line: number;
+  ch: number;
+  anchorLine?: number;
+  anchorCh?: number;
+  headLine?: number;
+  headCh?: number;
+} | undefined {
+  if (!cursor || typeof cursor !== "object") return undefined;
+  const line = Number(cursor.line);
+  const ch = Number(cursor.ch);
+  if (!Number.isFinite(line) || !Number.isFinite(ch)) return undefined;
+  const safeLine = Math.max(0, Math.floor(line));
+  const safeCh = Math.max(0, Math.floor(ch));
+  const anchorLine = Number(cursor.anchorLine);
+  const anchorCh = Number(cursor.anchorCh);
+  const headLine = Number(cursor.headLine);
+  const headCh = Number(cursor.headCh);
+  return {
+    line: safeLine,
+    ch: safeCh,
+    anchorLine: Number.isFinite(anchorLine) ? Math.max(0, Math.floor(anchorLine)) : undefined,
+    anchorCh: Number.isFinite(anchorCh) ? Math.max(0, Math.floor(anchorCh)) : undefined,
+    headLine: Number.isFinite(headLine) ? Math.max(0, Math.floor(headLine)) : undefined,
+    headCh: Number.isFinite(headCh) ? Math.max(0, Math.floor(headCh)) : undefined,
+  };
+}
+
+function updatePresenceForVault(args: {
+  gatewayId: string;
+  vaultPath: string;
+  presence?: PresencePayload;
+}): { participants: ReturnType<typeof listObsidianPresence>; liveMode: boolean } | null {
+  const clientId = cleanString(args.presence?.clientId || "", 96);
+  if (!clientId) return null;
+  const name = cleanString(args.presence?.clientName || "", 80) || "Obsidian User";
+  if (args.presence?.offline) {
+    const participants = removeObsidianPresence({
+      gatewayId: args.gatewayId,
+      vaultPath: args.vaultPath,
+      clientId,
+    });
+    return { participants, liveMode: isObsidianLiveMode(participants) };
+  }
+  const participants = upsertObsidianPresence({
+    gatewayId: args.gatewayId,
+    vaultPath: args.vaultPath,
+    clientId,
+    name,
+    activeFile: normalizePresenceActiveFile(args.presence?.activeFile),
+    cursor: normalizePresenceCursor(args.presence?.cursor),
+    isTyping: Boolean(args.presence?.isTyping),
+    mode: args.presence?.mode === "live" ? "live" : "sync",
+  });
+  return { participants, liveMode: isObsidianLiveMode(participants) };
+}
+
 export async function OPTIONS() {
   return withCors(new NextResponse(null, { status: 204 }));
 }
@@ -311,6 +469,7 @@ export async function GET(req: NextRequest) {
   let vaultPath: string | undefined;
   let stream = false;
   let filePath: string | null = null;
+  let streamClientId = "";
   try {
     const url = new URL(req.url);
     syncCtx = await resolveSyncContext(req);
@@ -322,9 +481,19 @@ export async function GET(req: NextRequest) {
     const resolvedVault = await resolveVaultRoot(
       syncCtx.gatewayId,
       url.searchParams.get("vaultPath"),
+      syncCtx.vaultPathScope,
     );
     const { vaultRoot } = resolvedVault;
     vaultPath = resolvedVault.vaultPath;
+    const presenceFromQuery: PresencePayload | undefined = stream
+      ? {
+          clientId: cleanString(url.searchParams.get("clientId") || "", 96),
+          clientName: cleanString(url.searchParams.get("clientName") || "", 80),
+          activeFile: cleanString(url.searchParams.get("activeFile") || "", 1024),
+          mode: cleanString(url.searchParams.get("mode") || "", 8) === "live" ? "live" : "sync",
+        }
+      : undefined;
+    streamClientId = cleanString(presenceFromQuery?.clientId || "", 96);
 
     if (filePath) {
       const file = await readFileContent(vaultRoot, filePath, encoding);
@@ -369,9 +538,35 @@ export async function GET(req: NextRequest) {
       async start(controller) {
         let lastFiles: VaultFileMeta[] = [];
         let running = false;
+        let lastPresenceRev = "";
 
         const push = (data: unknown) => {
           controller.enqueue(encoder.encode(ssePayload(data)));
+        };
+
+        const pushPresence = (force = false) => {
+          if (!vaultPath) return;
+          let participants = listObsidianPresence({
+            gatewayId: syncCtx!.gatewayId,
+            vaultPath,
+          });
+          if (streamClientId && force) {
+            participants = (updatePresenceForVault({
+              gatewayId: syncCtx!.gatewayId,
+              vaultPath,
+              presence: presenceFromQuery,
+            })?.participants || participants);
+          }
+          const nextRev = presenceRevision(participants);
+          if (!force && nextRev === lastPresenceRev) return;
+          lastPresenceRev = nextRev;
+          push({
+            type: "presence",
+            vaultPath,
+            liveMode: isObsidianLiveMode(participants),
+            participants,
+            ts: Date.now(),
+          });
         };
 
         const sendSnapshot = async () => {
@@ -384,6 +579,7 @@ export async function GET(req: NextRequest) {
             files,
             ts: Date.now(),
           });
+          pushPresence(true);
         };
 
         const tick = async () => {
@@ -405,6 +601,7 @@ export async function GET(req: NextRequest) {
             } else {
               push({ type: "heartbeat", ts: Date.now() });
             }
+            pushPresence(false);
           } catch (err: any) {
             push({ type: "error", message: err?.message || "Watch tick failed" });
           } finally {
@@ -420,6 +617,7 @@ export async function GET(req: NextRequest) {
             authMode: syncAuthMode,
             ts: Date.now(),
           });
+          pushPresence(true);
           await sendSnapshot();
         } catch (err: any) {
           push({ type: "error", message: err?.message || "Failed to initialize sync stream" });
@@ -433,6 +631,13 @@ export async function GET(req: NextRequest) {
 
         const abortHandler = () => {
           clearInterval(interval);
+          if (vaultPath && streamClientId) {
+            updatePresenceForVault({
+              gatewayId: syncCtx!.gatewayId,
+              vaultPath,
+              presence: { clientId: streamClientId, offline: true },
+            });
+          }
           try {
             controller.close();
           } catch {}
@@ -481,18 +686,25 @@ export async function POST(req: NextRequest) {
   let syncCtx: SyncContext | undefined;
   let vaultPath: string | undefined;
   let operationCount = 0;
+  let backupEnabled = false;
+  let backedUp = 0;
+  const backupErrors: string[] = [];
   try {
     const rawBody = await req.text();
     let body: {
       gatewayId?: string;
       vaultPath?: string;
       operations?: ObsidianOperation[];
+      presence?: PresencePayload;
+      presenceOnly?: boolean;
     } = {};
     try {
       body = (rawBody ? JSON.parse(rawBody) : {}) as {
         gatewayId?: string;
         vaultPath?: string;
         operations?: ObsidianOperation[];
+        presence?: PresencePayload;
+        presenceOnly?: boolean;
       };
     } catch {
       await writeSyncAuditLog(req, {
@@ -503,13 +715,40 @@ export async function POST(req: NextRequest) {
       });
       return withCors(NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }));
     }
-    syncCtx = await resolveSyncContext(req, body.gatewayId);
+    syncCtx = await resolveSyncContext(req, { gatewayId: body.gatewayId, vaultPath: body.vaultPath });
     ensureWriteAllowed(syncCtx);
-    const resolvedVault = await resolveVaultRoot(syncCtx.gatewayId, body.vaultPath);
+    const resolvedVault = await resolveVaultRoot(syncCtx.gatewayId, body.vaultPath, syncCtx.vaultPathScope);
     const { vaultRoot } = resolvedVault;
     vaultPath = resolvedVault.vaultPath;
     const operations = Array.isArray(body.operations) ? body.operations : [];
     operationCount = operations.length;
+    backupEnabled = await isConvexVaultBackupEnabled(syncCtx.gatewayId);
+    const presenceState = updatePresenceForVault({
+      gatewayId: syncCtx.gatewayId,
+      vaultPath,
+      presence: body.presence,
+    });
+
+    if (body.presenceOnly) {
+      await writeSyncAuditLog(req, {
+        gatewayId: syncCtx.gatewayId,
+        userId: syncCtx.userId,
+        method: "POST",
+        outcome: "success",
+        authMode: syncCtx.authMode,
+        vaultPath,
+        operations: 0,
+        applied: 0,
+        message: "presence-updated",
+      });
+      return withCors(NextResponse.json({
+        ok: true,
+        presence: presenceState || {
+          participants: listObsidianPresence({ gatewayId: syncCtx.gatewayId, vaultPath }),
+          liveMode: false,
+        },
+      }));
+    }
 
     if (operations.length === 0) {
       const files = await listVaultFiles(vaultRoot);
@@ -527,6 +766,7 @@ export async function POST(req: NextRequest) {
       return withCors(NextResponse.json({
         ok: true,
         applied: 0,
+        presence: presenceState || undefined,
         vaultPath,
         revision: computeRevision(files),
         files,
@@ -569,6 +809,21 @@ export async function POST(req: NextRequest) {
       if (op.op === "delete") {
         await fs.rm(safePath, { recursive: true, force: true });
         applied += 1;
+        if (backupEnabled && relativePath) {
+          try {
+            await backupVaultEntryToConvex({
+              gatewayId: syncCtx.gatewayId,
+              vaultPath: vaultPath || DEFAULT_VAULT_PATH,
+              relativePath,
+              source: "sync_delete",
+              deleted: true,
+            });
+            backedUp += 1;
+          } catch (err: any) {
+            backupErrors.push(err?.message || "backup-delete-failed");
+            console.error("[obsidian-sync] Convex backup (delete) failed:", err);
+          }
+        }
         continue;
       }
 
@@ -588,6 +843,21 @@ export async function POST(req: NextRequest) {
         await fs.mkdir(path.dirname(safePath), { recursive: true });
         await fs.writeFile(safePath, buffer);
         applied += 1;
+        if (backupEnabled && relativePath) {
+          try {
+            await backupVaultEntryToConvex({
+              gatewayId: syncCtx.gatewayId,
+              vaultPath: vaultPath || DEFAULT_VAULT_PATH,
+              relativePath,
+              source: "sync_upsert",
+              content: buffer,
+            });
+            backedUp += 1;
+          } catch (err: any) {
+            backupErrors.push(err?.message || "backup-upsert-failed");
+            console.error("[obsidian-sync] Convex backup (upsert) failed:", err);
+          }
+        }
         continue;
       }
 
@@ -604,11 +874,19 @@ export async function POST(req: NextRequest) {
       vaultPath,
       operations: operations.length,
       applied,
-      message: "operations-applied",
+      message: backupEnabled
+        ? `operations-applied (convex backup ${backedUp}/${operations.length}${backupErrors.length ? ", with backup errors" : ""})`
+        : "operations-applied",
     });
     return withCors(NextResponse.json({
       ok: true,
       applied,
+      presence: presenceState || undefined,
+      backup: {
+        enabled: backupEnabled,
+        applied: backedUp,
+        errors: backupErrors.length,
+      },
       vaultPath,
       revision: computeRevision(files),
       files,

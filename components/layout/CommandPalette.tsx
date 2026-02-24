@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/contexts/ThemeContext";
 import {
-  MessageSquare, Settings, Zap, FolderOpen, Brain, Sun, Moon, Trash2, Search, Command,
+  MessageSquare, Settings, Zap, FolderOpen, Brain, Sun, Moon, Trash2, Search, Command, BookOpen,
 } from "lucide-react";
 
 interface PaletteCommand {
@@ -67,6 +67,13 @@ export function CommandPalette() {
       description: "Browse uploaded files",
       icon: <FolderOpen className="h-4 w-4" />,
       action: () => { router.push("/files"); close(); },
+    },
+    {
+      id: "vault",
+      label: "Vault",
+      description: "Work in the Obsidian-style markdown vault",
+      icon: <BookOpen className="h-4 w-4" />,
+      action: () => { router.push("/vault"); close(); },
     },
     {
       id: "knowledge",
