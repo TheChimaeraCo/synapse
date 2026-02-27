@@ -1,17 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { MessageSquarePlus, Radio, BookOpen } from "lucide-react";
+import { MessageSquarePlus, Radio, BookOpen, Sparkles } from "lucide-react";
 
 const actions = [
   { label: "New Chat", href: "/chat", icon: MessageSquarePlus, desc: "Start a conversation" },
   { label: "New Channel", href: "/settings?tab=channels", icon: Radio, desc: "Connect a platform" },
   { label: "Upload Knowledge", href: "/knowledge", icon: BookOpen, desc: "Add to knowledge base" },
+  { label: "Autonomy", href: "/settings?tab=autonomy", icon: Sparkles, desc: "Tune autonomous execution" },
 ];
 
 export function QuickActions() {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
       {actions.map((a) => (
         <Link
           key={a.href}

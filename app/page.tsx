@@ -16,6 +16,7 @@ import { PM2Panel } from "@/components/dashboard/PM2Panel";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
 import { QuickActions } from "@/components/dashboard/QuickActions";
 import { ActiveAgents } from "@/components/dashboard/ActiveAgents";
+import { OperationsPanel } from "@/components/dashboard/OperationsPanel";
 import { HelpTooltip } from "@/components/HelpTooltip";
 
 interface DetailedStats {
@@ -28,6 +29,20 @@ interface DetailedStats {
   costWeek: number;
   costMonth: number;
   dailyMessages: { date: string; count: number }[];
+  taskCounts?: {
+    todo: number;
+    inProgress: number;
+    blocked: number;
+    done: number;
+    total: number;
+  };
+  activeWorkers?: number;
+  pendingApprovals?: number;
+  autonomy?: {
+    enabled?: boolean;
+    lastTickAt?: number | null;
+    lastDispatchAt?: number | null;
+  };
 }
 
 function getGreeting(): string {
@@ -100,6 +115,13 @@ export default function DashboardPage() {
               <p className="text-sm text-red-400">Failed to load stats. The gateway may be temporarily unavailable.</p>
             </div>
           ) : !stats ? <StatsCardsSkeleton /> : <StatsCards stats={stats} />}
+
+          {/* Operations Pulse */}
+          {stats ? (
+            <OperationsPanel stats={stats} />
+          ) : (
+            <div className="bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] rounded-2xl h-40 animate-pulse" />
+          )}
 
           {/* Chart + Gateway Overview */}
           <div className="grid gap-4 lg:grid-cols-3">

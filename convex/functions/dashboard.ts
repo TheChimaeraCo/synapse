@@ -1,5 +1,41 @@
 import { v } from "convex/values";
 import { query } from "../_generated/server";
+import { decodeConfigForRead } from "../lib/configCrypto";
+
+function parseBool(value: string | null, fallback = false): boolean {
+  if (!value) return fallback;
+  const v = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return fallback;
+}
+
+function parseIntOrNull(value: string | null): number | null {
+  const n = Number.parseInt(value || "", 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function getGatewayConfigValue(
+  ctx: any,
+  gatewayId: string,
+  key: string,
+): Promise<string | null> {
+  const row = await ctx.db
+    .query("gatewayConfig")
+    .withIndex("by_gateway_key", (q: any) => q.eq("gatewayId", gatewayId).eq("key", key))
+    .first();
+  if (row) return await decodeConfigForRead(key, row.value);
+
+  const master = (await ctx.db.query("gateways").collect()).find((g: any) => g.isMaster === true);
+  if (master && master._id !== gatewayId) {
+    const masterRow = await ctx.db
+      .query("gatewayConfig")
+      .withIndex("by_gateway_key", (q: any) => q.eq("gatewayId", master._id).eq("key", key))
+      .first();
+    if (masterRow) return await decodeConfigForRead(key, masterRow.value);
+  }
+  return null;
+}
 
 export const getStats = query({
   args: { gatewayId: v.id("gateways") },
@@ -89,6 +125,33 @@ export const getDetailedStats = query({
       dailyMessages.push({ date: dateStr, count });
     }
 
+    const [tasks, runningWorkers, approvals, autonomyEnabledRaw, autonomyLastTickRaw, autonomyLastDispatchRaw] = await Promise.all([
+      ctx.db
+        .query("tasks")
+        .withIndex("by_gatewayId_status", (q) => q.eq("gatewayId", String(args.gatewayId)))
+        .collect(),
+      ctx.db
+        .query("workerAgents")
+        .withIndex("by_gateway_status", (q) => q.eq("gatewayId", args.gatewayId).eq("status", "running"))
+        .collect(),
+      ctx.db.query("approvals").collect(),
+      getGatewayConfigValue(ctx, String(args.gatewayId), "autonomy.enabled"),
+      getGatewayConfigValue(ctx, String(args.gatewayId), "autonomy.last_tick_at"),
+      getGatewayConfigValue(ctx, String(args.gatewayId), "autonomy.last_dispatch_at"),
+    ]);
+
+    const taskCounts = {
+      todo: tasks.filter((t) => t.status === "todo").length,
+      inProgress: tasks.filter((t) => t.status === "in_progress").length,
+      blocked: tasks.filter((t) => t.status === "blocked").length,
+      done: tasks.filter((t) => t.status === "done").length,
+      total: tasks.length,
+    };
+
+    const pendingApprovals = approvals.filter(
+      (a) => String(a.gatewayId) === String(args.gatewayId) && a.status === "pending",
+    ).length;
+
     return {
       messagesToday: messagestoday.length,
       messagesWeek: messagesWeek.length,
@@ -99,6 +162,14 @@ export const getDetailedStats = query({
       costWeek,
       costMonth,
       dailyMessages,
+      taskCounts,
+      activeWorkers: runningWorkers.length,
+      pendingApprovals,
+      autonomy: {
+        enabled: parseBool(autonomyEnabledRaw, false),
+        lastTickAt: parseIntOrNull(autonomyLastTickRaw),
+        lastDispatchAt: parseIntOrNull(autonomyLastDispatchRaw),
+      },
     };
   },
 });
