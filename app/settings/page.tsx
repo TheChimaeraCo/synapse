@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import dynamic from "next/dynamic";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -109,6 +110,71 @@ const tabs = [
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
+const validTabIds = new Set<TabId>(tabs.map((t) => t.id));
+const tabAliases: Record<string, TabId> = {
+  model: "models",
+  models: "models",
+  routing: "routing",
+  "model-routing": "routing",
+  channel: "channels",
+  channels: "channels",
+  message: "messages",
+  messages: "messages",
+  budget: "usage",
+  usage: "usage",
+  tool: "tools",
+  tools: "tools",
+  module: "modules",
+  modules: "modules",
+  skill: "skills",
+  skills: "skills",
+  session: "sessions",
+  sessions: "sessions",
+  voice: "voice",
+  scheduler: "scheduler",
+  automation: "automation",
+  autonomy: "autonomy",
+  gateway: "gateway",
+  gateways: "gateways",
+  obsidian: "obsidian",
+  member: "members",
+  members: "members",
+  sandbox: "sandbox",
+  logging: "logging",
+  env: "envvars",
+  envvar: "envvars",
+  envvars: "envvars",
+  plugin: "plugins",
+  plugins: "plugins",
+  browser: "browser",
+  pm: "pm2",
+  pm2: "pm2",
+  notification: "notifications",
+  notifications: "notifications",
+  license: "license",
+  security: "security",
+  account: "account",
+  webhook: "webhooks",
+  webhooks: "webhooks",
+  quota: "quotas",
+  quotas: "quotas",
+  alert: "alerts",
+  alerts: "alerts",
+  changelog: "changelog",
+  about: "about",
+  general: "general",
+  soul: "soul",
+  provider: "provider",
+};
+
+function resolveTabId(raw: string | null): TabId {
+  if (!raw) return "general";
+  const normalized = raw.trim().toLowerCase();
+  const alias = tabAliases[normalized];
+  if (alias && validTabIds.has(alias)) return alias;
+  if (validTabIds.has(normalized as TabId)) return normalized as TabId;
+  return "general";
+}
 
 // --- Category groupings ---
 interface Category {
@@ -169,11 +235,30 @@ function findCategoryForTab(tabId: TabId): string {
   return categories.find((c) => c.tabs.includes(tabId))?.id ?? "general";
 }
 
-export default function SettingsPage() {
+function SettingsPageContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabId>("general");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     () => new Set(["general"])
   );
+
+  useEffect(() => {
+    const fromUrl = resolveTabId(searchParams.get("tab"));
+    setActiveTab((prev) => (prev === fromUrl ? prev : fromUrl));
+  }, [searchParams]);
+
+  const setActiveTabWithUrl = (tab: TabId) => {
+    setActiveTab(tab);
+    const currentRaw = searchParams.get("tab");
+    const currentResolved = resolveTabId(currentRaw);
+    if (currentResolved === tab && currentRaw === tab) return;
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("tab", tab);
+    const query = next.toString();
+    router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  };
 
   // Auto-expand category when active tab changes
   useEffect(() => {
@@ -236,10 +321,10 @@ export default function SettingsPage() {
                       const tab = tabMap[tId];
                       if (!tab) return null;
                       const isActive = activeTab === tId;
-                      return (
+                        return (
                         <button
                           key={tId}
-                          onClick={() => setActiveTab(tId)}
+                          onClick={() => setActiveTabWithUrl(tId)}
                           className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-all duration-150 text-left ${
                             isActive
                               ? "bg-blue-500/10 text-blue-300"
@@ -264,7 +349,7 @@ export default function SettingsPage() {
 
         {/* Mobile: grouped select */}
         <div className="md:hidden w-full">
-          <Select value={activeTab} onValueChange={(val) => setActiveTab(val as TabId)}>
+          <Select value={activeTab} onValueChange={(val) => setActiveTabWithUrl(val as TabId)}>
             <SelectTrigger className="w-full mb-4 bg-white/[0.04] border-white/[0.08] text-zinc-200 rounded-xl">
               <SelectValue placeholder="Select..." />
             </SelectTrigger>
@@ -329,5 +414,21 @@ export default function SettingsPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell title="Settings">
+          <div className="h-full overflow-auto p-4 lg:p-6">
+            <TabSkeleton />
+          </div>
+        </AppShell>
+      }
+    >
+      <SettingsPageContent />
+    </Suspense>
   );
 }
