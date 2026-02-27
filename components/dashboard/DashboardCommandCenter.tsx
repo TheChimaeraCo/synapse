@@ -187,7 +187,7 @@ export function DashboardCommandCenter({
   return (
     <div className="flex flex-col gap-6">
       <section className="rounded-3xl border border-white/[0.12] bg-[linear-gradient(145deg,rgba(16,185,129,0.16),rgba(6,182,212,0.08)_34%,rgba(15,23,42,0.72))] px-5 py-5 shadow-[0_18px_45px_rgba(5,10,24,0.38)] sm:px-7 sm:py-7">
-        <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr] xl:items-end">
+        <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr] xl:items-start">
           <div>
             <p className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-cyan-100/90">
               <Sparkles className="h-3.5 w-3.5" />
