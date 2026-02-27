@@ -241,7 +241,7 @@ export const triggerNow = mutation({
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await ctx.scheduler.runAfter(0, internal.actions.autonomy.tickGateway, {
+    await ctx.scheduler.runAfter(0, (internal as any).actions.autonomy.tickGateway, {
       gatewayId: args.gatewayId,
       reason: args.reason || "manual",
     } as any);

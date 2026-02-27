@@ -38,6 +38,7 @@ const SkillsTab = lazyTab(() => import("@/components/settings/SkillsTab"), "Skil
 const SessionsTab = lazyTab(() => import("@/components/settings/SessionsTab"), "SessionsTab");
 const VoiceTab = lazyTab(() => import("@/components/settings/VoiceTab"), "VoiceTab");
 const AutomationTab = lazyTab(() => import("@/components/settings/AutomationTab"), "AutomationTab");
+const AutonomyTab = lazyTab(() => import("@/components/settings/AutonomyTab"), "AutonomyTab");
 const GatewayTab = lazyTab(() => import("@/components/settings/GatewayTab"), "GatewayTab");
 const GatewaysTab = lazyTab(() => import("@/components/settings/GatewaysTab"), "GatewaysTab");
 const SandboxTab = lazyTab(() => import("@/components/settings/SandboxTab"), "SandboxTab");
@@ -85,6 +86,7 @@ const tabs = [
   { id: "voice", label: "Voice / TTS", icon: Mic },
   { id: "scheduler", label: "Scheduler", icon: Clock },
   { id: "automation", label: "Automation", icon: Zap },
+  { id: "autonomy", label: "Autonomy", icon: Zap },
   { id: "gateway", label: "Gateway", icon: Server },
   { id: "gateways", label: "Gateways", icon: Server },
   { id: "obsidian", label: "Obsidian Sync", icon: Database },
@@ -139,7 +141,7 @@ const categories: Category[] = [
     id: "automation",
     label: "Automation",
     icon: Zap,
-    tabs: ["automation", "webhooks", "scheduler"],
+    tabs: ["automation", "autonomy", "webhooks", "scheduler"],
   },
   {
     id: "data",
@@ -304,6 +306,7 @@ export default function SettingsPage() {
           {activeTab === "voice" && <VoiceTab />}
           {activeTab === "scheduler" && <SchedulerTab />}
           {activeTab === "automation" && <AutomationTab />}
+          {activeTab === "autonomy" && <AutonomyTab />}
           {activeTab === "gateway" && <GatewayTab />}
           {activeTab === "gateways" && <GatewaysTab />}
           {activeTab === "obsidian" && <ObsidianTab />}
