@@ -33,4 +33,10 @@ crons.interval(
   (internal as any).actions.proactive.tick
 );
 
+crons.interval(
+  "autonomy-orchestrator",
+  { minutes: 2 },
+  (internal as any).actions.autonomy.tick
+);
+
 export default crons;
