@@ -5,22 +5,22 @@ import { Slot } from "radix-ui"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-medium cursor-pointer transition-all duration-200 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 focus-visible:ring-offset-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold cursor-pointer transition-all duration-200 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/35 focus-visible:ring-offset-0",
   {
     variants: {
       variant: {
-        default: "bg-gradient-to-r from-purple-500/[0.22] via-blue-500/[0.15] to-purple-500/[0.22] hover:from-purple-500/[0.30] hover:via-blue-500/[0.22] hover:to-purple-500/[0.30] backdrop-blur-xl border border-purple-400/[0.25] hover:border-purple-400/[0.4] text-white shadow-[0_0_16px_rgba(139,92,246,0.2),0_2px_8px_rgba(0,0,0,0.2)] hover:shadow-[0_0_24px_rgba(139,92,246,0.35),0_4px_12px_rgba(0,0,0,0.25)]",
+        default: "bg-gradient-to-r from-cyan-500/90 to-emerald-500/85 hover:from-cyan-400/90 hover:to-emerald-400/90 border border-cyan-300/30 text-white shadow-[0_10px_24px_rgba(6,182,212,0.28)] hover:shadow-[0_14px_30px_rgba(6,182,212,0.35)]",
         primary:
-          "bg-gradient-to-b from-blue-500/90 to-blue-600/90 hover:from-blue-400/90 hover:to-blue-500/90 backdrop-blur-xl border border-blue-400/20 text-white shadow-[0_2px_16px_rgba(59,130,246,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:shadow-[0_4px_20px_rgba(59,130,246,0.3),inset_0_1px_0_rgba(255,255,255,0.15)]",
+          "bg-gradient-to-r from-sky-500/95 to-cyan-500/95 hover:from-sky-400/95 hover:to-cyan-400/95 border border-sky-300/30 text-white shadow-[0_10px_24px_rgba(14,165,233,0.28)]",
         destructive:
-          "bg-red-500/[0.08] hover:bg-red-500/[0.15] backdrop-blur-xl border border-red-500/20 hover:border-red-500/30 text-red-300 shadow-[0_2px_12px_rgba(0,0,0,0.2)]",
+          "bg-red-500/[0.12] hover:bg-red-500/[0.2] backdrop-blur-xl border border-red-400/35 hover:border-red-400/45 text-red-100 shadow-[0_8px_20px_rgba(127,29,29,0.35)]",
         outline:
-          "bg-white/[0.03] hover:bg-white/[0.07] backdrop-blur-xl border border-white/[0.1] hover:border-white/[0.18] text-zinc-300 shadow-[0_2px_8px_rgba(0,0,0,0.15)]",
+          "bg-white/[0.03] hover:bg-white/[0.08] backdrop-blur-xl border border-white/[0.14] hover:border-cyan-300/35 text-zinc-200 shadow-[0_8px_16px_rgba(0,0,0,0.18)]",
         secondary:
-          "bg-white/[0.05] hover:bg-white/[0.09] backdrop-blur-xl border border-white/[0.08] hover:border-white/[0.14] text-zinc-200 shadow-[0_2px_8px_rgba(0,0,0,0.15)]",
+          "bg-slate-900/50 hover:bg-slate-800/60 backdrop-blur-xl border border-white/[0.1] hover:border-white/[0.18] text-zinc-100 shadow-[0_8px_18px_rgba(0,0,0,0.2)]",
         ghost:
-          "hover:bg-white/[0.06] active:bg-white/[0.10] text-zinc-400 hover:text-zinc-200",
-        link: "text-blue-400 underline-offset-4 hover:underline hover:text-blue-300",
+          "hover:bg-white/[0.08] active:bg-white/[0.12] text-zinc-400 hover:text-zinc-100",
+        link: "text-cyan-300 underline-offset-4 hover:underline hover:text-cyan-200",
       },
       size: {
         default: "h-9 px-5 py-2 has-[>svg]:px-3",

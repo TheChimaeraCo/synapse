@@ -147,14 +147,14 @@ function SidebarNavLink({
       onClick={onClose}
       {...(tourId ? { "data-tour": tourId } : {})}
       className={cn(
-        "group flex items-center gap-3 rounded-xl border px-3.5 font-medium transition-all duration-200 ease-out",
+        "group flex items-center gap-3 rounded-xl border px-3.5 font-semibold transition-all duration-200 ease-out",
         compact ? "py-2 text-xs" : "py-2.5 text-sm",
         isActive
-          ? "border-blue-500/25 bg-gradient-to-r from-blue-500/12 via-cyan-500/8 to-purple-500/12 text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_0_0_1px_rgba(59,130,246,0.08)]"
-          : "border-transparent text-zinc-400 hover:border-white/[0.08] hover:bg-white/[0.05] hover:text-zinc-200"
+          ? "border-cyan-300/35 bg-gradient-to-r from-cyan-500/20 via-teal-500/16 to-emerald-500/16 text-zinc-50 shadow-[0_8px_20px_rgba(6,182,212,0.22)]"
+          : "border-transparent text-zinc-400 hover:border-white/[0.12] hover:bg-white/[0.07] hover:text-zinc-100"
       )}
     >
-      <link.icon className={cn("h-4 w-4 shrink-0 transition-colors", isActive ? "text-blue-300" : "text-zinc-500 group-hover:text-zinc-300")} />
+      <link.icon className={cn("h-4 w-4 shrink-0 transition-colors", isActive ? "text-cyan-100" : "text-zinc-500 group-hover:text-zinc-200")} />
       <span className="truncate">{link.label}</span>
     </Link>
   );
@@ -178,7 +178,7 @@ function SidebarMore({ pathname, links, onClose }: { pathname: string; links: Na
       <button
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "w-full flex items-center gap-3 rounded-xl border border-transparent px-3.5 py-2 text-xs font-medium transition-all duration-200 text-zinc-500 hover:border-white/[0.08] hover:bg-white/[0.05] hover:text-zinc-200",
+          "w-full flex items-center gap-3 rounded-xl border border-transparent px-3.5 py-2 text-xs font-medium transition-all duration-200 text-zinc-500 hover:border-white/[0.12] hover:bg-white/[0.08] hover:text-zinc-100",
           hasActiveSecondary && !open && "text-zinc-300"
         )}
       >
@@ -241,12 +241,12 @@ function SidebarSection({
     <div className="px-2 py-2">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-1 text-left transition-colors hover:text-zinc-300"
+        className="flex w-full items-center gap-1.5 px-1 text-left transition-colors hover:text-zinc-100"
       >
-        <Icon className="h-3.5 w-3.5 text-zinc-500" />
-        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">{title}</span>
-        {typeof count === "number" && <span className="ml-auto text-[10px] text-zinc-600">{count}</span>}
-        <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-600 transition-transform duration-200", !open && "-rotate-90")} />
+        <Icon className="h-3.5 w-3.5 text-zinc-400" />
+        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">{title}</span>
+        {typeof count === "number" && <span className="ml-auto text-[10px] text-zinc-500">{count}</span>}
+        <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-500 transition-transform duration-200", !open && "-rotate-90")} />
       </button>
       <div
         className={cn(
@@ -470,7 +470,7 @@ function SidebarModules({ onClose }: { onClose?: () => void }) {
                 className={cn(
                   "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs transition-all duration-200",
                   selectedModule?.name === mod.name
-                    ? "bg-gradient-to-r from-purple-500/10 to-blue-500/10 text-purple-300 border border-purple-500/15"
+                    ? "bg-gradient-to-r from-cyan-500/18 to-emerald-500/14 text-cyan-100 border border-cyan-300/25"
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
                 )}
               >
@@ -485,7 +485,7 @@ function SidebarModules({ onClose }: { onClose?: () => void }) {
                   <Link
                     href={`/modules/${mod.id}`}
                     onClick={onClose}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-purple-300 hover:bg-purple-500/10 transition-all"
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-cyan-100 hover:bg-cyan-500/10 transition-all"
                   >
                     <span className="text-xs">🖥</span>
                     <span>Open UI</span>
@@ -495,7 +495,7 @@ function SidebarModules({ onClose }: { onClose?: () => void }) {
                       key={route.path}
                       href={route.path}
                       onClick={onClose}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-purple-300 hover:bg-purple-500/10 transition-all"
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-cyan-100 hover:bg-cyan-500/10 transition-all"
                     >
                       <span className="text-xs">{route.icon || "📄"}</span>
                       <span>{route.title || route.path}</span>
@@ -735,7 +735,7 @@ function SidebarConversations() {
           )}
         />
         <span className="text-zinc-300 truncate flex-1 font-medium">
-          {c.previousConvoId && <span className="text-purple-400 mr-1">🔗</span>}
+          {c.previousConvoId && <span className="text-cyan-300 mr-1">🔗</span>}
           {c.title || "Untitled"}
         </span>
         <button
@@ -895,7 +895,7 @@ function SidebarChannels() {
             value={channelFilter}
             onChange={(e) => setChannelFilter(e.target.value)}
             placeholder="Filter channels..."
-            className="h-8 w-full rounded-lg border border-white/[0.08] bg-white/[0.03] pl-8 pr-2 text-xs text-zinc-200 outline-none transition-colors placeholder:text-zinc-600 focus:border-blue-400/50 focus:bg-white/[0.06]"
+            className="h-8 w-full rounded-lg border border-white/[0.12] bg-white/[0.04] pl-8 pr-2 text-xs text-zinc-100 outline-none transition-colors placeholder:text-zinc-500 focus:border-cyan-300/50 focus:bg-white/[0.08]"
           />
         </div>
         {filteredPlatformChannels.length > 0 && (
@@ -910,7 +910,7 @@ function SidebarChannels() {
                 className={cn(
                   "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-all duration-200",
                   ch._id === activeChannelId
-                    ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10 text-zinc-100 border border-blue-500/15"
+                    ? "bg-gradient-to-r from-cyan-500/18 to-emerald-500/14 text-zinc-50 border border-cyan-300/25"
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
                 )}
               >
@@ -939,7 +939,7 @@ function SidebarChannels() {
               className={cn(
                 "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-all duration-200",
                 ch._id === activeChannelId
-                  ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10 text-zinc-100 border border-blue-500/15"
+                  ? "bg-gradient-to-r from-cyan-500/18 to-emerald-500/14 text-zinc-50 border border-cyan-300/25"
                   : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]"
               )}
             >
@@ -1067,14 +1067,14 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const hasAnyNavMatch = filteredPrimaryLinks.length > 0 || filteredSecondaryLinks.length > 0;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden border-r border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
+    <div className="flex h-full flex-col overflow-hidden border-r border-white/[0.12] bg-[linear-gradient(180deg,rgba(5,18,32,0.82),rgba(8,20,34,0.72))] backdrop-blur-2xl shadow-[0_24px_44px_rgba(6,12,24,0.34)]">
       {/* Logo */}
       <div className="flex items-center justify-between px-5 py-5">
         <Link href="/" className="flex items-center gap-2.5">
-          <div className="flex items-center justify-center h-8 w-8 rounded-xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/[0.1]">
-            <Zap className="h-4 w-4 text-blue-400" />
+          <div className="flex items-center justify-center h-8 w-8 rounded-xl bg-gradient-to-br from-cyan-500/25 to-emerald-500/20 border border-white/[0.16] shadow-[0_8px_20px_rgba(6,182,212,0.2)]">
+            <Zap className="h-4 w-4 text-cyan-100" />
           </div>
-          <span className="text-lg font-semibold tracking-tight text-zinc-100">Synapse</span>
+          <span className="text-lg font-semibold tracking-tight text-zinc-50">Synapse</span>
         </Link>
         {onClose && (
           <Button
@@ -1102,14 +1102,14 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             value={navFilter}
             onChange={(e) => setNavFilter(e.target.value)}
             placeholder="Jump to..."
-            className="h-8 w-full rounded-lg border border-white/[0.08] bg-white/[0.03] pl-8 pr-2 text-xs text-zinc-200 outline-none transition-colors placeholder:text-zinc-600 focus:border-blue-400/50 focus:bg-white/[0.06]"
+            className="h-8 w-full rounded-lg border border-white/[0.12] bg-white/[0.04] pl-8 pr-2 text-xs text-zinc-100 outline-none transition-colors placeholder:text-zinc-500 focus:border-cyan-300/50 focus:bg-white/[0.08]"
           />
         </div>
         {filteredPrimaryLinks.map((link) => (
           <SidebarNavLink key={link.href} link={link} pathname={pathname} onClose={onClose} />
         ))}
         {!hasAnyNavMatch && (
-          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-zinc-500">
+          <div className="rounded-xl border border-white/[0.12] bg-white/[0.04] px-3 py-2 text-xs text-zinc-500">
             No matching pages.
           </div>
         )}
@@ -1126,7 +1126,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-white/[0.06] space-y-2">
+      <div className="px-4 py-3 border-t border-white/[0.1] space-y-2">
         <div className="flex items-center gap-2">
           <ThemeToggleCompact />
           <InstallAppButton />

@@ -20,10 +20,10 @@ export function GatewayOverview() {
   if (!activeGateway) return null;
 
   return (
-    <div className="bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.3)] p-5 flex flex-col h-full">
+    <div className="bg-white/[0.045] backdrop-blur-2xl border border-white/[0.12] rounded-2xl shadow-[0_16px_36px_rgba(6,12,24,0.28)] p-5 flex flex-col h-full">
       {/* Gateway Info */}
       <div className="flex items-start gap-3 mb-4">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/[0.08] flex items-center justify-center text-lg flex-shrink-0">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-white/[0.12] flex items-center justify-center text-lg flex-shrink-0">
           {activeGateway.icon || "⚡"}
         </div>
         <div className="min-w-0 flex-1">
@@ -59,7 +59,7 @@ export function GatewayOverview() {
           <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">Agents</p>
           {agents.map((agent, i) => (
             <div key={i} className="flex items-center gap-2 py-1.5">
-              <Cpu className="w-3.5 h-3.5 text-purple-400/60" />
+              <Cpu className="w-3.5 h-3.5 text-cyan-300/70" />
               <span className="text-xs text-zinc-300 truncate flex-1">{agent.name || "AI Agent"}</span>
               {agent.model && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-500 truncate max-w-[100px]">
@@ -80,7 +80,7 @@ export function GatewayOverview() {
       <div className="mt-auto flex gap-2">
         <Link
           href="/chat"
-          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-white/[0.08] text-xs text-zinc-300 hover:bg-white/[0.08] transition-all"
+          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-cyan-500/16 to-emerald-500/12 border border-cyan-300/25 text-xs text-zinc-100 hover:bg-white/[0.08] transition-all"
         >
           <MessageSquare className="w-3.5 h-3.5" />
           Chat

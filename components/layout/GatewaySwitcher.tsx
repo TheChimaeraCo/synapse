@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 import { ChevronDown, Plus, Settings, Crown, Loader2 } from "lucide-react";
 
 const ROLE_COLORS: Record<string, string> = {
-  owner: "text-amber-400 border-amber-500/30 bg-amber-500/10",
-  admin: "text-blue-400 border-blue-500/30 bg-blue-500/10",
+  owner: "text-amber-300 border-amber-400/30 bg-amber-500/10",
+  admin: "text-cyan-200 border-cyan-300/30 bg-cyan-500/10",
   member: "text-zinc-400 border-white/[0.08] bg-white/[0.06]",
   viewer: "text-zinc-500 border-white/[0.10]/30 bg-white/[0.06]",
 };
@@ -34,7 +34,7 @@ export function GatewaySwitcher() {
   if (loading) {
     return (
       <div className="px-3 py-2">
-        <div className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+        <div className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-white/[0.045] border border-white/[0.12]">
           <Loader2 className="h-4 w-4 text-zinc-500 animate-spin" />
           <span className="text-sm text-zinc-500">Loading...</span>
         </div>
@@ -47,7 +47,7 @@ export function GatewaySwitcher() {
       <div className="px-3 py-2">
         <button
           onClick={() => router.push("/gateways")}
-          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/20 text-sm text-blue-400 transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-cyan-600/12 hover:bg-cyan-600/22 border border-cyan-300/30 text-sm text-cyan-200 transition-colors"
         >
           <Plus className="h-4 w-4" />
           Create your first gateway
@@ -72,7 +72,7 @@ export function GatewaySwitcher() {
       <div className="relative">
         <button
           onClick={() => setOpen(!open)}
-          className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.08] hover:border-white/[0.12] transition-all duration-200"
+          className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl bg-white/[0.045] hover:bg-white/[0.09] border border-white/[0.12] hover:border-cyan-300/30 transition-all duration-200"
         >
           {/* Icon */}
           <span className="flex items-center justify-center h-7 w-7 rounded-lg bg-white/[0.07] text-sm font-semibold text-zinc-200 shrink-0">
@@ -95,7 +95,7 @@ export function GatewaySwitcher() {
 
         {/* Dropdown */}
         {open && (
-          <div className="absolute top-full left-0 right-0 mt-2 bg-[#1a1a2e]/95 backdrop-blur-3xl border border-white/[0.15] rounded-xl shadow-[0_16px_64px_rgba(0,0,0,0.6)] z-[100] overflow-hidden">
+          <div className="absolute top-full left-0 right-0 mt-2 bg-[#0b1c2f]/95 backdrop-blur-3xl border border-white/[0.16] rounded-xl shadow-[0_20px_64px_rgba(6,12,24,0.6)] z-[100] overflow-hidden">
             <div className="max-h-64 overflow-y-auto py-1">
               {gateways.map((gw) => (
                 <button
@@ -104,7 +104,7 @@ export function GatewaySwitcher() {
                   className={cn(
                     "w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-all duration-200",
                     gw._id === activeGateway?._id
-                      ? "bg-gradient-to-r from-blue-500/10 to-purple-500/10"
+                      ? "bg-gradient-to-r from-cyan-500/16 to-emerald-500/14"
                       : "hover:bg-white/[0.08]"
                   )}
                 >

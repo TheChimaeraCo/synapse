@@ -61,7 +61,11 @@ export function AppShell({
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="relative flex h-screen overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute -top-32 right-[-10rem] h-[28rem] w-[28rem] rounded-full bg-cyan-400/12 blur-3xl" />
+        <div className="absolute -bottom-40 left-[-14rem] h-[30rem] w-[30rem] rounded-full bg-emerald-400/10 blur-3xl" />
+      </div>
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -72,7 +76,7 @@ export function AppShell({
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[280px] transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-[296px] transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-label="Main navigation"
@@ -81,7 +85,7 @@ export function AppShell({
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden bg-transparent">
         <Header title={title}>
           <Button
             variant="ghost"

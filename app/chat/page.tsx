@@ -205,11 +205,11 @@ export default function ChatPage() {
 
   return (
     <AppShell title="Chat">
-      <div className="relative flex h-full">
+      <div className="relative flex h-full bg-transparent">
         {/* Main chat area - takes full width now */}
         <div className="flex flex-1 flex-col min-w-0">
           {/* Mobile top bar */}
-          <div className="flex items-center justify-between px-3 py-1 border-b border-white/[0.06] lg:hidden shrink-0 bg-white/[0.02] backdrop-blur-2xl">
+          <div className="flex items-center justify-between px-3 py-1 border-b border-white/[0.1] lg:hidden shrink-0 bg-white/[0.045] backdrop-blur-2xl">
             <div className="flex items-center gap-1 min-w-0">
               <span className="text-sm font-medium text-zinc-300 truncate">
                 {activeChannel ? `#${activeChannel.name}` : "Chat"}
@@ -296,7 +296,7 @@ export default function ChatPage() {
                     {["What can you help me with?", "Summarize a topic for me", "Help me brainstorm ideas", "Write something creative"].map((prompt) => (
                       <button
                         key={prompt}
-                        className="px-3 py-2.5 rounded-xl text-xs text-left text-zinc-400 bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 transition-all"
+                        className="px-3 py-2.5 rounded-xl text-xs text-left text-zinc-300 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.14] hover:border-cyan-300/35 transition-all"
                         onClick={() => {
                           // Navigate to chat - the prompt will be pre-filled if there's a channel
                         }}

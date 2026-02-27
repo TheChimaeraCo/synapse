@@ -18,7 +18,7 @@ const platformStyles: Record<string, { icon: string; color: string }> = {
   telegram: { icon: "📱", color: "text-blue-400" },
   discord: { icon: "💬", color: "text-indigo-400" },
   web: { icon: "🌐", color: "text-cyan-400" },
-  hub: { icon: "💬", color: "text-purple-400" },
+  hub: { icon: "💬", color: "text-emerald-300" },
 };
 
 export function ChannelGrid() {
@@ -26,7 +26,7 @@ export function ChannelGrid() {
   const channels = health?.channels || [];
 
   return (
-    <div className="bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.3)] p-5">
+    <div className="bg-white/[0.045] backdrop-blur-2xl border border-white/[0.12] rounded-2xl shadow-[0_16px_36px_rgba(6,12,24,0.28)] p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-1">Channels</h3>
       <p className="text-xs text-zinc-500 mb-4">Connected integrations</p>
 
@@ -37,7 +37,7 @@ export function ChannelGrid() {
             <Link
               key={ch.id}
               href={`/chat?channel=${ch.id}`}
-              className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 hover:bg-white/[0.08] hover:border-white/[0.12] transition-all group"
+              className="bg-white/[0.05] border border-white/[0.1] rounded-xl p-3 hover:bg-white/[0.1] hover:border-cyan-300/30 transition-all group"
             >
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-lg">{style.icon}</span>
@@ -57,7 +57,7 @@ export function ChannelGrid() {
         {/* Add Channel */}
         <Link
           href="/settings"
-          className="bg-white/[0.02] border border-dashed border-white/[0.08] rounded-xl p-3 flex flex-col items-center justify-center gap-2 hover:bg-white/[0.06] hover:border-white/[0.12] transition-all min-h-[80px]"
+          className="bg-white/[0.03] border border-dashed border-white/[0.12] rounded-xl p-3 flex flex-col items-center justify-center gap-2 hover:bg-white/[0.08] hover:border-cyan-300/30 transition-all min-h-[80px]"
         >
           <Plus className="w-5 h-5 text-zinc-600" />
           <span className="text-[10px] text-zinc-600">Add Channel</span>

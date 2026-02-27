@@ -87,12 +87,12 @@ export default function DashboardPage() {
         <div className="flex flex-col gap-6 max-w-7xl mx-auto animate-fade-in">
 
           {/* Welcome Header */}
-          <div className="mb-2">
-            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-zinc-100 break-words">
+          <div className="mb-2 rounded-2xl border border-white/[0.12] bg-white/[0.045] px-5 py-4 shadow-[0_16px_36px_rgba(6,12,24,0.25)]">
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-zinc-50 break-words">
               {getGreeting()}, {ownerName.split(" ")[0]}
               <HelpTooltip title="Dashboard" content="Your command center. View message stats, active channels, recent conversations, and system health at a glance." />
             </h1>
-            <p className="text-sm text-zinc-500 mt-1">
+            <p className="text-sm text-zinc-400 mt-1">
               {activeGateway?.name ? `${activeGateway.name} - ` : ""}{dateStr}
             </p>
           </div>

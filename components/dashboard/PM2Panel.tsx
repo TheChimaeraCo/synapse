@@ -140,7 +140,7 @@ export function PM2Panel() {
                       onClick={() => doAction("restart", p.name)} disabled={acting === p.name}>
                       <RotateCcw className="w-3 h-3" />
                     </Button>
-                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-zinc-400 hover:text-purple-400"
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-zinc-400 hover:text-cyan-300"
                       onClick={() => setLogProcess(p.name)}>
                       <FileText className="w-3 h-3" />
                     </Button>

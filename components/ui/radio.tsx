@@ -21,7 +21,7 @@ export function Radio({ checked, onChange, label, className }: RadioProps) {
             : "bg-white/[0.04] border-white/[0.12] group-hover:border-white/[0.2]"
         )}
       >
-        {checked && <div className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-blue-500 to-purple-500" />}
+        {checked && <div className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500" />}
       </div>
       {label && <span className="text-sm text-zinc-300">{label}</span>}
     </label>

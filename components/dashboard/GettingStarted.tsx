@@ -56,16 +56,16 @@ export function GettingStarted({ messageCount = 0, hasProvider, hasChannels, has
   };
 
   return (
-    <div className="bg-white/[0.04] backdrop-blur-2xl border border-white/10 rounded-2xl p-5 relative overflow-hidden transition-all duration-500">
+    <div className="bg-white/[0.045] backdrop-blur-2xl border border-white/[0.12] rounded-2xl p-5 relative overflow-hidden transition-all duration-500 shadow-[0_16px_36px_rgba(6,12,24,0.25)]">
       {/* Decorative gradient */}
-      <div className="absolute -top-20 -right-20 w-40 h-40 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -top-20 -right-20 w-40 h-40 bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
 
       <div className="flex items-start justify-between mb-4 relative">
         <div className="flex items-center gap-2.5">
           <div className={`p-2 rounded-xl border border-white/10 transition-colors duration-500 ${
-            allDone ? "bg-gradient-to-br from-emerald-500/20 to-emerald-600/20" : "bg-gradient-to-br from-blue-500/20 to-purple-500/20"
+            allDone ? "bg-gradient-to-br from-emerald-500/20 to-emerald-600/20" : "bg-gradient-to-br from-cyan-500/20 to-emerald-500/20"
           }`}>
-            {allDone ? <PartyPopper className="w-4 h-4 text-emerald-400" /> : <Sparkles className="w-4 h-4 text-blue-400" />}
+            {allDone ? <PartyPopper className="w-4 h-4 text-emerald-400" /> : <Sparkles className="w-4 h-4 text-cyan-200" />}
           </div>
           <div>
             <h3 className="text-sm font-semibold text-zinc-100">
@@ -87,7 +87,7 @@ export function GettingStarted({ messageCount = 0, hasProvider, hasChannels, has
       <div className="h-1.5 bg-white/[0.06] rounded-full mb-4 relative overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-700 ease-out ${
-            allDone ? "bg-gradient-to-r from-emerald-500 to-emerald-400" : "bg-gradient-to-r from-blue-500 to-blue-600"
+            allDone ? "bg-gradient-to-r from-emerald-500 to-emerald-400" : "bg-gradient-to-r from-cyan-500 to-emerald-500"
           }`}
           style={{ width: `${(doneCount / ITEMS.length) * 100}%` }}
         />
@@ -98,7 +98,7 @@ export function GettingStarted({ messageCount = 0, hasProvider, hasChannels, has
           <p className="text-sm text-zinc-400 mb-3">Your gateway is ready to go. Happy building!</p>
           <button
             onClick={handleDismiss}
-            className="px-4 py-1.5 rounded-xl text-xs font-medium bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:brightness-110 transition-all"
+            className="px-4 py-1.5 rounded-xl text-xs font-medium bg-gradient-to-r from-cyan-500 to-emerald-500 text-white hover:brightness-110 transition-all"
           >
             Dismiss
           </button>

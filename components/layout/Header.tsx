@@ -32,9 +32,9 @@ export function Header({
     : user?.email?.[0]?.toUpperCase() || "?";
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] px-4 md:px-6 bg-white/[0.02] backdrop-blur-2xl">
+    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b border-white/[0.1] px-4 md:px-6 bg-[linear-gradient(180deg,rgba(8,22,35,0.88),rgba(8,22,35,0.62))] backdrop-blur-2xl">
       <div className="flex items-center gap-3">
-        {children}
+        {children ? <div className="rounded-lg bg-white/[0.04] border border-white/[0.08] p-1">{children}</div> : null}
         {title && <h1 className="text-lg font-semibold text-zinc-100 tracking-tight">{title}</h1>}
       </div>
 
@@ -43,8 +43,8 @@ export function Header({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2 rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring">
-              <Avatar className="h-8 w-8 ring-1 ring-white/[0.1]">
-                <AvatarFallback className="bg-gradient-to-br from-blue-500/20 to-purple-500/20 text-blue-300 text-xs font-medium">
+              <Avatar className="h-8 w-8 ring-1 ring-cyan-300/25">
+                <AvatarFallback className="bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 text-cyan-100 text-xs font-medium">
                   {initials}
                 </AvatarFallback>
               </Avatar>

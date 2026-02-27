@@ -233,7 +233,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   }
 
   return (
-    <div ref={scrollContainerRef} className="flex flex-1 flex-col px-4 py-6 sm:px-6 relative">
+    <div ref={scrollContainerRef} className="flex flex-1 flex-col px-4 py-6 sm:px-6 relative bg-transparent">
       {messages.length === 0 && !isStreaming && (
         <div className="flex flex-1 items-center justify-center">
           <p className="text-muted-foreground">
@@ -273,7 +273,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
 
         {streamingContent && (
           <div className="flex justify-start">
-            <div className="max-w-[92%] sm:max-w-[75%] rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl px-5 py-3 text-sm animate-fade-in">
+            <div className="max-w-[92%] sm:max-w-[75%] rounded-2xl rounded-bl-md border border-white/[0.14] bg-white/[0.05] backdrop-blur-2xl px-5 py-3 text-sm animate-fade-in shadow-[0_12px_24px_rgba(6,12,24,0.24)]">
               <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {streamingContent}
@@ -286,7 +286,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
 
         {(isTyping || isStreaming || (toolLogs && toolLogs.length > 0)) && (
           <div className="flex justify-start">
-            <div className="max-w-[92%] sm:max-w-[75%] rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl px-5 py-3 space-y-2">
+            <div className="max-w-[92%] sm:max-w-[75%] rounded-2xl rounded-bl-md border border-white/[0.14] bg-white/[0.05] backdrop-blur-2xl px-5 py-3 space-y-2 shadow-[0_10px_20px_rgba(6,12,24,0.2)]">
               {toolLogs && toolLogs.length > 0 && (
                 <div className="space-y-1 max-h-32 overflow-y-auto">
                   {toolLogs.map((log, i) => (
@@ -307,7 +307,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
                   <span className="h-2 w-2 rounded-full bg-blue-400/60 animate-bounce" style={{ animationDelay: "150ms" }} />
                   <span className="h-2 w-2 rounded-full bg-blue-400/60 animate-bounce" style={{ animationDelay: "300ms" }} />
                   {toolStatus && (
-                    <span className="ml-2 text-xs text-blue-300/70 font-mono">{toolStatus}</span>
+                    <span className="ml-2 text-xs text-cyan-200/80 font-mono">{toolStatus}</span>
                   )}
                   <button
                     onClick={stopStreaming}
@@ -329,7 +329,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
         <button
           onClick={scrollToBottom}
           aria-label="Scroll to bottom - new messages"
-          className="sticky bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.1] border border-white/[0.15] backdrop-blur-xl text-xs text-zinc-300 hover:bg-white/[0.15] hover:text-white transition-all shadow-lg"
+          className="sticky bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.14] border border-cyan-300/30 backdrop-blur-xl text-xs text-zinc-100 hover:bg-white/[0.2] transition-all shadow-[0_10px_22px_rgba(6,182,212,0.25)]"
         >
           <ArrowDown className="h-3.5 w-3.5" />
           New messages

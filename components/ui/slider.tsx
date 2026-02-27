@@ -20,7 +20,7 @@ export function Slider({ value, min, max, step = 1, onChange, className }: Slide
     <div className={cn("relative w-full h-5 flex items-center", className)}>
       <div className="relative w-full h-2 rounded-full bg-white/[0.06] overflow-hidden">
         <div 
-          className="absolute h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-150"
+          className="absolute h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500 transition-all duration-150"
           style={{ width: `${percent}%` }}
         />
       </div>

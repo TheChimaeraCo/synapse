@@ -17,14 +17,14 @@ export function QuickActions() {
         <Link
           key={a.href}
           href={a.href}
-          className="group flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] backdrop-blur-xl px-4 py-3 transition hover:bg-white/[0.07] hover:border-white/20"
+          className="group flex items-center gap-3 rounded-xl border border-white/[0.12] bg-white/[0.045] backdrop-blur-xl px-4 py-3 transition hover:bg-white/[0.09] hover:border-cyan-300/30 hover:translate-y-[-1px]"
         >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-emerald-500 text-white shadow-[0_10px_20px_rgba(6,182,212,0.25)]">
             <a.icon size={18} />
           </div>
           <div className="min-w-0">
             <p className="text-sm font-medium text-zinc-100 group-hover:text-white">{a.label}</p>
-            <p className="text-xs text-zinc-500">{a.desc}</p>
+            <p className="text-xs text-zinc-400">{a.desc}</p>
           </div>
         </Link>
       ))}
