@@ -3,6 +3,7 @@ import { getGatewayContext, handleGatewayError } from "@/lib/gateway-context";
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { summarizeConversation } from "@/lib/conversationSummarizer";
 
 export async function GET(req: NextRequest) {
   try {
@@ -42,6 +43,9 @@ export async function POST(req: NextRequest) {
     });
     if (activeConvo) {
       await convexClient.mutation(api.functions.conversations.close, { id: activeConvo._id });
+      summarizeConversation(activeConvo._id).catch((err) =>
+        console.error("[api/conversations] Summarization failed:", err)
+      );
     }
 
     let depth = 1;

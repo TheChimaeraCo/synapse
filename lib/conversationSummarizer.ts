@@ -109,6 +109,86 @@ function sanitizeStateUpdates(raw: any): Array<{
   return cleaned.slice(0, 12);
 }
 
+const KNOWLEDGE_CATEGORIES = new Set([
+  "preference",
+  "fact",
+  "person",
+  "project",
+  "location",
+  "work",
+  "other",
+]);
+
+function toSnakeCase(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+}
+
+function mapDomainToKnowledgeCategory(domain: string): string {
+  const normalized = toSnakeCase(domain);
+  if (KNOWLEDGE_CATEGORIES.has(normalized)) return normalized;
+  if (/(project|build|product|roadmap|feature)/.test(normalized)) return "project";
+  if (/(work|job|career|client|business|company|team)/.test(normalized)) return "work";
+  if (/(location|city|state|country|timezone|travel|region)/.test(normalized)) return "location";
+  if (/(preference|style|taste|like|dislike|favorite|pref)/.test(normalized)) return "preference";
+  if (/(family|friend|person|relationship|contact)/.test(normalized)) return "person";
+  return "fact";
+}
+
+async function persistStateUpdatesAsKnowledge(args: {
+  gatewayId: Id<"gateways">;
+  sessionId: Id<"sessions">;
+  agentId: Id<"agents">;
+  updates: Array<{
+    domain: string;
+    attribute: string;
+    value: string;
+    confidence?: number;
+  }>;
+}): Promise<void> {
+  if (!args.updates.length) return;
+
+  const enabledRaw = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+    gatewayId: args.gatewayId,
+    key: "knowledge.extract_on_close",
+  }).catch(() => null);
+  const extractionEnabled = enabledRaw?.value == null ? true : parseBool(enabledRaw.value);
+  if (!extractionEnabled) return;
+
+  const session = await convexClient.query(api.functions.sessions.get, { id: args.sessionId }).catch(() => null);
+  const userId = (session as any)?.externalUserId as string | undefined;
+
+  const dedupe = new Set<string>();
+  for (const update of args.updates) {
+    const domain = (update.domain || "").trim();
+    const attribute = (update.attribute || "").trim();
+    const value = (update.value || "").trim();
+    if (!domain || !attribute || !value) continue;
+    if (containsSensitiveLikeValue(`${domain} ${attribute} ${value}`)) continue;
+
+    const key = toSnakeCase(`${domain}_${attribute}`);
+    if (!key) continue;
+
+    const fingerprint = `${key}:${value.toLowerCase()}`;
+    if (dedupe.has(fingerprint)) continue;
+    dedupe.add(fingerprint);
+
+    await convexClient.mutation(api.functions.knowledge.upsert, {
+      agentId: args.agentId,
+      gatewayId: args.gatewayId,
+      userId,
+      category: mapDomainToKnowledgeCategory(domain),
+      key,
+      value: value.slice(0, 240),
+      confidence: typeof update.confidence === "number" ? Math.max(0.5, Math.min(1, update.confidence)) : 0.8,
+      source: "conversation_summary",
+    });
+  }
+}
+
 function parseBool(value: unknown): boolean {
   if (typeof value !== "string") return false;
   const v = value.trim().toLowerCase();
@@ -324,7 +404,22 @@ export async function summarizeConversation(
   try {
     const convo = await convexClient.query(api.functions.conversations.get, { id: conversationId });
     if (!convo || convo.status !== "closed") return;
-    if (convo.summary) return; // Already summarized
+    if (convo.summary) {
+      try {
+        const session = await convexClient.query(api.functions.sessions.get, { id: convo.sessionId });
+        if (session?.agentId && Array.isArray(convo.stateUpdates) && convo.stateUpdates.length > 0) {
+          await persistStateUpdatesAsKnowledge({
+            gatewayId: convo.gatewayId,
+            sessionId: convo.sessionId,
+            agentId: session.agentId,
+            updates: convo.stateUpdates,
+          });
+        }
+      } catch (err) {
+        console.error("[conversationSummarizer] Knowledge extraction (existing summary) failed:", err);
+      }
+      return; // Already summarized
+    }
 
     // Get messages for this exact conversation segment.
     // Prefer seq range because it's stable even for old rows missing conversationId.
@@ -443,6 +538,20 @@ export async function summarizeConversation(
         .slice(0, 10)
       : undefined;
     const stateUpdates = sanitizeStateUpdates(parsed.stateUpdates);
+
+    const session = await convexClient.query(api.functions.sessions.get, { id: convo.sessionId }).catch(() => null);
+    if (session?.agentId && stateUpdates.length > 0) {
+      try {
+        await persistStateUpdatesAsKnowledge({
+          gatewayId: convo.gatewayId,
+          sessionId: convo.sessionId,
+          agentId: session.agentId,
+          updates: stateUpdates,
+        });
+      } catch (err) {
+        console.error("[conversationSummarizer] Knowledge extraction failed:", err);
+      }
+    }
 
     await convexClient.mutation(api.functions.conversations.close, {
       id: conversationId,
