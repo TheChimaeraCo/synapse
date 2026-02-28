@@ -56,6 +56,7 @@ export function AppShell({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chromeHidden, setChromeHidden] = useState(defaultChromeHidden);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const { showHelp, setShowHelp } = useKeyboardShortcuts();
   const storageKey = `synapse:immersive-shell:${title || "global"}`;
 
@@ -97,11 +98,35 @@ export function AppShell({
   const chromeVisible = !immersive || !chromeHidden;
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const updateViewportHeight = () => {
+      const next = Math.round(window.visualViewport?.height ?? window.innerHeight);
+      setViewportHeight((prev) => (prev === next ? prev : next));
+    };
+
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    window.addEventListener("orientationchange", updateViewportHeight);
+    window.visualViewport?.addEventListener("resize", updateViewportHeight);
+    window.visualViewport?.addEventListener("scroll", updateViewportHeight);
+
+    return () => {
+      window.removeEventListener("resize", updateViewportHeight);
+      window.removeEventListener("orientationchange", updateViewportHeight);
+      window.visualViewport?.removeEventListener("resize", updateViewportHeight);
+      window.visualViewport?.removeEventListener("scroll", updateViewportHeight);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!chromeVisible) setSidebarOpen(false);
   }, [chromeVisible]);
 
   return (
-    <div className="relative flex h-screen overflow-hidden">
+    <div
+      className="relative flex h-screen overflow-hidden"
+      style={viewportHeight ? { height: `${viewportHeight}px` } : { height: "100dvh" }}
+    >
       <div className="pointer-events-none absolute inset-0 -z-10">
         <div className="absolute -top-32 right-[-10rem] h-[28rem] w-[28rem] rounded-full bg-cyan-400/12 blur-3xl" />
         <div className="absolute -bottom-40 left-[-14rem] h-[30rem] w-[30rem] rounded-full bg-emerald-400/10 blur-3xl" />
