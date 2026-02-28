@@ -3,7 +3,7 @@
 import { ReactNode, useState, useEffect } from "react";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
-import { Menu, X, Keyboard } from "lucide-react";
+import { Menu, X, Keyboard, PanelLeftOpen, PanelLeftClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useKeyboardShortcuts, SHORTCUTS } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/layout/CommandPalette";
@@ -46,12 +46,34 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
 export function AppShell({
   children,
   title,
+  immersive = false,
+  defaultChromeHidden = false,
 }: {
   children: ReactNode;
   title?: string;
+  immersive?: boolean;
+  defaultChromeHidden?: boolean;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [chromeHidden, setChromeHidden] = useState(defaultChromeHidden);
   const { showHelp, setShowHelp } = useKeyboardShortcuts();
+  const storageKey = `synapse:immersive-shell:${title || "global"}`;
+
+  useEffect(() => {
+    if (!immersive) return;
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      if (stored === "hidden") setChromeHidden(true);
+      if (stored === "visible") setChromeHidden(false);
+    } catch {}
+  }, [immersive, storageKey]);
+
+  useEffect(() => {
+    if (!immersive) return;
+    try {
+      window.localStorage.setItem(storageKey, chromeHidden ? "hidden" : "visible");
+    } catch {}
+  }, [chromeHidden, immersive, storageKey]);
 
   // Listen for close-overlays event
   useEffect(() => {
@@ -60,6 +82,20 @@ export function AppShell({
     return () => window.removeEventListener("synapse:close-overlays", handler);
   }, []);
 
+  useEffect(() => {
+    if (!immersive) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return;
+      if (event.key !== "\\") return;
+      event.preventDefault();
+      setChromeHidden((prev) => !prev);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [immersive]);
+
+  const chromeVisible = !immersive || !chromeHidden;
+
   return (
     <div className="relative flex h-screen overflow-hidden">
       <div className="pointer-events-none absolute inset-0 -z-10">
@@ -67,38 +103,70 @@ export function AppShell({
         <div className="absolute -bottom-40 left-[-14rem] h-[30rem] w-[30rem] rounded-full bg-emerald-400/10 blur-3xl" />
       </div>
       {/* Mobile overlay */}
-      {sidebarOpen && (
+      {chromeVisible && sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Sidebar */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[296px] transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-        aria-label="Main navigation"
-      >
-        <Sidebar onClose={() => setSidebarOpen(false)} />
-      </aside>
-
-      {/* Main content */}
-      <div className="flex flex-1 flex-col overflow-hidden bg-transparent">
-        <Header title={title}>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="lg:hidden"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="Open sidebar"
+      {chromeVisible ? (
+        <>
+          {/* Sidebar */}
+          <aside
+            className={`fixed inset-y-0 left-0 z-50 w-[296px] transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 ${
+              sidebarOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
+            aria-label="Main navigation"
           >
-            <Menu className="h-5 w-5" />
-          </Button>
-        </Header>
-        <main className="flex-1 overflow-hidden">{children}</main>
-      </div>
+            <Sidebar onClose={() => setSidebarOpen(false)} />
+          </aside>
+
+          {/* Main content */}
+          <div className="flex flex-1 flex-col overflow-hidden bg-transparent">
+            <Header title={title}>
+              {immersive ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="hidden lg:inline-flex"
+                  onClick={() => setChromeHidden(true)}
+                  aria-label="Hide app chrome"
+                  title="Hide app chrome"
+                >
+                  <PanelLeftClose className="h-5 w-5" />
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="lg:hidden"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open sidebar"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+            </Header>
+            <main className="flex-1 overflow-hidden">{children}</main>
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-1 flex-col overflow-hidden bg-transparent">
+          <main className="flex-1 overflow-hidden">{children}</main>
+        </div>
+      )}
+
+      {immersive ? (
+        <button
+          type="button"
+          onClick={() => setChromeHidden((prev) => !prev)}
+          className="fixed left-4 top-4 z-[65] inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.14] bg-slate-950/60 text-zinc-200 backdrop-blur-md hover:bg-slate-900/80"
+          title={chromeHidden ? "Show app chrome" : "Hide app chrome"}
+          aria-label={chromeHidden ? "Show app chrome" : "Hide app chrome"}
+        >
+          {chromeHidden ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+        </button>
+      ) : null}
 
       {/* Command palette */}
       <CommandPalette />

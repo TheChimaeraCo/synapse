@@ -1097,7 +1097,7 @@ export default function VaultPage() {
   ), [expandedFolders, selectNote, selectedPath]);
 
   return (
-    <AppShell title="Vault">
+    <AppShell title="Vault" immersive defaultChromeHidden>
       <div className="h-full overflow-auto p-4 lg:p-8 text-zinc-100">
         <div className="mx-auto h-full max-w-[96rem] rounded-3xl border border-white/[0.1] bg-white/[0.04] shadow-[0_12px_38px_rgba(3,8,20,0.32)]">
           <div ref={panelsRef} className="flex h-full min-h-[680px]">
