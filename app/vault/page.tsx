@@ -7,14 +7,23 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
   BookOpen,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
+  Clock3,
+  Command,
   FileText,
+  Folder,
+  FolderOpen,
+  Hash,
   Link2,
+  Plus,
   RefreshCw,
   Save,
   Search,
   Sparkles,
   Tags,
+  X,
 } from "lucide-react";
 import * as Y from "yjs";
 
@@ -67,6 +76,88 @@ interface YjsSyncResponse {
   stateVector?: string;
   participants?: YjsParticipant[];
   liveMode?: boolean;
+}
+
+interface VaultTreeNode {
+  id: string;
+  type: "folder" | "note";
+  name: string;
+  children: VaultTreeNode[];
+  path?: string;
+  note?: VaultNote;
+}
+
+function buildVaultTree(notes: VaultNote[]): VaultTreeNode[] {
+  const root: VaultTreeNode = {
+    id: "folder:",
+    type: "folder",
+    name: "",
+    children: [],
+  };
+
+  for (const note of notes) {
+    const parts = note.vaultRelativePath.split("/").filter(Boolean);
+    if (parts.length === 0) continue;
+
+    let cursor = root;
+    let folderPath = "";
+
+    for (let i = 0; i < parts.length; i += 1) {
+      const part = parts[i];
+      const isLeaf = i === parts.length - 1;
+
+      if (isLeaf) {
+        cursor.children.push({
+          id: `note:${note.path}`,
+          type: "note",
+          name: note.title || part.replace(/\.(md|markdown)$/i, ""),
+          children: [],
+          path: note.path,
+          note,
+        });
+        continue;
+      }
+
+      folderPath = folderPath ? `${folderPath}/${part}` : part;
+      const folderId = `folder:${folderPath}`;
+      let folder = cursor.children.find((child) => child.id === folderId);
+      if (!folder) {
+        folder = {
+          id: folderId,
+          type: "folder",
+          name: part,
+          children: [],
+        };
+        cursor.children.push(folder);
+      }
+      cursor = folder;
+    }
+  }
+
+  const sortNodes = (nodes: VaultTreeNode[]): VaultTreeNode[] => {
+    const sorted = [...nodes].sort((a, b) => {
+      if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    });
+    return sorted.map((node) => {
+      if (node.type === "folder") return { ...node, children: sortNodes(node.children) };
+      return node;
+    });
+  };
+
+  return sortNodes(root.children);
+}
+
+function folderIdsForNote(relativePath: string): string[] {
+  const parts = relativePath.split("/").filter(Boolean);
+  if (parts.length <= 1) return [];
+  const out: string[] = [];
+  let current = "";
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    current = current ? `${current}/${parts[i]}` : parts[i];
+    out.push(`folder:${current}`);
+  }
+  return out;
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -145,8 +236,15 @@ export default function VaultPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("split");
   const [participants, setParticipants] = useState<YjsParticipant[]>([]);
   const [yjsLiveMode, setYjsLiveMode] = useState(false);
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
+  const [quickSearch, setQuickSearch] = useState("");
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const quickInputRef = useRef<HTMLInputElement | null>(null);
   const yDocRef = useRef<Y.Doc | null>(null);
   const yTextRef = useRef<Y.Text | null>(null);
   const ySyncTimerRef = useRef<number | null>(null);
@@ -411,14 +509,55 @@ export default function VaultPage() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      const target = e.target as HTMLElement | null;
+      const isTypingTarget =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          (target as HTMLElement).isContentEditable);
+      const key = e.key.toLowerCase();
+      const withMod = e.ctrlKey || e.metaKey;
+
+      if (withMod && key === "s") {
         e.preventDefault();
         void saveNote();
+        return;
       }
+      if (withMod && (key === "p" || key === "o")) {
+        e.preventDefault();
+        setQuickSwitcherOpen(true);
+        return;
+      }
+      if (withMod && key === "b") {
+        e.preventDefault();
+        setLeftSidebarOpen((prev) => !prev);
+        return;
+      }
+      if (withMod && key === ".") {
+        e.preventDefault();
+        setRightSidebarOpen((prev) => !prev);
+        return;
+      }
+      if (e.key === "Escape" && quickSwitcherOpen) {
+        e.preventDefault();
+        setQuickSwitcherOpen(false);
+        return;
+      }
+      if (isTypingTarget) return;
     };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [saveNote]);
+  }, [quickSwitcherOpen, saveNote]);
+
+  useEffect(() => {
+    if (!quickSwitcherOpen) return;
+    const id = window.setTimeout(() => {
+      quickInputRef.current?.focus();
+      quickInputRef.current?.select();
+    }, 10);
+    return () => window.clearTimeout(id);
+  }, [quickSwitcherOpen]);
 
   useEffect(() => () => {
     void syncYjsOnce({ offline: true }).catch(() => {});
@@ -429,6 +568,7 @@ export default function VaultPage() {
     () => index?.notes.find((n) => n.path === selectedPath) || null,
     [index, selectedPath]
   );
+
   const filteredNotes = useMemo(() => {
     if (!index) return [];
     const q = search.trim().toLowerCase();
@@ -439,263 +579,546 @@ export default function VaultPage() {
       n.tags.some((t) => t.includes(q))
     );
   }, [index, search]);
+
+  const noteTree = useMemo(() => buildVaultTree(filteredNotes), [filteredNotes]);
+
+  useEffect(() => {
+    if (!selectedMeta) return;
+    const parents = folderIdsForNote(selectedMeta.vaultRelativePath);
+    if (!parents.length) return;
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const folderId of parents) {
+        if (!next.has(folderId)) {
+          next.add(folderId);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [selectedMeta]);
+
+  useEffect(() => {
+    if (!selectedPath) return;
+    setOpenTabs((prev) => (prev.includes(selectedPath) ? prev : [...prev, selectedPath]));
+  }, [selectedPath]);
+
+  useEffect(() => {
+    if (!index) return;
+    const valid = new Set(index.notes.map((note) => note.path));
+    setOpenTabs((prev) => prev.filter((path) => valid.has(path)));
+    setSelectedPath((prev) => {
+      if (prev && valid.has(prev)) return prev;
+      return index.notes[0]?.path ?? null;
+    });
+  }, [index]);
+
   const backlinks = useMemo(
     () => (selectedPath && index?.backlinksByPath[selectedPath]) || [],
     [index, selectedPath]
   );
+
+  const quickResults = useMemo(() => {
+    if (!index) return [];
+    const q = quickSearch.trim().toLowerCase();
+    if (!q) return index.notes.slice(0, 30);
+    return index.notes
+      .filter((n) =>
+        n.title.toLowerCase().includes(q) ||
+        n.vaultRelativePath.toLowerCase().includes(q) ||
+        n.tags.some((t) => t.includes(q))
+      )
+      .slice(0, 30);
+  }, [index, quickSearch]);
+
+  const openTabNotes = useMemo(
+    () =>
+      openTabs
+        .map((path) => index?.notes.find((note) => note.path === path))
+        .filter((note): note is VaultNote => Boolean(note)),
+    [index, openTabs]
+  );
+
+  const editorStats = useMemo(() => {
+    const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+    const chars = content.length;
+    const lines = content ? content.split("\n").length : 1;
+    return { words, chars, lines };
+  }, [content]);
+
   const isDirty = content !== originalContent;
+
+  const selectNote = useCallback((path: string) => {
+    setSelectedPath(path);
+    setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
+    setQuickSwitcherOpen(false);
+    setQuickSearch("");
+  }, []);
+
+  const closeTab = useCallback((path: string) => {
+    setOpenTabs((prev) => {
+      const idx = prev.indexOf(path);
+      const next = prev.filter((p) => p !== path);
+      if (selectedPath === path) {
+        const fallback = next[Math.max(0, idx - 1)] || next[idx] || null;
+        setSelectedPath(fallback);
+      }
+      return next;
+    });
+  }, [selectedPath]);
+
+  const renderTreeNodes = useCallback((nodes: VaultTreeNode[], depth = 0) => (
+    nodes.map((node) => {
+      if (node.type === "folder") {
+        const expanded = expandedFolders.has(node.id);
+        return (
+          <div key={node.id}>
+            <button
+              onClick={() =>
+                setExpandedFolders((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(node.id)) next.delete(node.id);
+                  else next.add(node.id);
+                  return next;
+                })
+              }
+              className="group flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-xs text-zinc-300 hover:bg-white/[0.06]"
+              style={{ paddingLeft: `${10 + depth * 14}px` }}
+            >
+              <ChevronRight className={`h-3 w-3 text-zinc-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
+              {expanded ? <FolderOpen className="h-3.5 w-3.5 text-amber-300" /> : <Folder className="h-3.5 w-3.5 text-zinc-400" />}
+              <span className="truncate">{node.name}</span>
+            </button>
+            {expanded ? renderTreeNodes(node.children, depth + 1) : null}
+          </div>
+        );
+      }
+      const note = node.note as VaultNote;
+      const active = note.path === selectedPath;
+      return (
+        <button
+          key={node.id}
+          onClick={() => selectNote(note.path)}
+          className={`group flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-left text-xs ${
+            active
+              ? "bg-cyan-500/18 text-cyan-100"
+              : "text-zinc-300 hover:bg-white/[0.06]"
+          }`}
+          style={{ paddingLeft: `${26 + depth * 14}px` }}
+        >
+          <FileText className={`h-3.5 w-3.5 ${active ? "text-cyan-200" : "text-zinc-500 group-hover:text-zinc-300"}`} />
+          <span className="truncate">{note.title}</span>
+        </button>
+      );
+    })
+  ), [expandedFolders, selectNote, selectedPath]);
 
   return (
     <AppShell title="Vault">
-      <div className="h-full grid grid-cols-1 lg:grid-cols-[320px_1fr_320px] bg-transparent text-zinc-100">
-        <aside className="border-r border-white/10 bg-white/[0.03] flex flex-col min-h-0">
-          <div className="p-3 border-b border-white/10 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-zinc-400 uppercase tracking-wide flex items-center gap-1.5">
-                <BookOpen className="h-3.5 w-3.5" /> Vault Notes
-              </div>
-              <button
-                onClick={() => void refreshIndex()}
-                className="p-1.5 rounded hover:bg-white/10 text-zinc-400 hover:text-zinc-200"
-                title="Refresh"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            <div className="flex items-center gap-2 px-2 py-1.5 bg-white/[0.04] rounded border border-white/10">
-              <Search className="h-3.5 w-3.5 text-zinc-500" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search notes, tags, paths"
-                className="bg-transparent outline-none text-sm w-full placeholder:text-zinc-500"
-              />
-            </div>
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
-              <span>{index?.stats.notes ?? 0} notes</span>
-              <span>{index?.stats.tags ?? 0} tags</span>
-              <span>{index?.stats.links ?? 0} links</span>
-            </div>
-            <button
-              onClick={() => void createNote()}
-              className="w-full text-xs px-3 py-2 rounded-lg bg-blue-600/90 hover:bg-blue-500 text-white"
-            >
-              New Note
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {loadingIndex && <div className="text-xs text-zinc-500 px-2 py-2">Loading vault...</div>}
-            {!loadingIndex && filteredNotes.length === 0 && (
-              <div className="text-xs text-zinc-500 px-2 py-2">No notes found.</div>
-            )}
-            {filteredNotes.map((note) => (
-              <button
-                key={note.path}
-                onClick={() => setSelectedPath(note.path)}
-                className={`w-full text-left px-2.5 py-2 rounded-lg border transition ${
-                  note.path === selectedPath
-                    ? "bg-blue-500/10 border-blue-500/30"
-                    : "bg-white/[0.02] border-white/10 hover:bg-white/[0.06]"
-                }`}
-              >
-                <div className="text-sm font-medium truncate">{note.title}</div>
-                <div className="text-[11px] text-zinc-500 truncate">{note.vaultRelativePath}</div>
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="flex flex-col min-h-0">
-          <div className="px-4 py-3 border-b border-white/10 bg-white/[0.03] flex flex-wrap items-center gap-2">
-            <FileText className="h-4 w-4 text-zinc-400" />
-            <div className="text-sm truncate flex-1 min-w-0">
-              {selectedMeta?.vaultRelativePath || "Select a note"}
-              {isDirty && <span className="ml-2 text-amber-400">*</span>}
-            </div>
-            <div className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border ${
-              yjsLiveMode ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10" : "border-white/15 text-zinc-400 bg-white/[0.03]"
-            }`}>
-              <CircleDot className="h-3.5 w-3.5" />
-              {yjsLiveMode ? "Yjs Live" : "Yjs Solo"}
-              <span className="text-zinc-500">|</span>
-              {participants.length || 1} online
-            </div>
-            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] p-1">
-              {(["edit", "preview", "split"] as ViewMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setViewMode(mode)}
-                  className={`px-2 py-1 text-xs rounded ${
-                    viewMode === mode ? "bg-white/15 text-white" : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => void saveNote()}
-              disabled={!selectedPath || saving || !isDirty}
-              className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save className="h-3.5 w-3.5" />
-              {saving ? "Saving..." : "Save"}
-            </button>
-            <button
-              onClick={analyzeInChat}
-              disabled={!selectedPath}
-              className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-purple-600/90 hover:bg-purple-500 disabled:opacity-50"
-              title="Open chat with a prepared analysis prompt"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Analyze with Agent
-            </button>
-          </div>
-
-          {!selectedPath ? (
-            <div className="flex-1 grid place-items-center text-zinc-500 text-sm">Select a note to start editing.</div>
-          ) : loadingNote ? (
-            <div className="flex-1 grid place-items-center text-zinc-500 text-sm">Loading note...</div>
-          ) : (
-            <div className={`flex-1 min-h-0 ${viewMode === "split" ? "grid grid-cols-2" : "grid grid-cols-1"}`}>
-              {(viewMode === "edit" || viewMode === "split") && (
-                <textarea
-                  ref={textareaRef}
-                  value={content}
-                  onChange={(e) => {
-                    const nextValue = e.target.value;
-                    ySelectionRef.current = {
-                      start: e.target.selectionStart || 0,
-                      end: e.target.selectionEnd || 0,
-                    };
-                    yLastTypingAtRef.current = Date.now();
-                    const yText = yTextRef.current;
-                    if (yText) {
-                      if (yApplyingRemoteRef.current) {
-                        setContent(nextValue);
-                        return;
-                      }
-                      applyTextPatch(yText, nextValue);
-                    } else {
-                      setContent(nextValue);
-                    }
-                  }}
-                  onSelect={(e) => {
-                    ySelectionRef.current = {
-                      start: e.currentTarget.selectionStart || 0,
-                      end: e.currentTarget.selectionEnd || 0,
-                    };
-                  }}
-                  spellCheck={false}
-                  className="h-full w-full resize-none bg-[#0d1117] text-zinc-100 text-sm leading-6 p-4 outline-none border-r border-white/10 font-mono"
-                />
-              )}
-              {(viewMode === "preview" || viewMode === "split") && (
-                <div className="h-full overflow-auto p-6 prose prose-invert prose-zinc max-w-none">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-
-        <aside className="border-l border-white/10 bg-white/[0.03] flex flex-col min-h-0">
-          <div className="p-3 border-b border-white/10 text-xs uppercase tracking-wide text-zinc-400">
-            Note Context
-          </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-4">
-            <div>
-              <div className="text-xs text-zinc-500 mb-1">Collaborators</div>
-              <div className="space-y-1.5">
-                {(participants.length ? participants : [{
-                  clientId: yClientIdRef.current,
-                  name: "You",
-                  isTyping: false,
-                  lastSeenAt: Date.now(),
-                } as YjsParticipant]).map((p) => (
-                  <div key={p.clientId} className="text-xs px-2 py-1.5 rounded bg-white/[0.03] border border-white/10">
-                    <div className="text-zinc-200">
-                      {p.name}
-                      {p.isTyping ? <span className="ml-2 text-emerald-300">typing</span> : null}
-                    </div>
-                    {p.activeFile ? <div className="text-zinc-500 truncate">{p.activeFile}</div> : null}
+      <div className="h-full bg-[#1f2129] text-zinc-100">
+        <div className="flex h-full min-h-0">
+          {leftSidebarOpen ? (
+            <aside className="w-[320px] min-w-[280px] max-w-[380px] border-r border-white/10 bg-[#171922] flex flex-col min-h-0">
+              <div className="border-b border-white/10 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-zinc-400 flex items-center gap-1.5">
+                    <BookOpen className="h-3.5 w-3.5" />
+                    File Explorer
                   </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => void createNote()}
+                      className="p-1.5 rounded hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-100"
+                      title="New note"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => void refreshIndex()}
+                      className="p-1.5 rounded hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-100"
+                      title="Refresh index"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setLeftSidebarOpen(false)}
+                      className="p-1.5 rounded hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-100"
+                      title="Collapse explorer"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="text-[11px] text-zinc-500 truncate">Vault: {index?.vaultPath || "obsidian-vault"}</div>
+                <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5">
+                  <Search className="h-3.5 w-3.5 text-zinc-500" />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search files..."
+                    className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-500"
+                  />
+                </div>
+                <button
+                  onClick={() => setQuickSwitcherOpen(true)}
+                  className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-white/[0.08]"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Command className="h-3.5 w-3.5 text-zinc-500" />
+                    Quick Switcher
+                  </span>
+                </button>
+                <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                  <span>{index?.stats.notes ?? 0} notes</span>
+                  <span>{index?.stats.tags ?? 0} tags</span>
+                  <span>{index?.stats.links ?? 0} links</span>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto py-2">
+                {loadingIndex ? (
+                  <div className="px-3 text-xs text-zinc-500">Indexing vault...</div>
+                ) : noteTree.length === 0 ? (
+                  <div className="px-3 text-xs text-zinc-500">No notes found.</div>
+                ) : (
+                  renderTreeNodes(noteTree)
+                )}
+              </div>
+            </aside>
+          ) : (
+            <button
+              onClick={() => setLeftSidebarOpen(true)}
+              className="hidden md:flex h-full w-8 items-start justify-center border-r border-white/10 bg-[#171922] pt-3 text-zinc-500 hover:text-zinc-200"
+              title="Open explorer"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          )}
+
+          <section className="min-w-0 flex-1 flex flex-col">
+            <div className="border-b border-white/10 bg-[#1b1d26] px-3 py-2 flex items-center gap-2">
+              <button
+                onClick={() => setLeftSidebarOpen((prev) => !prev)}
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
+                title="Toggle explorer (Ctrl/Cmd+B)"
+              >
+                {leftSidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </button>
+              <button
+                onClick={() => setRightSidebarOpen((prev) => !prev)}
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
+                title="Toggle context (Ctrl/Cmd+.)"
+              >
+                {rightSidebarOpen ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              </button>
+              <button
+                onClick={() => setQuickSwitcherOpen(true)}
+                className="ml-1 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-zinc-300 hover:bg-white/[0.08]"
+              >
+                Quick Switcher
+              </button>
+              <div className="ml-auto inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[11px] text-zinc-400">
+                <CircleDot className="h-3.5 w-3.5" />
+                {yjsLiveMode ? "Live Sync" : "Solo"}
+                <span className="text-zinc-600">•</span>
+                {participants.length || 1} online
+              </div>
+            </div>
+
+            <div className="border-b border-white/10 bg-[#171922] flex items-end gap-1 overflow-x-auto px-2 pt-2">
+              {openTabNotes.map((note) => {
+                const active = note.path === selectedPath;
+                return (
+                  <button
+                    key={note.path}
+                    onClick={() => selectNote(note.path)}
+                    className={`group flex items-center gap-2 rounded-t-md border border-b-0 px-3 py-1.5 text-xs ${
+                      active
+                        ? "border-cyan-400/40 bg-[#202531] text-cyan-100"
+                        : "border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.08]"
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    <span className="max-w-[140px] truncate">{note.title}</span>
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(note.path);
+                      }}
+                      className="rounded p-0.5 text-zinc-500 hover:bg-black/30 hover:text-zinc-200"
+                      aria-label={`Close ${note.title}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="border-b border-white/10 bg-[#1b1d26] px-3 py-2 flex flex-wrap items-center gap-2">
+              <div className="min-w-0 flex-1 text-sm truncate text-zinc-300">
+                {selectedMeta?.vaultRelativePath || "Select a note"}
+                {isDirty ? <span className="ml-1 text-amber-300">*</span> : null}
+              </div>
+              <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.03] p-1">
+                {(["edit", "preview", "split"] as ViewMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setViewMode(mode)}
+                    className={`rounded px-2 py-1 text-xs ${
+                      viewMode === mode ? "bg-cyan-500/20 text-cyan-100" : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {mode}
+                  </button>
                 ))}
               </div>
+              <button
+                onClick={() => void saveNote()}
+                disabled={!selectedPath || saving || !isDirty}
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600/90 px-3 py-1.5 text-xs text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {saving ? "Saving..." : "Save"}
+              </button>
+              <button
+                onClick={analyzeInChat}
+                disabled={!selectedPath}
+                className="inline-flex items-center gap-1.5 rounded-md bg-violet-600/90 px-3 py-1.5 text-xs text-white hover:bg-violet-500 disabled:opacity-50"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Analyze
+              </button>
             </div>
 
-            <div>
-              <div className="text-xs text-zinc-500 mb-1">Agent Access</div>
-              <div className="text-xs text-zinc-300 bg-white/[0.03] border border-white/10 rounded-lg p-2">
-                Agent tools can read/write these notes via workspace paths like:
-                <div className="mt-1 font-mono text-zinc-400">{selectedPath || `${index?.vaultPath || "obsidian-vault"}/...`}</div>
+            {!selectedPath ? (
+              <div className="flex-1 grid place-items-center text-sm text-zinc-500">
+                Choose a note from the explorer to begin.
               </div>
-            </div>
-
-            <div>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-400 mb-2">
-                <Tags className="h-3.5 w-3.5" /> Tags
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {selectedMeta?.tags?.length ? (
-                  selectedMeta.tags.map((tag) => (
-                    <button
-                      key={tag}
-                      onClick={() => setSearch(tag)}
-                      className="px-2 py-0.5 text-[11px] rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300"
-                    >
-                      #{tag}
-                    </button>
-                  ))
-                ) : (
-                  <div className="text-xs text-zinc-500">No tags</div>
+            ) : loadingNote ? (
+              <div className="flex-1 grid place-items-center text-sm text-zinc-500">Loading note...</div>
+            ) : (
+              <div className={`flex-1 min-h-0 ${viewMode === "split" ? "grid grid-cols-1 xl:grid-cols-2" : "grid grid-cols-1"}`}>
+                {(viewMode === "edit" || viewMode === "split") && (
+                  <textarea
+                    ref={textareaRef}
+                    value={content}
+                    onChange={(e) => {
+                      const nextValue = e.target.value;
+                      ySelectionRef.current = {
+                        start: e.target.selectionStart || 0,
+                        end: e.target.selectionEnd || 0,
+                      };
+                      yLastTypingAtRef.current = Date.now();
+                      const yText = yTextRef.current;
+                      if (yText) {
+                        if (yApplyingRemoteRef.current) {
+                          setContent(nextValue);
+                          return;
+                        }
+                        applyTextPatch(yText, nextValue);
+                      } else {
+                        setContent(nextValue);
+                      }
+                    }}
+                    onSelect={(e) => {
+                      ySelectionRef.current = {
+                        start: e.currentTarget.selectionStart || 0,
+                        end: e.currentTarget.selectionEnd || 0,
+                      };
+                    }}
+                    spellCheck={false}
+                    className={`h-full w-full resize-none bg-[#20232d] p-5 text-sm leading-6 text-zinc-100 outline-none font-mono ${
+                      viewMode === "split" ? "border-r border-white/10" : ""
+                    }`}
+                  />
+                )}
+                {(viewMode === "preview" || viewMode === "split") && (
+                  <div className="h-full overflow-auto bg-[#1a1d27] p-6">
+                    <article className="prose prose-invert prose-zinc max-w-none prose-headings:tracking-tight prose-a:text-cyan-300 hover:prose-a:text-cyan-200">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                    </article>
+                  </div>
                 )}
               </div>
-            </div>
+            )}
 
-            <div>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-400 mb-2">
-                <Link2 className="h-3.5 w-3.5" /> Outgoing Links
+            <div className="h-8 border-t border-white/10 bg-[#171922] px-3 flex items-center justify-between text-[11px] text-zinc-500">
+              <div className="inline-flex items-center gap-2">
+                <Clock3 className="h-3.5 w-3.5" />
+                {selectedMeta?.updatedAt ? `Updated ${new Date(selectedMeta.updatedAt).toLocaleString()}` : "No note selected"}
               </div>
-              <div className="space-y-1.5">
-                {selectedMeta?.outgoing?.length ? (
-                  selectedMeta.outgoing.map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => setSelectedPath(p)}
-                      className="block w-full text-left text-xs px-2 py-1.5 rounded bg-white/[0.03] border border-white/10 hover:bg-white/[0.08] truncate"
-                    >
-                      {p}
-                    </button>
-                  ))
-                ) : (
-                  <div className="text-xs text-zinc-500">No outgoing links</div>
-                )}
+              <div className="inline-flex items-center gap-3">
+                <span>{editorStats.words} words</span>
+                <span>{editorStats.lines} lines</span>
+                <span>{editorStats.chars} chars</span>
               </div>
             </div>
+          </section>
 
-            <div>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-400 mb-2">
-                <Link2 className="h-3.5 w-3.5" /> Backlinks
+          {rightSidebarOpen ? (
+            <aside className="w-[320px] min-w-[280px] max-w-[380px] border-l border-white/10 bg-[#171922] flex flex-col min-h-0">
+              <div className="border-b border-white/10 px-3 py-2.5 flex items-center justify-between">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">Context</div>
+                <button
+                  onClick={() => setRightSidebarOpen(false)}
+                  className="p-1 rounded hover:bg-white/[0.08] text-zinc-500 hover:text-zinc-200"
+                  title="Collapse context"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
               </div>
-              <div className="space-y-1.5">
-                {backlinks.length ? (
-                  backlinks.map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => setSelectedPath(p)}
-                      className="block w-full text-left text-xs px-2 py-1.5 rounded bg-white/[0.03] border border-white/10 hover:bg-white/[0.08] truncate"
-                    >
-                      {p}
-                    </button>
-                  ))
-                ) : (
-                  <div className="text-xs text-zinc-500">No backlinks</div>
+              <div className="flex-1 overflow-auto p-3 space-y-4">
+                <section>
+                  <div className="mb-1.5 text-xs text-zinc-500">Collaborators</div>
+                  <div className="space-y-1.5">
+                    {(participants.length
+                      ? participants
+                      : [
+                          {
+                            clientId: yClientIdRef.current,
+                            name: "You",
+                            isTyping: false,
+                            lastSeenAt: Date.now(),
+                          } as YjsParticipant,
+                        ]
+                    ).map((participant) => (
+                      <div key={participant.clientId} className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs">
+                        <div className="text-zinc-200">
+                          {participant.name}
+                          {participant.isTyping ? <span className="ml-2 text-emerald-300">typing</span> : null}
+                        </div>
+                        {participant.activeFile ? <div className="truncate text-zinc-500">{participant.activeFile}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
+                  <div className="mb-1.5 flex items-center gap-1.5 text-xs text-zinc-400">
+                    <Tags className="h-3.5 w-3.5" />
+                    Tags
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedMeta?.tags?.length ? (
+                      selectedMeta.tags.map((tag) => (
+                        <button
+                          key={tag}
+                          onClick={() => setSearch(tag)}
+                          className="rounded-full border border-cyan-400/30 bg-cyan-500/15 px-2 py-0.5 text-[11px] text-cyan-200"
+                        >
+                          #{tag}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="text-xs text-zinc-500">No tags</div>
+                    )}
+                  </div>
+                </section>
+
+                <section>
+                  <div className="mb-1.5 flex items-center gap-1.5 text-xs text-zinc-400">
+                    <Link2 className="h-3.5 w-3.5" />
+                    Outgoing Links
+                  </div>
+                  <div className="space-y-1.5">
+                    {selectedMeta?.outgoing?.length ? (
+                      selectedMeta.outgoing.map((path) => (
+                        <button
+                          key={path}
+                          onClick={() => selectNote(path)}
+                          className="block w-full truncate rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-left text-xs hover:bg-white/[0.08]"
+                        >
+                          {path}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="text-xs text-zinc-500">No outgoing links</div>
+                    )}
+                  </div>
+                </section>
+
+                <section>
+                  <div className="mb-1.5 flex items-center gap-1.5 text-xs text-zinc-400">
+                    <Link2 className="h-3.5 w-3.5" />
+                    Backlinks
+                  </div>
+                  <div className="space-y-1.5">
+                    {backlinks.length ? (
+                      backlinks.map((path) => (
+                        <button
+                          key={path}
+                          onClick={() => selectNote(path)}
+                          className="block w-full truncate rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-left text-xs hover:bg-white/[0.08]"
+                        >
+                          {path}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="text-xs text-zinc-500">No backlinks</div>
+                    )}
+                  </div>
+                </section>
+
+                <section>
+                  <div className="mb-1.5 flex items-center gap-1.5 text-xs text-zinc-400">
+                    <Hash className="h-3.5 w-3.5" />
+                    Metadata
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2 text-xs text-zinc-400 space-y-1">
+                    <div>Word count: {selectedMeta?.wordCount ?? 0}</div>
+                    <div>Size: {selectedMeta?.size ?? 0} bytes</div>
+                    <div className="truncate">Path: {selectedPath || `${index?.vaultPath || "obsidian-vault"}/...`}</div>
+                  </div>
+                </section>
+              </div>
+            </aside>
+          ) : (
+            <button
+              onClick={() => setRightSidebarOpen(true)}
+              className="hidden md:flex h-full w-8 items-start justify-center border-l border-white/10 bg-[#171922] pt-3 text-zinc-500 hover:text-zinc-200"
+              title="Open context"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {quickSwitcherOpen ? (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[1px] flex items-start justify-center p-6">
+            <div className="w-full max-w-2xl rounded-xl border border-white/10 bg-[#151821] shadow-[0_20px_70px_rgba(0,0,0,0.55)]">
+              <div className="border-b border-white/10 p-3">
+                <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
+                  <Search className="h-4 w-4 text-zinc-500" />
+                  <input
+                    ref={quickInputRef}
+                    value={quickSearch}
+                    onChange={(e) => setQuickSearch(e.target.value)}
+                    placeholder="Quick switcher: search notes by title, path, or tag..."
+                    className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-500"
+                  />
+                </div>
+                <div className="mt-2 text-[11px] text-zinc-500">
+                  Press <kbd className="rounded border border-white/20 px-1">Esc</kbd> to close • <kbd className="rounded border border-white/20 px-1">Ctrl/Cmd + P</kbd> to open
+                </div>
+              </div>
+              <div className="max-h-[55vh] overflow-auto p-2">
+                {quickResults.length ? quickResults.map((note) => (
+                  <button
+                    key={note.path}
+                    onClick={() => selectNote(note.path)}
+                    className="w-full rounded-md px-3 py-2 text-left hover:bg-white/[0.06]"
+                  >
+                    <div className="text-sm text-zinc-100 truncate">{note.title}</div>
+                    <div className="text-[11px] text-zinc-500 truncate">{note.vaultRelativePath}</div>
+                  </button>
+                )) : (
+                  <div className="px-3 py-3 text-sm text-zinc-500">No matching notes.</div>
                 )}
               </div>
             </div>
           </div>
-        </aside>
+        ) : null}
       </div>
     </AppShell>
   );
