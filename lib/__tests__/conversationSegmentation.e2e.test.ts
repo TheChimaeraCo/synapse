@@ -197,7 +197,12 @@ describe("conversation segmentation e2e", () => {
       newTags: ["food", "personal"],
     });
 
-    const newId = await resolveConversation("session-1" as any, "gateway-1" as any, undefined, "what should I cook tonight?");
+    const newId = await resolveConversation(
+      "session-1" as any,
+      "gateway-1" as any,
+      undefined,
+      "what should I cook for a vegetarian dinner party tonight with pasta options"
+    );
 
     expect(newId).toBe("convo-1");
     expect(mocks.mutation).toHaveBeenCalledWith(api.functions.conversations.close, { id: "active-1" });
@@ -312,7 +317,7 @@ describe("conversation segmentation e2e", () => {
       "session-1" as any,
       "gateway-1" as any,
       undefined,
-      "let's continue the audi car search"
+      "switch to audi lease pricing and dealership comparison for a new car this month"
     );
 
     expect(newId).toBe("convo-1");
@@ -323,5 +328,72 @@ describe("conversation segmentation e2e", () => {
         depth: 4,
       })
     );
+  });
+
+  it("starts a new conversation on strong side-note pivot even when classifier says same topic", async () => {
+    state.active = newActive({
+      messageCount: 6,
+      depth: 2,
+      title: "Stripe Connect platform setup",
+      summary: "Discussing connected accounts, payouts, and billing flows.",
+      tags: ["stripe", "billing"],
+    });
+    state.recentMessages = [
+      { role: "user", content: "Can I manage multiple Stripe businesses in one account?" },
+      { role: "assistant", content: "Yes, use Stripe Connect and Organizations." },
+    ];
+    mocks.classifyTopic.mockResolvedValueOnce({
+      sameTopic: true,
+      suggestedTitle: "Stripe setup",
+      newTags: ["stripe"],
+    });
+
+    const newId = await resolveConversation(
+      "session-1" as any,
+      "gateway-1" as any,
+      undefined,
+      "side note, I run a bowling area in an arcade and need a cleaning routine for lanes and balls"
+    );
+
+    expect(newId).toBe("convo-1");
+    expect(mocks.mutation).toHaveBeenCalledWith(api.functions.conversations.close, { id: "active-1" });
+    expect(mocks.mutation).toHaveBeenCalledWith(
+      api.functions.conversations.create,
+      expect.objectContaining({
+        depth: 1,
+      })
+    );
+  });
+
+  it("does not force split on side-note phrasing when topic overlap remains strong", async () => {
+    state.active = newActive({
+      messageCount: 6,
+      title: "Stripe Connect platform setup",
+      summary: "Connected accounts, payouts, and Stripe billing for multiple clients.",
+      tags: ["stripe", "billing"],
+    });
+    state.recentMessages = [
+      { role: "user", content: "Let's keep working on Stripe account structure" },
+      { role: "assistant", content: "Sure, we can map Standard vs Express." },
+    ];
+    mocks.classifyTopic.mockResolvedValueOnce({
+      sameTopic: true,
+      suggestedTitle: "Stripe setup",
+      newTags: ["stripe"],
+    });
+
+    const id = await resolveConversation(
+      "session-1" as any,
+      "gateway-1" as any,
+      undefined,
+      "side note: can we also cover stripe tax settings for these same accounts"
+    );
+
+    expect(id).toBe("active-1");
+    expect(mocks.mutation).toHaveBeenCalledWith(
+      api.functions.conversations.updateMessageCount,
+      { id: "active-1" }
+    );
+    expect(mocks.mutation).not.toHaveBeenCalledWith(api.functions.conversations.close, { id: "active-1" });
   });
 });

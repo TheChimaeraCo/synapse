@@ -7,6 +7,7 @@ import { summarizeConversation } from "@/lib/conversationSummarizer";
 const CONVERSATION_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours - only timeout after a long absence, AI classifier handles topic shifts
 const CLASSIFY_AFTER_N_MESSAGES = 3; // Start classifying early so topic shifts are detected promptly
 const MIN_WORDS_FOR_AUTO_SHIFT = 6;
+const MIN_WORDS_FOR_HARD_PIVOT = 9;
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "that", "this", "from", "about", "have", "has", "had", "will", "would",
   "could", "should", "your", "you", "our", "their", "they", "them", "what", "when", "where", "which",
@@ -37,11 +38,60 @@ function countMeaningfulWords(message: string): number {
 function isBridgeMessage(message: string): boolean {
   const lower = message.toLowerCase().trim();
   const bridgePatterns = [
-    /\b(also|btw|by the way|quick thing|quick note|side note|on that note)\b/,
+    /\b(also|btw|by the way|quick thing|quick note|on that note)\b/,
     /\b(one more thing|while we're at it|before we move on)\b/,
-    /\b(and|plus|another)\b/,
+    /^(and|plus|another)\b/,
   ];
   return bridgePatterns.some((p) => p.test(lower));
+}
+
+function hasStrongTopicShiftCue(message: string): boolean {
+  const lower = message.toLowerCase().trim();
+  const strongShiftPatterns = [
+    /^(side note|quick side note)\b/,
+    /^(different|separate)\s+(question|topic)\b/,
+    /^(switching gears|new question|new thread)\b/,
+    /^(unrelated|totally unrelated)\b/,
+  ];
+  return strongShiftPatterns.some((p) => p.test(lower));
+}
+
+function computeActiveTopicText(activeConvo: {
+  title?: string;
+  summary?: string;
+  tags?: string[];
+  topics?: string[];
+}): string {
+  return [
+    activeConvo.title,
+    activeConvo.summary,
+    ...(activeConvo.tags || []),
+    ...(activeConvo.topics || []),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function isHardTopicPivot(
+  activeTopicText: string,
+  newMessage: string,
+  opts: {
+    resumeIntent: boolean;
+    wantsNew: boolean;
+  }
+): boolean {
+  if (opts.wantsNew || opts.resumeIntent) return false;
+  if (!activeTopicText.trim()) return false;
+
+  const overlap = topicOverlap(activeTopicText, newMessage);
+  const wordCount = countMeaningfulWords(newMessage);
+  const bridgeLikely = isBridgeMessage(newMessage);
+  const strongCue = hasStrongTopicShiftCue(newMessage);
+
+  if (strongCue && overlap === 0 && wordCount >= 4) return true;
+
+  // Fallback for obvious domain jumps without cue words.
+  return overlap === 0 && !bridgeLikely && wordCount >= MIN_WORDS_FOR_HARD_PIVOT;
 }
 
 function detectResumeConversationIntent(message: string): boolean {
@@ -142,6 +192,8 @@ export async function resolveConversation(
   // Check time gap
   const gap = Date.now() - activeConvo.lastMessageAt;
   const isLongGap = gap >= CONVERSATION_TIMEOUT_MS;
+  const activeTopicText = computeActiveTopicText(activeConvo);
+  const hardPivot = isHardTopicPivot(activeTopicText, newMessage, { resumeIntent, wantsNew });
 
   // Determine if we should run AI topic classification
   let topicShifted = false;
@@ -169,14 +221,6 @@ export async function resolveConversation(
       classificationResult = classification;
       topicShifted = !classification.sameTopic;
       if (topicShifted) {
-        const activeTopicText = [
-          activeConvo.title,
-          activeConvo.summary,
-          ...(activeConvo.tags || []),
-          ...(activeConvo.topics || []),
-        ]
-          .filter(Boolean)
-          .join(" ");
         const overlap = activeTopicText ? topicOverlap(activeTopicText, newMessage) : 0;
         const wordCount = countMeaningfulWords(newMessage);
         const bridgeLikely = isBridgeMessage(newMessage);
@@ -211,6 +255,17 @@ export async function resolveConversation(
     } catch (err) {
       console.error("[ConvoSegmentation] Topic classification failed, continuing same convo:", err);
     }
+  }
+
+  if (!topicShifted && hardPivot && !isLongGap) {
+    topicShifted = true;
+    if (!classificationResult) {
+      classificationResult = {
+        sameTopic: false,
+        suggestedTitle: "New topic",
+      };
+    }
+    console.log("[ConvoSegmentation] Hard pivot detected from message content; starting a new conversation segment.");
   }
 
   // If the user returns after a long gap, decide whether this is a continuation chain.
