@@ -4,6 +4,7 @@ import { resolveAiSelection } from "@/lib/aiRouting";
 
 interface ClassificationResult {
   sameTopic: boolean;
+  relevanceScore?: number; // 0-100, higher = more related to active topic
   newTags?: string[];
   suggestedTitle?: string;
 }
@@ -32,6 +33,11 @@ export async function classifyTopic(
   currentConversation: ConversationContext | null,
   gatewayId?: string
 ): Promise<ClassificationResult> {
+  const clampScore = (score: number): number => {
+    if (!Number.isFinite(score)) return 50;
+    return Math.max(0, Math.min(100, Math.round(score)));
+  };
+
   try {
     const selection = await resolveAiSelection({
       gatewayId: gatewayId || undefined,
@@ -69,17 +75,18 @@ export async function classifyTopic(
       .join("\n");
 
     const context = {
-      systemPrompt: `You are a conservative topic classifier. You must determine if a conversation has COMPLETELY changed to an unrelated subject.
+      systemPrompt: `You are a conversation relevance classifier.
 
 IMPORTANT RULES:
-- "sameTopic": true means the conversation is still about the same general subject, even if the angle or sub-topic changed
-- Only set "sameTopic": false when the user has COMPLETELY abandoned the previous subject and started discussing something ENTIRELY DIFFERENT
-- Follow-up questions, clarifications, related tangents, and deeper dives into the same subject are ALL the same topic
-- "I want coffee" followed by "I just want caffeine" = SAME TOPIC (both about beverages/drinks)
-- "Tell me about Python" followed by "What about TypeScript?" = SAME TOPIC (both about programming)
-- "How do I cook pasta?" followed by "What's the best telescope?" = DIFFERENT TOPIC
+- Output "relevanceScore" as an integer from 0 to 100:
+  - 90-100: direct continuation of same topic
+  - 70-89: clearly related sub-topic
+  - 40-69: ambiguous / tangent
+  - 0-39: likely different topic
+- "sameTopic" should be true when relevanceScore >= 50.
+- Side tangents and quick clarifications are usually still sameTopic unless clearly unrelated.
 
-Respond with JSON only, no markdown: { "sameTopic": boolean, "newTags": string[], "suggestedTitle": string }`,
+Respond with JSON only, no markdown: { "sameTopic": boolean, "relevanceScore": number, "newTags": string[], "suggestedTitle": string }`,
       messages: [
         {
           role: "user" as const,
@@ -103,8 +110,17 @@ Respond with JSON only, no markdown: { "sameTopic": boolean, "newTags": string[]
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+      const score =
+        parsed.relevanceScore !== undefined
+          ? clampScore(Number(parsed.relevanceScore))
+          : undefined;
+      const sameTopic =
+        parsed.sameTopic !== undefined
+          ? Boolean(parsed.sameTopic)
+          : (score !== undefined ? score >= 50 : true);
       return {
-        sameTopic: parsed.sameTopic ?? true,
+        sameTopic,
+        ...(score !== undefined ? { relevanceScore: score } : {}),
         newTags: parsed.newTags,
         suggestedTitle: parsed.suggestedTitle,
       };

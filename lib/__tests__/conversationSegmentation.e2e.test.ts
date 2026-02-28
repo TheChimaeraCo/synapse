@@ -210,8 +210,8 @@ describe("conversation segmentation e2e", () => {
     expect(mocks.mutation).toHaveBeenCalledWith(
       api.functions.conversations.create,
       expect.objectContaining({
-        previousConvoId: undefined,
-        depth: 1,
+        previousConvoId: "active-1",
+        depth: 4,
         title: "Dinner planning",
         tags: ["food", "personal"],
       })
@@ -234,8 +234,8 @@ describe("conversation segmentation e2e", () => {
     expect(mocks.mutation).toHaveBeenCalledWith(
       api.functions.conversations.create,
       expect.objectContaining({
-        previousConvoId: undefined,
-        depth: 1,
+        previousConvoId: "active-1",
+        depth: 5,
       })
     );
   });
@@ -287,8 +287,8 @@ describe("conversation segmentation e2e", () => {
     expect(mocks.mutation).toHaveBeenCalledWith(
       api.functions.conversations.create,
       expect.objectContaining({
-        previousConvoId: undefined,
-        depth: 1,
+        previousConvoId: "active-1",
+        depth: 6,
       })
     );
   });
@@ -324,8 +324,8 @@ describe("conversation segmentation e2e", () => {
     expect(mocks.mutation).toHaveBeenCalledWith(
       api.functions.conversations.create,
       expect.objectContaining({
-        previousConvoId: "car-convo-2",
-        depth: 4,
+        previousConvoId: "active-1",
+        depth: 5,
       })
     );
   });
@@ -360,7 +360,8 @@ describe("conversation segmentation e2e", () => {
     expect(mocks.mutation).toHaveBeenCalledWith(
       api.functions.conversations.create,
       expect.objectContaining({
-        depth: 1,
+        previousConvoId: "active-1",
+        depth: 3,
       })
     );
   });

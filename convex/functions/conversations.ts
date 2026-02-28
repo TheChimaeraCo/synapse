@@ -69,6 +69,8 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const { id, ...updates } = args;
+    const convo = await ctx.db.get(id);
+    if (!convo || convo.status !== "active") return;
     const patch: Record<string, any> = {};
     if (updates.title !== undefined) patch.title = updates.title;
     if (updates.tags !== undefined) patch.tags = updates.tags;
@@ -85,7 +87,7 @@ export const advanceEnd = mutation({
   },
   handler: async (ctx, args) => {
     const convo = await ctx.db.get(args.id);
-    if (!convo) return;
+    if (!convo || convo.status !== "active") return;
     await ctx.db.patch(args.id, {
       endSeq: args.endSeq,
       messageCount: convo.messageCount + 1,
@@ -155,7 +157,7 @@ export const updateMessageCount = mutation({
   args: { id: v.id("conversations") },
   handler: async (ctx, args) => {
     const convo = await ctx.db.get(args.id);
-    if (!convo) return;
+    if (!convo || convo.status !== "active") return;
     await ctx.db.patch(args.id, {
       messageCount: convo.messageCount + 1,
       lastMessageAt: Date.now(),
@@ -254,6 +256,8 @@ export const setEscalationLevel = mutation({
     level: v.number(),
   },
   handler: async (ctx, args) => {
+    const convo = await ctx.db.get(args.id);
+    if (!convo || convo.status !== "active") return;
     await ctx.db.patch(args.id, { escalationLevel: args.level });
   },
 });

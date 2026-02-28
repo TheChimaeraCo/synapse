@@ -67,6 +67,30 @@ export function SessionsTab() {
 
       <Card className="bg-white/[0.04] border-white/[0.06]">
         <CardHeader>
+          <CardTitle className="text-sm text-zinc-300">Conversation Segmentation</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="text-sm text-zinc-400 mb-1 block">
+              New Conversation Trigger Threshold (1-100)
+            </label>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={get("conversation_split_threshold", "28")}
+              onChange={(e) => set("conversation_split_threshold", e.target.value)}
+              className="bg-white/[0.06] border-white/[0.08] text-white"
+            />
+            <p className="text-xs text-zinc-500 mt-1">
+              Lower values keep messages in the same thread longer. Higher values split into new conversations more aggressively.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white/[0.04] border-white/[0.06]">
+        <CardHeader>
           <CardTitle className="text-sm text-zinc-300">Lifecycle</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">

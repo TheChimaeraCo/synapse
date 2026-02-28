@@ -8,11 +8,21 @@ const CONVERSATION_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours - only timeout af
 const CLASSIFY_AFTER_N_MESSAGES = 3; // Start classifying early so topic shifts are detected promptly
 const MIN_WORDS_FOR_AUTO_SHIFT = 6;
 const MIN_WORDS_FOR_HARD_PIVOT = 9;
+const DEFAULT_SPLIT_RELEVANCE_THRESHOLD = 28; // 1-100, lower = harder to split
+const QUICK_TANGENT_MAX_WORDS = 12;
+const SPLIT_THRESHOLD_CACHE_TTL_MS = 60_000;
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "that", "this", "from", "about", "have", "has", "had", "will", "would",
   "could", "should", "your", "you", "our", "their", "they", "them", "what", "when", "where", "which",
   "while", "just", "like", "want", "need", "help", "please", "talk", "topic", "conversation",
 ]);
+const splitThresholdCache = new Map<string, { value: number; expiresAt: number }>();
+
+function clampPercent(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  const rounded = Math.round(value);
+  return Math.max(1, Math.min(100, rounded));
+}
 
 function tokenizeTopic(text: string): string[] {
   return Array.from(new Set(
@@ -43,6 +53,17 @@ function isBridgeMessage(message: string): boolean {
     /^(and|plus|another)\b/,
   ];
   return bridgePatterns.some((p) => p.test(lower));
+}
+
+function isQuickSideTangent(message: string): boolean {
+  const lower = message.toLowerCase().trim();
+  const wordCount = message.trim().split(/\s+/).filter(Boolean).length;
+  if (wordCount === 0) return false;
+  if (wordCount > QUICK_TANGENT_MAX_WORDS) return false;
+
+  const cue = /\b(side note|quick question|quick one|btw|by the way|real quick)\b/.test(lower);
+  const isQuestion = message.includes("?");
+  return cue || isQuestion;
 }
 
 function hasStrongTopicShiftCue(message: string): boolean {
@@ -92,6 +113,65 @@ function isHardTopicPivot(
 
   // Fallback for obvious domain jumps without cue words.
   return overlap === 0 && !bridgeLikely && wordCount >= MIN_WORDS_FOR_HARD_PIVOT;
+}
+
+function estimateRelevanceScore(
+  classification: { sameTopic: boolean; relevanceScore?: number },
+  activeTopicText: string,
+  newMessage: string
+): number {
+  if (classification.relevanceScore !== undefined) {
+    return clampPercent(classification.relevanceScore, classification.sameTopic ? 70 : 20);
+  }
+
+  const overlap = topicOverlap(activeTopicText, newMessage);
+  if (!classification.sameTopic) {
+    // Keep clearly "different topic" classifications low unless overlap is strong.
+    const score = 12 + Math.min(24, overlap * 8);
+    return clampPercent(score, 18);
+  }
+
+  const words = countMeaningfulWords(newMessage);
+  const overlapScore = Math.min(40, overlap * 15);
+  const verbosityBonus = Math.min(12, words * 2);
+  return clampPercent(52 + overlapScore + verbosityBonus, 70);
+}
+
+async function getConversationSplitThreshold(gatewayId: Id<"gateways">): Promise<number> {
+  const cacheKey = String(gatewayId);
+  const cached = splitThresholdCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  let parsed = DEFAULT_SPLIT_RELEVANCE_THRESHOLD;
+  try {
+    const inherited = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+      gatewayId,
+      key: "session.conversation_split_threshold",
+    });
+    if (inherited?.value) {
+      parsed = clampPercent(Number.parseInt(inherited.value, 10), DEFAULT_SPLIT_RELEVANCE_THRESHOLD);
+    }
+  } catch {
+    try {
+      const legacy = await convexClient.query(api.functions.config.get, {
+        key: "session.conversation_split_threshold",
+      });
+      if (legacy) {
+        parsed = clampPercent(Number.parseInt(legacy, 10), DEFAULT_SPLIT_RELEVANCE_THRESHOLD);
+      }
+    } catch {
+      // Ignore and use defaults.
+    }
+  }
+
+  splitThresholdCache.set(cacheKey, {
+    value: parsed,
+    expiresAt: now + SPLIT_THRESHOLD_CACHE_TTL_MS,
+  });
+  return parsed;
 }
 
 function detectResumeConversationIntent(message: string): boolean {
@@ -167,6 +247,7 @@ export async function resolveConversation(
   const activeConvo = await convexClient.query(api.functions.conversations.getActive, { sessionId });
   const wantsNew = detectNewConversationIntent(newMessage);
   const resumeIntent = detectResumeConversationIntent(newMessage);
+  const splitThreshold = await getConversationSplitThreshold(gatewayId);
 
   if (!activeConvo) {
     const historicalLink = wantsNew
@@ -198,7 +279,8 @@ export async function resolveConversation(
   // Determine if we should run AI topic classification
   let topicShifted = false;
   let resumeRelated = false;
-  let classificationResult: { sameTopic: boolean; suggestedTitle?: string; newTags?: string[] } | null = null;
+  let relevanceScore = 100;
+  let classificationResult: { sameTopic: boolean; relevanceScore?: number; suggestedTitle?: string; newTags?: string[] } | null = null;
   const nextCount = activeConvo.messageCount + 1;
   const shouldClassify = nextCount >= CLASSIFY_AFTER_N_MESSAGES;
   console.log(`[ConvoSegmentation] Message ${nextCount} in conversation, shouldClassify: ${shouldClassify}`);
@@ -219,26 +301,29 @@ export async function resolveConversation(
         gatewayId as string
       );
       classificationResult = classification;
-      topicShifted = !classification.sameTopic;
+      relevanceScore = estimateRelevanceScore(classification, activeTopicText, newMessage);
+      topicShifted = relevanceScore < splitThreshold;
       if (topicShifted) {
         const overlap = activeTopicText ? topicOverlap(activeTopicText, newMessage) : 0;
         const wordCount = countMeaningfulWords(newMessage);
         const bridgeLikely = isBridgeMessage(newMessage);
+        const quickTangent = isQuickSideTangent(newMessage);
         const weakShiftSignal =
           overlap >= 1 ||
           wordCount < MIN_WORDS_FOR_AUTO_SHIFT ||
           bridgeLikely ||
+          quickTangent ||
           resumeIntent;
 
         if (weakShiftSignal) {
           topicShifted = false;
           console.log(
-            `[ConvoSegmentation] Dampened classifier shift (overlap=${overlap}, words=${wordCount}, bridge=${bridgeLikely}, resumeIntent=${resumeIntent}). Staying in current conversation.`
+            `[ConvoSegmentation] Dampened classifier shift (score=${relevanceScore}, threshold=${splitThreshold}, overlap=${overlap}, words=${wordCount}, bridge=${bridgeLikely}, quickTangent=${quickTangent}, resumeIntent=${resumeIntent}). Staying in current conversation.`
           );
         }
       }
       if (topicShifted) {
-        console.log(`[ConvoSegmentation] AI detected topic shift after ${activeConvo.messageCount} messages. New topic: ${classification.suggestedTitle || "unknown"}`);
+        console.log(`[ConvoSegmentation] Relevance ${relevanceScore} < threshold ${splitThreshold}; topic shift after ${activeConvo.messageCount} messages. New topic: ${classification.suggestedTitle || "unknown"}`);
       } else if (!activeConvo.title && classification.suggestedTitle) {
         // Same topic but conversation has no title yet - update it
         try {
@@ -259,9 +344,11 @@ export async function resolveConversation(
 
   if (!topicShifted && hardPivot && !isLongGap) {
     topicShifted = true;
+    relevanceScore = 0;
     if (!classificationResult) {
       classificationResult = {
         sameTopic: false,
+        relevanceScore: 0,
         suggestedTitle: "New topic",
       };
     }
@@ -333,14 +420,33 @@ export async function resolveConversation(
     console.error("[ConvoSegmentation] Summarization failed:", err)
   );
 
-  // Create new one, chain if related
+  const relatedSet = new Set<string>([
+    ...(linkTarget?.relatedIds || []).map((id) => String(id)),
+    String(activeConvo._id),
+  ]);
+  if (linkTarget?.targetId) {
+    relatedSet.add(String(linkTarget.targetId));
+  }
+  const relatedConvoIds = Array.from(relatedSet).slice(0, 8) as Id<"conversations">[];
+
+  // Create new one, always chain linearly from the prior segment.
+  // Historical continuity links are kept in relatedConvoIds.
   const newConvoId = await convexClient.mutation(api.functions.conversations.create, {
     sessionId,
     gatewayId,
     userId,
-    previousConvoId: linkTarget?.targetId,
-    relatedConvoIds: linkTarget?.relatedIds,
-    depth: linkTarget ? linkTarget.depth + 1 : 1,
+    previousConvoId: activeConvo._id,
+    relatedConvoIds,
+    depth: (activeConvo.depth || 1) + 1,
+    relations: [
+      {
+        conversationId: activeConvo._id,
+        type: topicShifted ? "topic_shift" : "continuation",
+      },
+      ...(linkTarget?.targetId && String(linkTarget.targetId) !== String(activeConvo._id)
+        ? [{ conversationId: linkTarget.targetId, type: "historical_link" }]
+        : []),
+    ],
     ...(classificationResult?.suggestedTitle ? { title: classificationResult.suggestedTitle } : {}),
     ...(classificationResult?.newTags?.length ? { tags: classificationResult.newTags } : {}),
   });
