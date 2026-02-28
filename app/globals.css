@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@toast-ui/editor/dist/toastui-editor.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -357,4 +358,48 @@ input[type="number"] {
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Vault live markdown editor (Toast UI) */
+.vault-toast-editor .toastui-editor-defaultUI {
+  border: none;
+  background: transparent;
+}
+
+.vault-toast-editor .toastui-editor-defaultUI-toolbar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.vault-toast-editor .toastui-editor-toolbar-icons {
+  filter: invert(1) brightness(0.9) saturate(0.35);
+}
+
+.vault-toast-editor .toastui-editor-toolbar-icons:hover,
+.vault-toast-editor .toastui-editor-toolbar-group button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.vault-toast-editor .toastui-editor-md-container,
+.vault-toast-editor .toastui-editor-ww-container {
+  background: #1f2430;
+  color: #e5e7eb;
+}
+
+.vault-toast-editor .toastui-editor-contents {
+  color: #e5e7eb;
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+.vault-toast-editor .toastui-editor-contents p,
+.vault-toast-editor .toastui-editor-contents li {
+  color: #e5e7eb;
+}
+
+.vault-toast-editor .toastui-editor-contents h1,
+.vault-toast-editor .toastui-editor-contents h2,
+.vault-toast-editor .toastui-editor-contents h3,
+.vault-toast-editor .toastui-editor-contents h4 {
+  color: #f8fafc;
 }

@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
   ArrowRightLeft,
@@ -56,8 +54,6 @@ interface VaultIndexResponse {
   };
 }
 
-type ViewMode = "edit" | "preview" | "split";
-
 interface YjsParticipant {
   clientId: string;
   name: string;
@@ -98,6 +94,13 @@ interface PaletteCommand {
   shortcut?: string;
   disabled?: boolean;
   run: () => void;
+}
+
+interface ToastEditorLike {
+  getMarkdown: () => string;
+  setMarkdown: (value: string, cursorToEnd?: boolean) => void;
+  on: (eventName: "change", handler: () => void) => void;
+  destroy: () => void;
 }
 
 function buildVaultTree(notes: VaultNote[]): VaultTreeNode[] {
@@ -246,7 +249,6 @@ export default function VaultPage() {
   const [loadingNote, setLoadingNote] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>("split");
   const [participants, setParticipants] = useState<YjsParticipant[]>([]);
   const [yjsLiveMode, setYjsLiveMode] = useState(false);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
@@ -259,7 +261,9 @@ export default function VaultPage() {
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [quickSearch, setQuickSearch] = useState("");
 
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorHostRef = useRef<HTMLDivElement | null>(null);
+  const toastEditorRef = useRef<ToastEditorLike | null>(null);
+  const toastApplyingRef = useRef(false);
   const quickInputRef = useRef<HTMLInputElement | null>(null);
   const yDocRef = useRef<Y.Doc | null>(null);
   const yTextRef = useRef<Y.Text | null>(null);
@@ -272,6 +276,70 @@ export default function VaultPage() {
   const yLastTypingAtRef = useRef(0);
   const yCurrentDocPathRef = useRef<string>("");
   const ySelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+
+  const syncEditorMarkdown = useCallback((nextValue: string) => {
+    const editor = toastEditorRef.current;
+    if (!editor) return;
+    const current = editor.getMarkdown();
+    if (current === nextValue) return;
+    toastApplyingRef.current = true;
+    editor.setMarkdown(nextValue || "", false);
+    toastApplyingRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let editorInstance: ToastEditorLike | null = null;
+
+    const mountEditor = async () => {
+      if (!editorHostRef.current || toastEditorRef.current) return;
+      const mod = await import("@toast-ui/editor");
+      if (disposed || !editorHostRef.current) return;
+
+      const EditorCtor = (mod as any).Editor as new (opts: Record<string, unknown>) => ToastEditorLike;
+      editorInstance = new EditorCtor({
+        el: editorHostRef.current,
+        height: "100%",
+        initialEditType: "wysiwyg",
+        initialValue: "",
+        hideModeSwitch: true,
+        usageStatistics: false,
+        autofocus: false,
+        toolbarItems: [
+          ["heading", "bold", "italic", "strike"],
+          ["hr", "quote"],
+          ["ul", "ol", "task"],
+          ["table", "link"],
+          ["code", "codeblock"],
+        ],
+      });
+
+      editorInstance.on("change", () => {
+        const nextValue = editorInstance?.getMarkdown() || "";
+        yLastTypingAtRef.current = Date.now();
+        setContent(nextValue);
+        if (toastApplyingRef.current || yApplyingRemoteRef.current) return;
+        const yText = yTextRef.current;
+        if (yText) applyTextPatch(yText, nextValue);
+      });
+
+      toastEditorRef.current = editorInstance;
+    };
+
+    void mountEditor();
+
+    return () => {
+      disposed = true;
+      if (editorInstance) {
+        try {
+          editorInstance.destroy();
+        } catch {}
+      }
+      if (toastEditorRef.current === editorInstance) {
+        toastEditorRef.current = null;
+      }
+    };
+  }, []);
 
   const refreshIndex = useCallback(async () => {
     setLoadingIndex(true);
@@ -531,7 +599,7 @@ export default function VaultPage() {
     yPendingUpdatesRef.current = [];
 
     const stateVector = Y.encodeStateVector(yDoc);
-    const active = document.activeElement === textareaRef.current;
+    const active = !!editorHostRef.current && editorHostRef.current.contains(document.activeElement);
     const typingWindowMs = 2200;
     const isTyping = active && (Date.now() - yLastTypingAtRef.current) < typingWindowMs;
     const textValue = yText.toString();
@@ -700,6 +768,10 @@ export default function VaultPage() {
     }, 10);
     return () => window.clearTimeout(id);
   }, [quickSwitcherOpen]);
+
+  useEffect(() => {
+    syncEditorMarkdown(content);
+  }, [content, syncEditorMarkdown]);
 
   useEffect(() => {
     const leftStored = window.localStorage.getItem("vault_left_pane_width");
@@ -909,24 +981,6 @@ export default function VaultPage() {
       description: "Toggle note context pane",
       shortcut: "Ctrl/Cmd+.",
       run: () => setRightSidebarOpen((prev) => !prev),
-    },
-    {
-      id: "view-edit",
-      label: "View: Edit",
-      description: "Switch editor to edit mode",
-      run: () => setViewMode("edit"),
-    },
-    {
-      id: "view-preview",
-      label: "View: Preview",
-      description: "Switch editor to preview mode",
-      run: () => setViewMode("preview"),
-    },
-    {
-      id: "view-split",
-      label: "View: Split",
-      description: "Switch editor to split mode",
-      run: () => setViewMode("split"),
     },
     {
       id: "analyze",
@@ -1173,18 +1227,8 @@ export default function VaultPage() {
                 {selectedMeta?.vaultRelativePath || "Select a note"}
                 {isDirty ? <span className="ml-1 text-amber-300">*</span> : null}
               </div>
-              <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.03] p-1">
-                {(["edit", "preview", "split"] as ViewMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => setViewMode(mode)}
-                    className={`rounded px-2 py-1 text-xs ${
-                      viewMode === mode ? "bg-cyan-500/20 text-cyan-100" : "text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    {mode}
-                  </button>
-                ))}
+              <div className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200">
+                Live Markdown
               </div>
               <button
                 onClick={() => void saveNote()}
@@ -1235,48 +1279,10 @@ export default function VaultPage() {
             ) : loadingNote ? (
               <div className="flex-1 grid place-items-center text-sm text-zinc-500">Loading note...</div>
             ) : (
-              <div className={`flex-1 min-h-0 ${viewMode === "split" ? "grid grid-cols-1 xl:grid-cols-2" : "grid grid-cols-1"}`}>
-                {(viewMode === "edit" || viewMode === "split") && (
-                  <textarea
-                    ref={textareaRef}
-                    value={content}
-                    onChange={(e) => {
-                      const nextValue = e.target.value;
-                      ySelectionRef.current = {
-                        start: e.target.selectionStart || 0,
-                        end: e.target.selectionEnd || 0,
-                      };
-                      yLastTypingAtRef.current = Date.now();
-                      const yText = yTextRef.current;
-                      if (yText) {
-                        if (yApplyingRemoteRef.current) {
-                          setContent(nextValue);
-                          return;
-                        }
-                        applyTextPatch(yText, nextValue);
-                      } else {
-                        setContent(nextValue);
-                      }
-                    }}
-                    onSelect={(e) => {
-                      ySelectionRef.current = {
-                        start: e.currentTarget.selectionStart || 0,
-                        end: e.currentTarget.selectionEnd || 0,
-                      };
-                    }}
-                    spellCheck={false}
-                    className={`h-full w-full resize-none bg-[#20232d] p-5 text-sm leading-6 text-zinc-100 outline-none font-mono ${
-                      viewMode === "split" ? "border-r border-white/10" : ""
-                    }`}
-                  />
-                )}
-                {(viewMode === "preview" || viewMode === "split") && (
-                  <div className="h-full overflow-auto bg-[#1a1d27] p-6">
-                    <article className="prose prose-invert prose-zinc max-w-none prose-headings:tracking-tight prose-a:text-cyan-300 hover:prose-a:text-cyan-200">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-                    </article>
-                  </div>
-                )}
+              <div className="flex-1 min-h-0 bg-[#1b1f2a] p-3">
+                <div className="h-full overflow-hidden rounded-lg border border-white/10 bg-[#1f2430] shadow-inner">
+                  <div ref={editorHostRef} className="vault-toast-editor h-full w-full" />
+                </div>
               </div>
             )}
 
