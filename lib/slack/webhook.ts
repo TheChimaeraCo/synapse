@@ -146,13 +146,23 @@ async function processMessage(event: any): Promise<void> {
 
   // Resolve conversation before storing the user message
   let conversationId: Id<"conversations"> | undefined;
+  let segmentationMeta:
+    | {
+      relevanceScore: number;
+      splitThreshold: number;
+      topicShifted: boolean;
+      reason: string;
+    }
+    | undefined;
   try {
-    conversationId = await resolveConversation(
+    const resolved = await resolveConversation(
       sessionId as Id<"sessions">,
       gatewayId as Id<"gateways">,
       undefined,
       text
     );
+    conversationId = resolved.conversationId;
+    segmentationMeta = resolved.segmentation;
     console.log(`[slack] Resolved conversation: ${conversationId}`);
   } catch (err) {
     console.error("[slack] Failed to resolve conversation:", err);
@@ -167,6 +177,7 @@ async function processMessage(event: any): Promise<void> {
     content: text,
     channelMessageId: event.ts,
     conversationId,
+    ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
   });
 
   // Check budget

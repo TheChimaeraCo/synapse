@@ -66,20 +66,35 @@ async function validateAndSetup(req: NextRequest) {
 
   // Resolve conversation (segmentation)
   let conversationId: Id<"conversations"> | undefined;
+  let segmentationMeta:
+    | {
+      relevanceScore: number;
+      splitThreshold: number;
+      topicShifted: boolean;
+      reason: string;
+    }
+    | undefined;
   try {
-    conversationId = await resolveConversation(
+    const resolved = await resolveConversation(
       sessionId as Id<"sessions">,
       gatewayId as Id<"gateways">,
       undefined,
       message
     );
+    conversationId = resolved.conversationId;
+    segmentationMeta = resolved.segmentation;
     console.log(`[API Channel] Resolved conversation: ${conversationId}`);
   } catch (err) {
     console.error("[API Channel] Failed to resolve conversation:", err);
   }
 
+  const mergedMetadata =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? { ...metadata, ...(segmentationMeta ? { segmentation: segmentationMeta } : {}) }
+      : (segmentationMeta ? { source: metadata, segmentation: segmentationMeta } : metadata || undefined);
+
   const userMessageId = await convexClient.mutation(api.functions.messages.create, {
-    gatewayId, sessionId, agentId, role: "user", content: message, metadata: metadata || undefined, conversationId,
+    gatewayId, sessionId, agentId, role: "user", content: message, metadata: mergedMetadata, conversationId,
   });
 
   return { apiKey, message, stream, gatewayId, agentId, sessionId, conversationId, userMessageId };

@@ -142,7 +142,8 @@ describe("conversation segmentation e2e", () => {
   });
 
   it("creates a new conversation on first message", async () => {
-    const id = await resolveConversation("session-1" as any, "gateway-1" as any, undefined, "hello there");
+    const resolved = await resolveConversation("session-1" as any, "gateway-1" as any, undefined, "hello there");
+    const id = resolved.conversationId;
 
     expect(id).toBe("convo-1");
     expect(mocks.mutation).toHaveBeenCalledWith(
@@ -167,7 +168,8 @@ describe("conversation segmentation e2e", () => {
       newTags: ["oauth", "auth"],
     });
 
-    const id = await resolveConversation("session-1" as any, "gateway-1" as any, undefined, "what about refresh tokens?");
+    const resolved = await resolveConversation("session-1" as any, "gateway-1" as any, undefined, "what about refresh tokens?");
+    const id = resolved.conversationId;
 
     expect(id).toBe("active-1");
     expect(mocks.classifyTopic).toHaveBeenCalledTimes(1);
@@ -197,12 +199,13 @@ describe("conversation segmentation e2e", () => {
       newTags: ["food", "personal"],
     });
 
-    const newId = await resolveConversation(
+    const resolved = await resolveConversation(
       "session-1" as any,
       "gateway-1" as any,
       undefined,
       "what should I cook for a vegetarian dinner party tonight with pasta options"
     );
+    const newId = resolved.conversationId;
 
     expect(newId).toBe("convo-1");
     expect(mocks.mutation).toHaveBeenCalledWith(api.functions.conversations.close, { id: "active-1" });
@@ -221,12 +224,13 @@ describe("conversation segmentation e2e", () => {
   it("starts a new unchained conversation when user explicitly asks for one", async () => {
     state.active = newActive({ messageCount: 1, depth: 4 });
 
-    const newId = await resolveConversation(
+    const resolved = await resolveConversation(
       "session-1" as any,
       "gateway-1" as any,
       undefined,
       "new topic: let's talk about workouts"
     );
+    const newId = resolved.conversationId;
 
     expect(newId).toBe("convo-1");
     expect(mocks.classifyTopic).not.toHaveBeenCalled();
@@ -248,12 +252,13 @@ describe("conversation segmentation e2e", () => {
       summary: "We discussed OAuth token refresh flow and callback handling for API auth.",
     });
 
-    const newId = await resolveConversation(
+    const resolved = await resolveConversation(
       "session-1" as any,
       "gateway-1" as any,
       undefined,
       "continue oauth token refresh flow for callback handling"
     );
+    const newId = resolved.conversationId;
 
     expect(newId).toBe("convo-1");
     expect(mocks.classifyTopic).not.toHaveBeenCalled();
@@ -275,12 +280,13 @@ describe("conversation segmentation e2e", () => {
     });
     mocks.classifyTopic.mockResolvedValueOnce({ sameTopic: false });
 
-    const newId = await resolveConversation(
+    const resolved = await resolveConversation(
       "session-1" as any,
       "gateway-1" as any,
       undefined,
       "recommend pizza in seattle"
     );
+    const newId = resolved.conversationId;
 
     expect(newId).toBe("convo-1");
     expect(mocks.classifyTopic).toHaveBeenCalledTimes(1);
@@ -313,12 +319,13 @@ describe("conversation segmentation e2e", () => {
       newTags: ["car", "search"],
     });
 
-    const newId = await resolveConversation(
+    const resolved = await resolveConversation(
       "session-1" as any,
       "gateway-1" as any,
       undefined,
       "switch to audi lease pricing and dealership comparison for a new car this month"
     );
+    const newId = resolved.conversationId;
 
     expect(newId).toBe("convo-1");
     expect(mocks.mutation).toHaveBeenCalledWith(
@@ -348,12 +355,13 @@ describe("conversation segmentation e2e", () => {
       newTags: ["stripe"],
     });
 
-    const newId = await resolveConversation(
+    const resolved = await resolveConversation(
       "session-1" as any,
       "gateway-1" as any,
       undefined,
       "side note, I run a bowling area in an arcade and need a cleaning routine for lanes and balls"
     );
+    const newId = resolved.conversationId;
 
     expect(newId).toBe("convo-1");
     expect(mocks.mutation).toHaveBeenCalledWith(api.functions.conversations.close, { id: "active-1" });
@@ -383,12 +391,13 @@ describe("conversation segmentation e2e", () => {
       newTags: ["stripe"],
     });
 
-    const id = await resolveConversation(
+    const resolved = await resolveConversation(
       "session-1" as any,
       "gateway-1" as any,
       undefined,
       "side note: can we also cover stripe tax settings for these same accounts"
     );
+    const id = resolved.conversationId;
 
     expect(id).toBe("active-1");
     expect(mocks.mutation).toHaveBeenCalledWith(

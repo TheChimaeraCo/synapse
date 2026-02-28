@@ -163,13 +163,23 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
 
   // Resolve conversation before storing the user message
   let conversationId: Id<"conversations"> | undefined;
+  let segmentationMeta:
+    | {
+      relevanceScore: number;
+      splitThreshold: number;
+      topicShifted: boolean;
+      reason: string;
+    }
+    | undefined;
   try {
-    conversationId = await resolveConversation(
+    const resolved = await resolveConversation(
       sessionId as Id<"sessions">,
       gatewayId as Id<"gateways">,
       undefined,
       text
     );
+    conversationId = resolved.conversationId;
+    segmentationMeta = resolved.segmentation;
     console.log(`[whatsapp] Resolved conversation: ${conversationId}`);
   } catch (err) {
     console.error("[whatsapp] Failed to resolve conversation:", err);
@@ -184,6 +194,7 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     content: text,
     channelMessageId: msg.id,
     conversationId,
+    ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
   });
 
   // Check budget

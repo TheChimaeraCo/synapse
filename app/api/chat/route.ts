@@ -58,13 +58,23 @@ export async function POST(req: NextRequest) {
 
     // Resolve conversation
     let conversationId: Id<"conversations"> | undefined;
+    let segmentationMeta:
+      | {
+        relevanceScore: number;
+        splitThreshold: number;
+        topicShifted: boolean;
+        reason: string;
+      }
+      | undefined;
     try {
-      conversationId = await resolveConversation(
+      const resolved = await resolveConversation(
         sessionId as Id<"sessions">,
         gatewayId as Id<"gateways">,
         userId ? (userId as Id<"authUsers">) : undefined,
         content.trim()
       );
+      conversationId = resolved.conversationId;
+      segmentationMeta = resolved.segmentation;
     } catch (err) {
       console.error("[ConvoSegmentation] Non-stream route: failed to resolve conversation:", err);
     }
@@ -76,6 +86,7 @@ export async function POST(req: NextRequest) {
       role: "user",
       content: content.trim(),
       conversationId,
+      ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
     });
 
     const budgetCheck = await convexClient.query(api.functions.usage.checkBudget, {

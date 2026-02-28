@@ -195,6 +195,24 @@ type ConversationLinkTarget = {
   relatedIds: Id<"conversations">[];
 };
 
+type SegmentationReason =
+  | "initial"
+  | "same_topic"
+  | "classifier"
+  | "hard_pivot"
+  | "explicit_new"
+  | "long_gap";
+
+export type ConversationResolution = {
+  conversationId: Id<"conversations">;
+  segmentation: {
+    relevanceScore: number; // 1-100
+    splitThreshold: number; // 1-100
+    topicShifted: boolean;
+    reason: SegmentationReason;
+  };
+};
+
 async function findHistoricalContinuation(
   gatewayId: Id<"gateways">,
   _userId: Id<"authUsers"> | undefined,
@@ -243,7 +261,7 @@ export async function resolveConversation(
   gatewayId: Id<"gateways">,
   userId: Id<"authUsers"> | undefined,
   newMessage: string
-): Promise<Id<"conversations">> {
+): Promise<ConversationResolution> {
   const activeConvo = await convexClient.query(api.functions.conversations.getActive, { sessionId });
   const wantsNew = detectNewConversationIntent(newMessage);
   const resumeIntent = detectResumeConversationIntent(newMessage);
@@ -260,7 +278,7 @@ export async function resolveConversation(
         );
 
     // First message for this session - optionally resume a related closed conversation chain
-    return await convexClient.mutation(api.functions.conversations.create, {
+    const conversationId = await convexClient.mutation(api.functions.conversations.create, {
       sessionId,
       gatewayId,
       userId,
@@ -268,6 +286,15 @@ export async function resolveConversation(
       relatedConvoIds: historicalLink?.relatedIds,
       depth: historicalLink ? historicalLink.depth + 1 : 1,
     });
+    return {
+      conversationId,
+      segmentation: {
+        relevanceScore: 100,
+        splitThreshold,
+        topicShifted: false,
+        reason: "initial",
+      },
+    };
   }
 
   // Check time gap
@@ -386,7 +413,15 @@ export async function resolveConversation(
   // Under timeout AND no explicit intent AND no topic shift - same conversation
   if (!isLongGap && !wantsNew && !topicShifted) {
     await convexClient.mutation(api.functions.conversations.updateMessageCount, { id: activeConvo._id });
-    return activeConvo._id;
+    return {
+      conversationId: activeConvo._id,
+      segmentation: {
+        relevanceScore: clampPercent(relevanceScore, 100),
+        splitThreshold,
+        topicShifted: false,
+        reason: "same_topic",
+      },
+    };
   }
 
   let linkTarget: ConversationLinkTarget | null = null;
@@ -428,6 +463,14 @@ export async function resolveConversation(
     relatedSet.add(String(linkTarget.targetId));
   }
   const relatedConvoIds = Array.from(relatedSet).slice(0, 8) as Id<"conversations">[];
+  const splitReason: SegmentationReason = wantsNew
+    ? "explicit_new"
+    : hardPivot
+      ? "hard_pivot"
+      : topicShifted
+        ? "classifier"
+        : "long_gap";
+  const outputScore = wantsNew ? Math.min(clampPercent(relevanceScore, 100), 5) : clampPercent(relevanceScore, 100);
 
   // Create new one, always chain linearly from the prior segment.
   // Historical continuity links are kept in relatedConvoIds.
@@ -451,7 +494,15 @@ export async function resolveConversation(
     ...(classificationResult?.newTags?.length ? { tags: classificationResult.newTags } : {}),
   });
 
-  return newConvoId;
+  return {
+    conversationId: newConvoId,
+    segmentation: {
+      relevanceScore: outputScore,
+      splitThreshold,
+      topicShifted: true,
+      reason: splitReason,
+    },
+  };
 }
 
 /**

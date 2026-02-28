@@ -80,6 +80,7 @@ export const getBySeqRange = query({
       cost: m.cost,
       model: m.model,
       latencyMs: m.latencyMs,
+      metadata: m.metadata,
       _creationTime: m._creationTime,
     }));
   },
@@ -105,6 +106,7 @@ export const listByConversation = query({
       role: m.role,
       content: m.content,
       seq: m.seq,
+      metadata: m.metadata,
       _creationTime: m._creationTime,
     }));
   },
@@ -135,6 +137,7 @@ export const list = query({
         model: m.model,
         latencyMs: m.latencyMs,
         conversationId: m.conversationId,
+        metadata: m.metadata,
         _creationTime: m._creationTime,
       })),
       cursor: result.continueCursor,
@@ -165,6 +168,7 @@ export const getRecent = query({
       model: m.model,
       latencyMs: m.latencyMs,
       conversationId: m.conversationId,
+      metadata: m.metadata,
       _creationTime: m._creationTime,
     }));
   },

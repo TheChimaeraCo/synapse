@@ -375,6 +375,15 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isFailed = message.content?.startsWith("Error:");
+  const segmentation = (message.metadata as any)?.segmentation as
+    | { relevanceScore?: number; splitThreshold?: number; topicShifted?: boolean; reason?: string }
+    | undefined;
+  const relevanceScore = typeof segmentation?.relevanceScore === "number"
+    ? Math.max(1, Math.min(100, Math.round(segmentation.relevanceScore)))
+    : null;
+  const splitThreshold = typeof segmentation?.splitThreshold === "number"
+    ? Math.max(1, Math.min(100, Math.round(segmentation.splitThreshold)))
+    : null;
   const [reactions, setReactions] = useState<ReactionCount[]>([]);
   const [copiedMsg, setCopiedMsg] = useState(false);
 
@@ -518,6 +527,26 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
             {copiedMsg ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
           </button>
           <span>{formatRelativeTime(message._creationTime)}</span>
+          {isUser && relevanceScore != null && (
+            <>
+              <span className="text-zinc-600">·</span>
+              <span
+                className={cn(
+                  "font-mono",
+                  splitThreshold != null && relevanceScore < splitThreshold
+                    ? "text-amber-300/90"
+                    : "text-zinc-400"
+                )}
+                title={
+                  splitThreshold != null
+                    ? `Relevance ${relevanceScore}% (split threshold ${splitThreshold}%)`
+                    : `Relevance ${relevanceScore}%`
+                }
+              >
+                rel {relevanceScore}%
+              </span>
+            </>
+          )}
           {!isUser && (message as any).model && (
             <>
               <span className="text-zinc-600">·</span>

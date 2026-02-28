@@ -168,13 +168,23 @@ export async function POST(req: NextRequest) {
 
   // Resolve conversation (creates or continues based on topic/timeout)
   let conversationId: Id<"conversations"> | undefined;
+  let segmentationMeta:
+    | {
+      relevanceScore: number;
+      splitThreshold: number;
+      topicShifted: boolean;
+      reason: string;
+    }
+    | undefined;
   try {
-    conversationId = await resolveConversation(
+    const resolved = await resolveConversation(
       sessionId as Id<"sessions">,
       gatewayId as Id<"gateways">,
       userId ? (userId as Id<"authUsers">) : undefined,
       sanitizedContent
     );
+    conversationId = resolved.conversationId;
+    segmentationMeta = resolved.segmentation;
     console.log(`[ConvoSegmentation] Resolved conversation: ${conversationId}`);
   } catch (err) {
     console.error("[ConvoSegmentation] Failed to resolve conversation, continuing without:", err);
@@ -188,6 +198,7 @@ export async function POST(req: NextRequest) {
     role: "user",
     content: sanitizedContent,
     conversationId,
+    ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
   });
 
   // Budget check

@@ -200,14 +200,24 @@ export function createBot(config: BotConfig): Bot {
 
       // Resolve conversation (segmentation)
       let conversationId: Id<"conversations"> | undefined;
+      let segmentationMeta:
+        | {
+          relevanceScore: number;
+          splitThreshold: number;
+          topicShifted: boolean;
+          reason: string;
+        }
+        | undefined;
       try {
         const { resolveConversation } = await import("@/lib/conversationManager");
-        conversationId = await resolveConversation(
+        const resolved = await resolveConversation(
           sessionId as Id<"sessions">,
           gatewayId as Id<"gateways">,
           undefined,
           text
         );
+        conversationId = resolved.conversationId;
+        segmentationMeta = resolved.segmentation;
         console.log(`[telegram] Resolved conversation: ${conversationId}`);
       } catch (err) {
         console.error("[telegram] Failed to resolve conversation:", err);
@@ -245,6 +255,7 @@ export function createBot(config: BotConfig): Bot {
         content: messageContent,
         channelMessageId: String(msg.message_id),
         conversationId,
+        ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
       });
 
       // Check budget

@@ -117,14 +117,24 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
 
       // Resolve conversation (segmentation)
       let conversationId: Id<"conversations"> | undefined;
+      let segmentationMeta:
+        | {
+          relevanceScore: number;
+          splitThreshold: number;
+          topicShifted: boolean;
+          reason: string;
+        }
+        | undefined;
       try {
         const { resolveConversation } = await import("@/lib/conversationManager");
-        conversationId = await resolveConversation(
+        const resolved = await resolveConversation(
           sessionId as Id<"sessions">,
           gatewayId as Id<"gateways">,
           undefined,
           text
         );
+        conversationId = resolved.conversationId;
+        segmentationMeta = resolved.segmentation;
         console.log(`[discord] Resolved conversation: ${conversationId}`);
       } catch (err) {
         console.error("[discord] Failed to resolve conversation:", err);
@@ -139,6 +149,7 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         content: text,
         channelMessageId: msg.id,
         conversationId,
+        ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
       });
 
       // Check budget
