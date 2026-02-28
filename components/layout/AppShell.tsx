@@ -101,7 +101,7 @@ export function AppShell({
   }, [chromeVisible]);
 
   return (
-    <div className="relative flex h-screen overflow-hidden">
+    <div className="relative flex h-[100dvh] overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <div className="pointer-events-none absolute inset-0 -z-10">
         <div className="absolute -top-32 right-[-10rem] h-[28rem] w-[28rem] rounded-full bg-cyan-400/12 blur-3xl" />
         <div className="absolute -bottom-40 left-[-14rem] h-[30rem] w-[30rem] rounded-full bg-emerald-400/10 blur-3xl" />
