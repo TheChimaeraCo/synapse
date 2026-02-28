@@ -281,6 +281,7 @@ export default function VaultPage() {
   const yLastTypingAtRef = useRef(0);
   const yCurrentDocPathRef = useRef<string>("");
   const ySelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+  const latestContentRef = useRef("");
 
   const syncEditorMarkdown = useCallback((nextValue: string) => {
     const editor = toastEditorRef.current;
@@ -303,7 +304,6 @@ export default function VaultPage() {
   useEffect(() => {
     let disposed = false;
     let editorInstance: ToastEditorLike | null = null;
-    let fallbackTimer: number | null = null;
 
     const mountEditor = async () => {
       if (!editorHostRef.current || toastEditorRef.current) return;
@@ -336,6 +336,7 @@ export default function VaultPage() {
           ],
         });
         editorInstance = instance;
+        instance.setMarkdown(latestContentRef.current || "", false);
 
         instance.on("change", () => {
           const nextValue = instance.getMarkdown() || "";
@@ -356,17 +357,10 @@ export default function VaultPage() {
 
     setEditorRuntime("loading");
     setEditorRuntimeMessage(null);
-    fallbackTimer = window.setTimeout(() => {
-      if (!toastEditorRef.current) {
-        setEditorRuntime("fallback");
-        setEditorRuntimeMessage("Live editor timed out, using fallback editor");
-      }
-    }, 2000);
     void mountEditor();
 
     return () => {
       disposed = true;
-      if (fallbackTimer) window.clearTimeout(fallbackTimer);
       if (editorInstance) {
         try {
           editorInstance.destroy();
@@ -810,6 +804,7 @@ export default function VaultPage() {
   }, [quickSwitcherOpen]);
 
   useEffect(() => {
+    latestContentRef.current = content;
     syncEditorMarkdown(content);
   }, [content, syncEditorMarkdown]);
 
@@ -836,6 +831,8 @@ export default function VaultPage() {
 
   useEffect(() => {
     if (!resizingPane) return;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
     const onMouseMove = (event: MouseEvent) => {
       const vw = window.innerWidth || 1440;
       const min = 240;
@@ -851,6 +848,8 @@ export default function VaultPage() {
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
     return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
@@ -1194,7 +1193,7 @@ export default function VaultPage() {
             <div
               role="separator"
               aria-label="Resize explorer"
-              className="hidden md:block w-1.5 cursor-col-resize bg-transparent hover:bg-cyan-400/30 transition-colors"
+              className="block w-2 shrink-0 cursor-col-resize bg-cyan-400/20 hover:bg-cyan-400/40 active:bg-cyan-400/50 transition-colors"
               onMouseDown={(event) => {
                 event.preventDefault();
                 setResizingPane("left");
@@ -1360,7 +1359,7 @@ export default function VaultPage() {
             <div
               role="separator"
               aria-label="Resize context"
-              className="hidden md:block w-1.5 cursor-col-resize bg-transparent hover:bg-cyan-400/30 transition-colors"
+              className="block w-2 shrink-0 cursor-col-resize bg-cyan-400/20 hover:bg-cyan-400/40 active:bg-cyan-400/50 transition-colors"
               onMouseDown={(event) => {
                 event.preventDefault();
                 setResizingPane("right");
