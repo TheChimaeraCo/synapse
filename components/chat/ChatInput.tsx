@@ -1466,7 +1466,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             };
 
   return (
-    <div className="border-t border-white/[0.06] p-2 sm:p-5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-white/[0.02] backdrop-blur-2xl">
+    <div className="border-t border-white/[0.06] p-2 sm:px-5 sm:pt-4 sm:pb-3 bg-white/[0.02] backdrop-blur-2xl">
       <div className="relative">
         {showSuggestions && (
           <div className="absolute bottom-full left-0 mb-2 w-80 rounded-xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-3xl shadow-[0_16px_64px_rgba(0,0,0,0.4)] overflow-hidden z-10">
