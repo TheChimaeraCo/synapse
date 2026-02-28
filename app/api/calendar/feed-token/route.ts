@@ -5,8 +5,32 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
+function pickForwarded(headersValue: string | null): string | null {
+  if (!headersValue) return null;
+  return headersValue.split(",")[0]?.trim() || null;
+}
+
+function derivePublicOrigin(req: NextRequest): string {
+  const xfProto = pickForwarded(req.headers.get("x-forwarded-proto"));
+  const xfHost = pickForwarded(req.headers.get("x-forwarded-host"));
+  if (xfProto && xfHost) {
+    return `${xfProto}://${xfHost}`;
+  }
+
+  const origin = req.headers.get("origin");
+  if (origin) return origin;
+
+  const host = req.headers.get("host");
+  if (host) {
+    const proto = req.nextUrl.protocol?.replace(":", "") || "https";
+    return `${proto}://${host}`;
+  }
+
+  return req.nextUrl.origin;
+}
+
 function buildFeedUrl(req: NextRequest, slug: string, token: string): string {
-  const origin = req.nextUrl.origin;
+  const origin = derivePublicOrigin(req);
   return `${origin}/api/calendar/feed/${encodeURIComponent(slug)}/${encodeURIComponent(token)}`;
 }
 

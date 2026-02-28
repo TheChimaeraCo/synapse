@@ -13,6 +13,22 @@ interface CalendarEvent {
   endAt: number;
 }
 
+function normalizeFeedUrl(input: string): string {
+  if (!input) return "";
+  try {
+    const url = new URL(input);
+    if (
+      typeof window !== "undefined" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "0.0.0.0")
+    ) {
+      return `${window.location.origin}${url.pathname}${url.search}${url.hash}`;
+    }
+    return url.toString();
+  } catch {
+    return input;
+  }
+}
+
 export function CalendarTab() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [feedUrl, setFeedUrl] = useState("");
@@ -31,7 +47,7 @@ export function CalendarTab() {
       }
       if (feedRes.ok) {
         const data = await feedRes.json();
-        setFeedUrl(data.feedUrl || "");
+        setFeedUrl(normalizeFeedUrl(data.feedUrl || ""));
       }
     } catch {
       toast.error("Failed to load calendar");
@@ -49,7 +65,7 @@ export function CalendarTab() {
       const res = await gatewayFetch("/api/calendar/feed-token", { method: "POST" });
       if (!res.ok) throw new Error("Failed");
       const data = await res.json();
-      setFeedUrl(data.feedUrl || "");
+      setFeedUrl(normalizeFeedUrl(data.feedUrl || ""));
       toast.success("Calendar feed URL rotated");
     } catch {
       toast.error("Failed to rotate feed URL");
