@@ -4,7 +4,7 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, MicOff, Bot, ChevronDown, Clock, Volume2 } from "lucide-react";
+import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, Bot, ChevronDown, Clock, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { useSession } from "next-auth/react";
 import { getCommandSuggestions } from "@/lib/slashCommands";
@@ -93,6 +93,26 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const waitForChatIdleRef = useRef<(timeoutMs?: number) => Promise<boolean>>(async () => true);
 
   const isDisabled = sending || chatStreaming;
+  const COMPOSER_MIN_HEIGHT = 68;
+  const COMPOSER_MAX_HEIGHT = 224;
+
+  const focusComposer = useCallback((delayMs = 0) => {
+    const run = () => textareaRef.current?.focus({ preventScroll: true });
+    if (delayMs > 0) {
+      window.setTimeout(run, delayMs);
+      return;
+    }
+    requestAnimationFrame(run);
+  }, []);
+
+  const resizeComposer = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
+  }, []);
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
@@ -138,8 +158,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   }, []);
 
   useEffect(() => {
-    textareaRef.current?.focus();
-  }, [sessionId]);
+    focusComposer(120);
+  }, [focusComposer, sessionId]);
+
+  useEffect(() => {
+    resizeComposer();
+  }, [content, resizeComposer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,12 +245,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       const detail = (e as CustomEvent).detail;
       if (detail?.ref) {
         setContent(prev => prev ? `${detail.ref}\n${prev}` : detail.ref);
-        setTimeout(() => textareaRef.current?.focus(), 100);
+        focusComposer(100);
       }
     };
     window.addEventListener("synapse:insert-file", handler);
     return () => window.removeEventListener("synapse:insert-file", handler);
-  }, []);
+  }, [focusComposer]);
 
   // Listen for cross-channel quote injection
   useEffect(() => {
@@ -235,12 +259,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       if (detail?.text && detail?.sourceChannel) {
         const quote = `> From #${detail.sourceChannel}:\n> ${detail.text.split("\n").join("\n> ")}\n\n`;
         setContent(quote);
-        setTimeout(() => textareaRef.current?.focus(), 100);
+        focusComposer(100);
       }
     };
     window.addEventListener("synapse:inject-quote", handler);
     return () => window.removeEventListener("synapse:inject-quote", handler);
-  }, []);
+  }, [focusComposer]);
 
   // Consume one-time draft text set by other pages (for example Vault -> Analyze with Agent)
   useEffect(() => {
@@ -275,8 +299,8 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     const hasArgs = suggestion.usage.includes("<");
     setContent(`/${suggestion.name}${hasArgs ? " " : ""}`);
     setShowSuggestions(false);
-    textareaRef.current?.focus();
-  }, []);
+    focusComposer();
+  }, [focusComposer]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -381,9 +405,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       setContent(trimmed);
     } finally {
       setSending(false);
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-      });
+      focusComposer();
     }
   };
 
@@ -397,6 +419,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       }
     })();
   };
+
+  const handleComposerClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest("button, input, textarea, a, select, [role='button']")) return;
+    focusComposer();
+  }, [focusComposer]);
 
   const sendTextDirect = useCallback(async (text: string) => {
     const sendMessage = (window as any).__synapse_chat?.sendMessage;
@@ -1466,7 +1495,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             };
 
   return (
-    <div className="border-t border-white/[0.06] p-2 sm:px-5 sm:pt-4 sm:pb-3 bg-white/[0.02] backdrop-blur-2xl">
+    <div
+      className="border-t border-white/[0.06] p-2 sm:px-5 sm:pt-4 sm:pb-3 bg-white/[0.02] backdrop-blur-2xl"
+      onClick={handleComposerClick}
+    >
       <div className="relative">
         {showSuggestions && (
           <div className="absolute bottom-full left-0 mb-2 w-80 rounded-xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-3xl shadow-[0_16px_64px_rgba(0,0,0,0.4)] overflow-hidden z-10">
@@ -1588,22 +1620,6 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           >
             {voiceMode ? <Volume2 className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={`shrink-0 self-end min-w-[44px] min-h-[44px] hidden sm:inline-flex ${recording ? "text-red-400 animate-pulse" : "text-zinc-400 hover:text-zinc-200"}`}
-            onMouseDown={() => { void startRecording(voiceMode || chatStreaming); }}
-            onMouseUp={stopRecording}
-            onMouseLeave={() => recording && stopRecording()}
-            onTouchStart={() => { void startRecording(voiceMode || chatStreaming); }}
-            onTouchEnd={stopRecording}
-            disabled={transcribing || uploading}
-            aria-label={recording ? "Stop recording" : "Hold to record voice"}
-            title={chatStreaming ? "Hold to interrupt and speak" : "Hold to record voice"}
-          >
-            {transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> : recording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-          </Button>
           <div className="relative shrink-0 self-end hidden sm:block">
             <Button
               type="button"
@@ -1639,8 +1655,8 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder="Type a message..."
-            className="min-h-[44px] max-h-32 resize-none bg-card text-base sm:text-sm"
-            rows={1}
+            className="min-h-[68px] max-h-56 resize-none bg-card text-base sm:text-sm leading-relaxed"
+            rows={2}
           />
           {chatStreaming ? (
             <Button
