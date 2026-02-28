@@ -278,6 +278,7 @@ export default function VaultPage() {
   const [content, setContent] = useState("");
   const [originalContent, setOriginalContent] = useState("");
   const [loadingNote, setLoadingNote] = useState(false);
+  const [loadedPath, setLoadedPath] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [participants, setParticipants] = useState<YjsParticipant[]>([]);
@@ -312,6 +313,7 @@ export default function VaultPage() {
   const yCurrentDocPathRef = useRef<string>("");
   const ySelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
   const latestContentRef = useRef("");
+  const openRequestIdRef = useRef(0);
 
   const syncEditorMarkdown = useCallback((nextValue: string) => {
     const editor = toastEditorRef.current;
@@ -414,6 +416,8 @@ export default function VaultPage() {
 
   const openNote = useCallback(async (path: string) => {
     setSelectedPath(path);
+    setLoadedPath(null);
+    const requestId = ++openRequestIdRef.current;
     setLoadingNote(true);
     try {
       const res = await gatewayFetch("/api/files/action", {
@@ -423,11 +427,16 @@ export default function VaultPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to open note");
+      if (requestId !== openRequestIdRef.current) return;
       setContent(data.content || "");
       setOriginalContent(data.content || "");
+      setLoadedPath(path);
     } catch (err: any) {
+      if (requestId !== openRequestIdRef.current) return;
       toast.error(err?.message || "Failed to open note");
+      setLoadedPath(null);
     } finally {
+      if (requestId !== openRequestIdRef.current) return;
       setLoadingNote(false);
     }
   }, []);
@@ -779,11 +788,11 @@ export default function VaultPage() {
   }, [openNote, selectedPath]);
 
   useEffect(() => {
-    if (!selectedPath || loadingNote) return;
+    if (!selectedPath || loadingNote || loadedPath !== selectedPath) return;
     const docPath = resolveDocPath();
     if (!docPath) return;
     if (yCurrentDocPathRef.current === docPath) return;
-    const baseline = originalContent || content;
+    const baseline = originalContent;
     void startYjsForCurrentNote(baseline);
     return () => {
       void syncYjsOnce({ offline: true }).catch(() => {});
@@ -791,6 +800,7 @@ export default function VaultPage() {
     };
   }, [
     destroyYjsDoc,
+    loadedPath,
     loadingNote,
     originalContent,
     resolveDocPath,
