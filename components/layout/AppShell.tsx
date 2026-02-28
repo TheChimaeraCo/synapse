@@ -96,6 +96,10 @@ export function AppShell({
 
   const chromeVisible = !immersive || !chromeHidden;
 
+  useEffect(() => {
+    if (!chromeVisible) setSidebarOpen(false);
+  }, [chromeVisible]);
+
   return (
     <div className="relative flex h-screen overflow-hidden">
       <div className="pointer-events-none absolute inset-0 -z-10">
@@ -110,51 +114,47 @@ export function AppShell({
         />
       )}
 
+      {/* Sidebar */}
       {chromeVisible ? (
-        <>
-          {/* Sidebar */}
-          <aside
-            className={`fixed inset-y-0 left-0 z-50 w-[296px] transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 ${
-              sidebarOpen ? "translate-x-0" : "-translate-x-full"
-            }`}
-            aria-label="Main navigation"
-          >
-            <Sidebar onClose={() => setSidebarOpen(false)} />
-          </aside>
+        <aside
+          className={`fixed inset-y-0 left-0 z-50 w-[296px] transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 ${
+            sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+          aria-label="Main navigation"
+        >
+          <Sidebar onClose={() => setSidebarOpen(false)} />
+        </aside>
+      ) : null}
 
-          {/* Main content */}
-          <div className="flex flex-1 flex-col overflow-hidden bg-transparent">
-            <Header title={title}>
-              {immersive ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="hidden lg:inline-flex"
-                  onClick={() => setChromeHidden(true)}
-                  aria-label="Hide app chrome"
-                  title="Hide app chrome"
-                >
-                  <PanelLeftClose className="h-5 w-5" />
-                </Button>
-              ) : null}
+      {/* Main content */}
+      <div className="flex flex-1 flex-col overflow-hidden bg-transparent">
+        {chromeVisible ? (
+          <Header title={title}>
+            {immersive ? (
               <Button
                 variant="ghost"
                 size="icon"
-                className="lg:hidden"
-                onClick={() => setSidebarOpen(true)}
-                aria-label="Open sidebar"
+                className="hidden lg:inline-flex"
+                onClick={() => setChromeHidden(true)}
+                aria-label="Hide app chrome"
+                title="Hide app chrome"
               >
-                <Menu className="h-5 w-5" />
+                <PanelLeftClose className="h-5 w-5" />
               </Button>
-            </Header>
-            <main className="flex-1 overflow-hidden">{children}</main>
-          </div>
-        </>
-      ) : (
-        <div className="flex flex-1 flex-col overflow-hidden bg-transparent">
-          <main className="flex-1 overflow-hidden">{children}</main>
-        </div>
-      )}
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="lg:hidden"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open sidebar"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+          </Header>
+        ) : null}
+        <main className="flex-1 overflow-hidden">{children}</main>
+      </div>
 
       {immersive ? (
         <button
