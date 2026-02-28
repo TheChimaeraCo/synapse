@@ -31,6 +31,10 @@ vi.mock("@/convex/_generated/api", () => ({
       config: {
         get: "config.get",
       },
+      sessions: {
+        get: "sessions.get",
+        updateMeta: "sessions.updateMeta",
+      },
       conversations: {
         getActive: "conversations.getActive",
         findRelated: "conversations.findRelated",
@@ -64,6 +68,7 @@ type MockState = {
   recentMessages: Array<{ role: string; content: string }>;
   related: Array<{ _id: string; depth: number; title?: string; summary?: string; tags?: string[]; topics?: string[] }>;
   config: Record<string, string>;
+  sessionMeta: Record<string, any>;
   nextId: number;
 };
 
@@ -82,6 +87,9 @@ function newActive(overrides: Partial<MockConversation> = {}): MockConversation 
 
 function wireConvexMocks() {
   mocks.query.mockImplementation(async (fn: any, args: any) => {
+    if (fn === (api.functions.sessions.get as any)) {
+      return { _id: args?.id || "session-1", meta: state.sessionMeta };
+    }
     if (fn === (api.functions.conversations.getActive as any)) return state.active;
     if (fn === (api.functions.messages.listByConversation as any)) return state.recentMessages;
     if (fn === (api.functions.conversations.findRelated as any)) return state.related;
@@ -96,6 +104,10 @@ function wireConvexMocks() {
   });
 
   mocks.mutation.mockImplementation(async (fn: any, args: Record<string, any>) => {
+    if (fn === (api.functions.sessions.updateMeta as any)) {
+      state.sessionMeta = { ...state.sessionMeta, ...(args.meta || {}) };
+      return null;
+    }
     if (fn === (api.functions.conversations.create as any)) {
       const id = `convo-${state.nextId++}`;
       state.active = {
@@ -143,8 +155,10 @@ describe("conversation segmentation e2e", () => {
       related: [],
       config: {
         "session.segmentation_async": "false",
+        "session.segmentation_pending_confirm": "false",
         "session.conversation_split_threshold": "28",
       },
+      sessionMeta: {},
       nextId: 1,
     };
 
@@ -390,6 +404,55 @@ describe("conversation segmentation e2e", () => {
         depth: 3,
       })
     );
+  });
+
+  it("requires two consecutive low-relevance turns before splitting when pending confirmation is enabled", async () => {
+    state.config["session.segmentation_pending_confirm"] = "true";
+    const gateway = "gateway-pending";
+    state.active = newActive({
+      messageCount: 5,
+      depth: 2,
+      title: "Stripe Connect setup",
+      tags: ["stripe", "billing"],
+      summary: "Connect onboarding and account routing",
+    });
+    state.recentMessages = [
+      { role: "user", content: "Can I run multiple client businesses in one Stripe setup?" },
+      { role: "assistant", content: "Yes, use Connect accounts and org controls." },
+    ];
+
+    mocks.classifyTopic.mockResolvedValueOnce({
+      sameTopic: false,
+      suggestedTitle: "Bowling maintenance",
+      newTags: ["bowling"],
+    });
+
+    const first = await resolveConversation(
+      "session-1" as any,
+      gateway as any,
+      undefined,
+      "how should I clean 72 bowling balls and lanes efficiently"
+    );
+
+    expect(first.conversationId).toBe("active-1");
+    expect((state.sessionMeta as any).pendingSplit).toBeTruthy();
+
+    mocks.classifyTopic.mockResolvedValueOnce({
+      sameTopic: false,
+      suggestedTitle: "Bowling maintenance",
+      newTags: ["bowling", "operations"],
+    });
+
+    const second = await resolveConversation(
+      "session-1" as any,
+      gateway as any,
+      undefined,
+      "what rotation schedule should we use weekly for lane and ball cleaning"
+    );
+
+    expect(second.conversationId).toBe("convo-1");
+    expect(second.segmentation.reason).toBe("pending_confirmed");
+    expect((state.sessionMeta as any).pendingSplit).toBeNull();
   });
 
   it("does not force split on side-note phrasing when topic overlap remains strong", async () => {

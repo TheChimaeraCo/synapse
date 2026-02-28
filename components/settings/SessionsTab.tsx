@@ -76,6 +76,11 @@ export function SessionsTab() {
             onChange={(v) => set("segmentation_async", v ? "true" : "false")}
             label="Async segmentation/tagging worker (faster responses)"
           />
+          <Toggle
+            checked={get("segmentation_pending_confirm", "true") === "true"}
+            onChange={(v) => set("segmentation_pending_confirm", v ? "true" : "false")}
+            label="Require two low-relevance turns before splitting"
+          />
           <div>
             <label className="text-sm text-zinc-400 mb-1 block">
               New Conversation Trigger Threshold (1-100)

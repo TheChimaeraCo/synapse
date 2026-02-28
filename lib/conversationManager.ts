@@ -12,6 +12,9 @@ const DEFAULT_SPLIT_RELEVANCE_THRESHOLD = 28; // 1-100, lower = harder to split
 const QUICK_TANGENT_MAX_WORDS = 12;
 const SPLIT_THRESHOLD_CACHE_TTL_MS = 60_000;
 const SEGMENTATION_ASYNC_CACHE_TTL_MS = 60_000;
+const SEGMENTATION_PENDING_CACHE_TTL_MS = 60_000;
+const PENDING_SPLIT_TTL_MS = 30 * 60 * 1000;
+const PENDING_CLEAR_MARGIN = 10;
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "that", "this", "from", "about", "have", "has", "had", "will", "would",
   "could", "should", "your", "you", "our", "their", "they", "them", "what", "when", "where", "which",
@@ -19,6 +22,7 @@ const STOPWORDS = new Set([
 ]);
 const splitThresholdCache = new Map<string, { value: number; expiresAt: number }>();
 const segmentationAsyncCache = new Map<string, { value: boolean; expiresAt: number }>();
+const segmentationPendingCache = new Map<string, { value: boolean; expiresAt: number }>();
 
 function clampPercent(value: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
@@ -211,6 +215,41 @@ async function getSegmentationAsyncEnabled(gatewayId: Id<"gateways">): Promise<b
   return enabled;
 }
 
+async function getSegmentationPendingConfirmEnabled(gatewayId: Id<"gateways">): Promise<boolean> {
+  const cacheKey = String(gatewayId);
+  const cached = segmentationPendingCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  let enabled = true;
+  try {
+    const inherited = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+      gatewayId,
+      key: "session.segmentation_pending_confirm",
+    });
+    if (inherited?.value != null) {
+      enabled = String(inherited.value).toLowerCase() !== "false";
+    }
+  } catch {
+    try {
+      const legacy = await convexClient.query(api.functions.config.get, {
+        key: "session.segmentation_pending_confirm",
+      });
+      if (legacy != null) {
+        enabled = String(legacy).toLowerCase() !== "false";
+      }
+    } catch {
+      // Ignore and use default.
+    }
+  }
+
+  segmentationPendingCache.set(cacheKey, {
+    value: enabled,
+    expiresAt: now + SEGMENTATION_PENDING_CACHE_TTL_MS,
+  });
+  return enabled;
+}
+
 function detectResumeConversationIntent(message: string): boolean {
   const lower = message.toLowerCase().trim();
   const patterns = [
@@ -236,6 +275,7 @@ type SegmentationReason =
   | "initial"
   | "same_topic"
   | "classifier"
+  | "pending_confirmed"
   | "hard_pivot"
   | "explicit_new"
   | "long_gap";
@@ -249,6 +289,49 @@ export type ConversationResolution = {
     reason: SegmentationReason;
   };
 };
+
+type PendingSplitCandidate = {
+  conversationId: Id<"conversations">;
+  createdAt: number;
+  lastScore: number;
+  splitThreshold: number;
+  suggestedTitle?: string;
+  newTags?: string[];
+};
+
+function normalizePendingCandidate(
+  raw: any,
+  activeConvoId: Id<"conversations">,
+  now: number
+): { candidate: PendingSplitCandidate | null; shouldClear: boolean } {
+  if (!raw || typeof raw !== "object") return { candidate: null, shouldClear: false };
+  const conversationId = raw.conversationId as Id<"conversations"> | undefined;
+  const createdAt = Number(raw.createdAt);
+  const lastScore = Number(raw.lastScore);
+  const splitThreshold = Number(raw.splitThreshold);
+  if (!conversationId || !Number.isFinite(createdAt) || !Number.isFinite(lastScore) || !Number.isFinite(splitThreshold)) {
+    return { candidate: null, shouldClear: true };
+  }
+  if (String(conversationId) !== String(activeConvoId)) {
+    return { candidate: null, shouldClear: true };
+  }
+  if (now - createdAt > PENDING_SPLIT_TTL_MS) {
+    return { candidate: null, shouldClear: true };
+  }
+  return {
+    candidate: {
+      conversationId,
+      createdAt,
+      lastScore: clampPercent(lastScore, 20),
+      splitThreshold: clampPercent(splitThreshold, DEFAULT_SPLIT_RELEVANCE_THRESHOLD),
+      ...(typeof raw.suggestedTitle === "string" && raw.suggestedTitle.trim()
+        ? { suggestedTitle: raw.suggestedTitle.trim() }
+        : {}),
+      ...(Array.isArray(raw.newTags) ? { newTags: raw.newTags.slice(0, 8).map((t: any) => String(t)) } : {}),
+    },
+    shouldClear: false,
+  };
+}
 
 async function findHistoricalContinuation(
   gatewayId: Id<"gateways">,
@@ -299,13 +382,27 @@ export async function resolveConversation(
   userId: Id<"authUsers"> | undefined,
   newMessage: string
 ): Promise<ConversationResolution> {
+  const now = Date.now();
+  const sessionDoc = await convexClient.query(api.functions.sessions.get, { id: sessionId });
   const activeConvo = await convexClient.query(api.functions.conversations.getActive, { sessionId });
   const wantsNew = detectNewConversationIntent(newMessage);
   const resumeIntent = detectResumeConversationIntent(newMessage);
   const splitThreshold = await getConversationSplitThreshold(gatewayId);
   const segmentationAsync = await getSegmentationAsyncEnabled(gatewayId);
+  const pendingConfirmEnabled = await getSegmentationPendingConfirmEnabled(gatewayId);
+
+  const persistPendingSplit = async (value: PendingSplitCandidate | null) => {
+    await convexClient.mutation(api.functions.sessions.updateMeta, {
+      id: sessionId,
+      meta: { pendingSplit: value },
+    });
+  };
 
   if (!activeConvo) {
+    // Fresh session, clear any stale pending split state.
+    if ((sessionDoc as any)?.meta?.pendingSplit) {
+      await persistPendingSplit(null);
+    }
     const historicalLink = wantsNew
       ? null
       : await findHistoricalContinuation(
@@ -340,6 +437,18 @@ export async function resolveConversation(
   const isLongGap = gap >= CONVERSATION_TIMEOUT_MS;
   const activeTopicText = computeActiveTopicText(activeConvo);
   const hardPivot = isHardTopicPivot(activeTopicText, newMessage, { resumeIntent, wantsNew });
+  const pendingRaw = (sessionDoc as any)?.meta?.pendingSplit;
+  const pendingState = normalizePendingCandidate(pendingRaw, activeConvo._id, now);
+  let pendingCandidate = pendingState.candidate;
+  let pendingNeedsPersist = pendingState.shouldClear;
+  let nextPendingValue: PendingSplitCandidate | null = pendingState.candidate;
+  const bridgeLikely = isBridgeMessage(newMessage);
+  const quickTangent = isQuickSideTangent(newMessage);
+
+  if (pendingState.shouldClear) {
+    pendingCandidate = null;
+    nextPendingValue = null;
+  }
 
   // Determine if we should run AI topic classification
   let topicShifted = false;
@@ -371,8 +480,6 @@ export async function resolveConversation(
       if (topicShifted) {
         const overlap = activeTopicText ? topicOverlap(activeTopicText, newMessage) : 0;
         const wordCount = countMeaningfulWords(newMessage);
-        const bridgeLikely = isBridgeMessage(newMessage);
-        const quickTangent = isQuickSideTangent(newMessage);
         const weakShiftSignal =
           overlap >= 1 ||
           wordCount < MIN_WORDS_FOR_AUTO_SHIFT ||
@@ -411,8 +518,6 @@ export async function resolveConversation(
   if (!shouldClassify && !wantsNew && !isLongGap) {
     const overlap = activeTopicText ? topicOverlap(activeTopicText, newMessage) : 0;
     const words = countMeaningfulWords(newMessage);
-    const bridgeLikely = isBridgeMessage(newMessage);
-    const quickTangent = isQuickSideTangent(newMessage);
     const heuristic = 36 + Math.min(40, overlap * 15) + Math.min(16, words * 2);
     relevanceScore = clampPercent(heuristic, 68);
     if (overlap === 0 && !bridgeLikely && !quickTangent && words >= MIN_WORDS_FOR_HARD_PIVOT) {
@@ -431,6 +536,59 @@ export async function resolveConversation(
       };
     }
     console.log("[ConvoSegmentation] Hard pivot detected from message content; starting a new conversation segment.");
+  }
+
+  const candidateShift = !wantsNew && !isLongGap && !hardPivot && topicShifted;
+  if (pendingConfirmEnabled && !wantsNew && !isLongGap && !hardPivot) {
+    if (pendingCandidate) {
+      if (candidateShift) {
+        // Second consecutive low-relevance turn confirms a split.
+        topicShifted = true;
+        if (!classificationResult && (pendingCandidate.suggestedTitle || pendingCandidate.newTags?.length)) {
+          classificationResult = {
+            sameTopic: false,
+            ...(pendingCandidate.suggestedTitle ? { suggestedTitle: pendingCandidate.suggestedTitle } : {}),
+            ...(pendingCandidate.newTags?.length ? { newTags: pendingCandidate.newTags } : {}),
+          };
+        }
+        nextPendingValue = null;
+        pendingNeedsPersist = true;
+        console.log("[ConvoSegmentation] Pending split confirmed by second low-relevance turn.");
+      } else {
+        // Current turn stayed close enough; cancel pending when confidence is strong.
+        const clearPending =
+          relevanceScore >= splitThreshold + PENDING_CLEAR_MARGIN ||
+          quickTangent ||
+          bridgeLikely ||
+          resumeIntent;
+        if (clearPending) {
+          nextPendingValue = null;
+          pendingNeedsPersist = true;
+          console.log("[ConvoSegmentation] Pending split cleared; conversation returned to active topic.");
+        }
+        topicShifted = false;
+      }
+    } else if (candidateShift) {
+      // First low-relevance turn only marks a candidate; don't split yet.
+      topicShifted = false;
+      nextPendingValue = {
+        conversationId: activeConvo._id,
+        createdAt: now,
+        lastScore: relevanceScore,
+        splitThreshold,
+        ...(classificationResult?.suggestedTitle ? { suggestedTitle: classificationResult.suggestedTitle } : {}),
+        ...(classificationResult?.newTags?.length ? { newTags: classificationResult.newTags } : {}),
+      };
+      pendingNeedsPersist = true;
+      console.log("[ConvoSegmentation] Pending split candidate created; waiting for confirmation turn.");
+    }
+  } else if (candidateShift) {
+    topicShifted = true;
+  }
+
+  if ((wantsNew || hardPivot || isLongGap) && pendingCandidate) {
+    nextPendingValue = null;
+    pendingNeedsPersist = true;
   }
 
   // If the user returns after a long gap, decide whether this is a continuation chain.
@@ -463,6 +621,9 @@ export async function resolveConversation(
 
   // Under timeout AND no explicit intent AND no topic shift - same conversation
   if (!isLongGap && !wantsNew && !topicShifted) {
+    if (pendingNeedsPersist) {
+      await persistPendingSplit(nextPendingValue);
+    }
     await convexClient.mutation(api.functions.conversations.updateMessageCount, { id: activeConvo._id });
     return {
       conversationId: activeConvo._id,
@@ -497,6 +658,9 @@ export async function resolveConversation(
   }
 
   // Close the old conversation
+  if (pendingNeedsPersist) {
+    await persistPendingSplit(nextPendingValue);
+  }
   await convexClient.mutation(api.functions.conversations.close, {
     id: activeConvo._id,
   });
@@ -518,8 +682,10 @@ export async function resolveConversation(
     ? "explicit_new"
     : hardPivot
       ? "hard_pivot"
-      : topicShifted
-        ? "classifier"
+      : (pendingConfirmEnabled && !wantsNew && !isLongGap && !!pendingCandidate && candidateShift)
+        ? "pending_confirmed"
+        : topicShifted
+          ? "classifier"
         : "long_gap";
   const outputScore = wantsNew ? Math.min(clampPercent(relevanceScore, 100), 5) : clampPercent(relevanceScore, 100);
 
