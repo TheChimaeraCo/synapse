@@ -1931,6 +1931,90 @@ function parseNaturalTime(when: string, now: number): { scheduledAt?: number; cr
   return { scheduledAt: now + 1800000 };
 }
 
+const addCalendarEvent: BuiltinTool = {
+  name: "add_calendar_event",
+  description: "Add an event to the shared gateway calendar feed (ICS). Use for meetings, deadlines, reminders, and appointments the user wants on their external calendar.",
+  category: "calendar",
+  requiresApproval: false,
+  parameters: Type.Object({
+    title: Type.String({ description: "Event title" }),
+    when: Type.Optional(Type.String({ description: "Natural language start time, e.g. 'tomorrow at 3pm'" })),
+    start_at: Type.Optional(Type.String({ description: "ISO datetime start (preferred when exact time is known)" })),
+    end_at: Type.Optional(Type.String({ description: "ISO datetime end" })),
+    duration_minutes: Type.Optional(Type.Number({ description: "Duration in minutes if end_at is omitted", default: 60 })),
+    location: Type.Optional(Type.String({ description: "Event location" })),
+    description: Type.Optional(Type.String({ description: "Event description/notes" })),
+    all_day: Type.Optional(Type.Boolean({ description: "Whether this is an all-day event", default: false })),
+  }),
+  handler: async (args, context) => {
+    try {
+      const { addCalendarEvent, parseCalendarTimestamp } = await import("@/lib/calendarStore");
+      const now = Date.now();
+      const durationMinutes = Number.isFinite(args.duration_minutes)
+        ? Math.max(5, Math.min(24 * 60, Math.floor(args.duration_minutes)))
+        : 60;
+
+      const startAt =
+        parseCalendarTimestamp(args.start_at)
+        ?? parseCalendarTimestamp(args.when)
+        ?? parseNaturalTime(args.when || "", now).scheduledAt
+        ?? (now + 30 * 60 * 1000);
+
+      let endAt =
+        parseCalendarTimestamp(args.end_at)
+        ?? (startAt + durationMinutes * 60 * 1000);
+      if (endAt <= startAt) {
+        endAt = startAt + durationMinutes * 60 * 1000;
+      }
+
+      const event = await addCalendarEvent(context.gatewayId as any, {
+        title: args.title,
+        startAt,
+        endAt,
+        allDay: !!args.all_day,
+        location: args.location,
+        description: args.description,
+        source: "agent",
+      });
+
+      return `Calendar event added: "${event.title}" from ${new Date(event.startAt).toISOString()} to ${new Date(event.endAt).toISOString()}.`;
+    } catch (e: any) {
+      return `Failed to add calendar event: ${e.message}`;
+    }
+  },
+};
+
+const listCalendarEvents: BuiltinTool = {
+  name: "list_calendar_events",
+  description: "List upcoming events in the shared gateway calendar.",
+  category: "calendar",
+  requiresApproval: false,
+  parameters: Type.Object({
+    limit: Type.Optional(Type.Number({ description: "Max events to return", default: 10 })),
+    days_ahead: Type.Optional(Type.Number({ description: "Only show events up to this many days ahead", default: 30 })),
+  }),
+  handler: async (args, context) => {
+    try {
+      const { getCalendarEvents } = await import("@/lib/calendarStore");
+      const limit = Number.isFinite(args.limit) ? Math.max(1, Math.min(50, Math.floor(args.limit))) : 10;
+      const daysAhead = Number.isFinite(args.days_ahead) ? Math.max(1, Math.min(365, Math.floor(args.days_ahead))) : 30;
+      const until = Date.now() + daysAhead * 24 * 60 * 60 * 1000;
+
+      const events = (await getCalendarEvents(context.gatewayId as any))
+        .filter((event) => event.endAt >= Date.now() && event.startAt <= until)
+        .sort((a, b) => a.startAt - b.startAt)
+        .slice(0, limit);
+
+      if (!events.length) return "No upcoming calendar events found.";
+      return events.map((event) => {
+        return `- [${event.id}] ${event.title} (${new Date(event.startAt).toISOString()} - ${new Date(event.endAt).toISOString()})`;
+      }).join("\n");
+    } catch (e: any) {
+      return `Failed to list calendar events: ${e.message}`;
+    }
+  },
+};
+
 const setReminder: BuiltinTool = {
   name: "set_reminder",
   description: "Set a reminder for the user. Can be one-time or recurring. Supports natural language time expressions like 'in 30 minutes', 'tomorrow at 9am', 'every Monday at 9am', 'every weekday at 8am'.",
@@ -2700,6 +2784,8 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   listAgents,
   messageWorker,
   awaitAgent,
+  addCalendarEvent,
+  listCalendarEvents,
   setReminder,
   listReminders,
   cancelReminder,

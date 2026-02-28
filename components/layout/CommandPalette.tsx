@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/contexts/ThemeContext";
 import {
-  MessageSquare, Settings, Zap, FolderOpen, Brain, Sun, Moon, Trash2, Search, Command, BookOpen,
+  MessageSquare, Settings, Zap, FolderOpen, Brain, Sun, Moon, Trash2, Search, Command, BookOpen, CalendarDays,
 } from "lucide-react";
 
 interface PaletteCommand {
@@ -60,6 +60,13 @@ export function CommandPalette() {
       description: "View usage analytics",
       icon: <Zap className="h-4 w-4" />,
       action: () => { router.push("/analytics"); close(); },
+    },
+    {
+      id: "calendar",
+      label: "Calendar",
+      description: "Open shared calendar and feed URL",
+      icon: <CalendarDays className="h-4 w-4" />,
+      action: () => { router.push("/calendar"); close(); },
     },
     {
       id: "files",

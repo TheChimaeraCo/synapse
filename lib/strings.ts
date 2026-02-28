@@ -14,6 +14,7 @@ const strings: Record<string, string> = {
   // Navigation
   "nav.dashboard": "Dashboard",
   "nav.chat": "Chat",
+  "nav.calendar": "Calendar",
   "nav.knowledge": "Knowledge",
   "nav.files": "Files",
   "nav.projects": "Projects",

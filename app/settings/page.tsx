@@ -55,6 +55,7 @@ const LicenseTab = lazyTab(() => import("@/components/settings/LicenseTab"), "Li
 const NotificationsTab = lazyTab(() => import("@/components/settings/NotificationsTab"), "NotificationsTab");
 const MembersTab = lazyTab(() => import("@/components/settings/MembersTab"), "MembersTab");
 const SchedulerTab = lazyTab(() => import("@/components/settings/SchedulerTab"), "SchedulerTab");
+const CalendarTab = lazyTab(() => import("@/components/settings/CalendarTab"), "CalendarTab");
 const PM2Tab = lazyTab(() => import("@/components/settings/PM2Tab"), "PM2Tab");
 const ChangelogTab = lazyTab(() => import("@/components/settings/ChangelogTab"), "ChangelogTab");
 const WebhooksTab = lazyTab(() => import("@/components/settings/WebhooksTab"), "WebhooksTab");
@@ -86,6 +87,7 @@ const tabs = [
   { id: "sessions", label: "Sessions", icon: Clock },
   { id: "voice", label: "Voice / TTS", icon: Mic },
   { id: "scheduler", label: "Scheduler", icon: Clock },
+  { id: "calendar", label: "Calendar", icon: Database },
   { id: "automation", label: "Automation", icon: Zap },
   { id: "autonomy", label: "Autonomy", icon: Zap },
   { id: "gateway", label: "Gateway", icon: Server },
@@ -132,6 +134,7 @@ const tabAliases: Record<string, TabId> = {
   sessions: "sessions",
   voice: "voice",
   scheduler: "scheduler",
+  calendar: "calendar",
   automation: "automation",
   autonomy: "autonomy",
   gateway: "gateway",
@@ -207,7 +210,7 @@ const categories: Category[] = [
     id: "automation",
     label: "Automation",
     icon: Zap,
-    tabs: ["automation", "autonomy", "webhooks", "scheduler"],
+    tabs: ["automation", "autonomy", "webhooks", "scheduler", "calendar"],
   },
   {
     id: "data",
@@ -390,6 +393,7 @@ function SettingsPageContent() {
           {activeTab === "sessions" && <SessionsTab />}
           {activeTab === "voice" && <VoiceTab />}
           {activeTab === "scheduler" && <SchedulerTab />}
+          {activeTab === "calendar" && <CalendarTab />}
           {activeTab === "automation" && <AutomationTab />}
           {activeTab === "autonomy" && <AutonomyTab />}
           {activeTab === "gateway" && <GatewayTab />}

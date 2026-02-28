@@ -12,6 +12,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   Bot,
   Brain,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
   ClipboardList,
@@ -113,6 +114,7 @@ function InstallAppButton() {
 const navLinks: NavLink[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/vault", label: "Vault", icon: BookOpen },
   { href: "/knowledge", label: "Knowledge", icon: Brain },
   { href: "/files", label: "Files", icon: FolderOpen },
