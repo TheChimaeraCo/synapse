@@ -103,7 +103,36 @@ interface ToastEditorLike {
   destroy: () => void;
 }
 
+interface WikiLinkItem {
+  target: string;
+  label: string;
+  path: string | null;
+}
+
 type EditorRuntime = "loading" | "ready" | "fallback";
+
+function normalizeNoteKey(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\.(md|markdown)$/i, "")
+    .replace(/^\/+|\/+$/g, "")
+    .toLowerCase();
+}
+
+function extractWikiTargets(markdown: string): string[] {
+  if (!markdown) return [];
+  const matches = markdown.matchAll(/\[\[([^[\]]+)\]\]/g);
+  const out: string[] = [];
+  for (const match of matches) {
+    const body = (match[1] || "").trim();
+    if (!body) continue;
+    const main = body.split("|")[0]?.split("#")[0]?.trim() || "";
+    if (!main) continue;
+    out.push(main);
+  }
+  return Array.from(new Set(out));
+}
 
 function buildVaultTree(notes: VaultNote[]): VaultTreeNode[] {
   const root: VaultTreeNode = {
@@ -253,8 +282,8 @@ export default function VaultPage() {
   const [search, setSearch] = useState("");
   const [participants, setParticipants] = useState<YjsParticipant[]>([]);
   const [yjsLiveMode, setYjsLiveMode] = useState(false);
-  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
-  const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [leftPaneWidth, setLeftPaneWidth] = useState(320);
   const [rightPaneWidth, setRightPaneWidth] = useState(320);
   const [resizingPane, setResizingPane] = useState<"left" | "right" | null>(null);
@@ -448,6 +477,37 @@ export default function VaultPage() {
       toast.error(err?.message || "Failed to create note");
     }
   }, [index, openNote, refreshIndex]);
+
+  const createNoteFromWikiLink = useCallback(async (target: string) => {
+    if (!index || !selectedPath) return;
+    const current = index.notes.find((note) => note.path === selectedPath);
+    if (!current) return;
+    const cleanTarget = target.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!cleanTarget) return;
+    const withExt = /\.(md|markdown)$/i.test(cleanTarget) ? cleanTarget : `${cleanTarget}.md`;
+    const currentDir = current.vaultRelativePath.includes("/")
+      ? current.vaultRelativePath.slice(0, current.vaultRelativePath.lastIndexOf("/") + 1)
+      : "";
+    const relative = cleanTarget.includes("/") ? withExt : `${currentDir}${withExt}`;
+    const fullPath = `${index.vaultPath}/${relative}`.replace(/\/+/g, "/");
+    const title = withExt.split("/").pop()?.replace(/\.(md|markdown)$/i, "") || cleanTarget;
+    const starter = `# ${title}\n\n`;
+    try {
+      const res = await gatewayFetch("/api/files/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "write", path: fullPath, content: starter }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to create linked note");
+      await refreshIndex();
+      await openNote(fullPath);
+      setOpenTabs((prev) => (prev.includes(fullPath) ? prev : [...prev, fullPath]));
+      toast.success(`Created [[${target}]]`);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to create linked note");
+    }
+  }, [index, openNote, refreshIndex, selectedPath]);
 
   const createFolder = useCallback(async () => {
     if (!index) return;
@@ -913,6 +973,44 @@ export default function VaultPage() {
     [index, selectedPath]
   );
 
+  const noteLookup = useMemo(() => {
+    const byTitle = new Map<string, string>();
+    const byRelativePath = new Map<string, string>();
+    const notes = index?.notes || [];
+    for (const note of notes) {
+      byTitle.set(normalizeNoteKey(note.title), note.path);
+      byRelativePath.set(normalizeNoteKey(note.vaultRelativePath), note.path);
+    }
+    return { byTitle, byRelativePath };
+  }, [index?.notes]);
+
+  const wikiLinks = useMemo<WikiLinkItem[]>(() => {
+    if (!selectedPath) return [];
+    const targets = extractWikiTargets(content);
+    return targets.map((target) => {
+      const normalized = normalizeNoteKey(target);
+      const resolved =
+        noteLookup.byRelativePath.get(normalized) ||
+        noteLookup.byTitle.get(normalized) ||
+        null;
+      return { target, label: target, path: resolved };
+    });
+  }, [content, noteLookup.byRelativePath, noteLookup.byTitle, selectedPath]);
+
+  const outgoingLinks = useMemo<WikiLinkItem[]>(() => {
+    const merged = new Map<string, WikiLinkItem>();
+    for (const path of selectedMeta?.outgoing || []) {
+      merged.set(`path:${path}`, { target: path, label: path, path });
+    }
+    for (const item of wikiLinks) {
+      const key = item.path ? `path:${item.path}` : `wiki:${normalizeNoteKey(item.target)}`;
+      if (!merged.has(key)) {
+        merged.set(key, item);
+      }
+    }
+    return Array.from(merged.values());
+  }, [selectedMeta?.outgoing, wikiLinks]);
+
   const quickResults = useMemo(() => {
     if (!index) return [];
     const q = quickSearch.trim().toLowerCase();
@@ -1098,12 +1196,16 @@ export default function VaultPage() {
 
   return (
     <AppShell title="Vault" immersive defaultChromeHidden>
-      <div className="h-full overflow-auto p-4 lg:p-8 text-zinc-100">
-        <div className="mx-auto h-full max-w-[96rem] rounded-3xl border border-white/[0.1] bg-white/[0.04] shadow-[0_12px_38px_rgba(3,8,20,0.32)]">
-          <div ref={panelsRef} className="flex h-full min-h-[680px]">
-          {leftSidebarOpen ? (
+      <div className="h-full overflow-hidden text-zinc-100">
+        <div ref={panelsRef} className="flex h-full min-h-[680px]">
+          <div
+            className="relative shrink-0 overflow-hidden border-r border-white/[0.1] bg-slate-950/45 transition-[width] duration-300 ease-out"
+            style={{ width: leftSidebarOpen ? leftPaneWidth : 0 }}
+          >
             <aside
-              className="shrink-0 min-w-[240px] max-w-[520px] border-r border-white/[0.1] bg-slate-950/45 flex flex-col min-h-0"
+              className={`flex h-full min-w-[240px] max-w-[520px] flex-col transition-opacity duration-200 ${
+                leftSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
+              }`}
               style={{ width: leftPaneWidth }}
             >
               <div className="border-b border-white/10 p-3 space-y-2">
@@ -1178,15 +1280,17 @@ export default function VaultPage() {
                 )}
               </div>
             </aside>
-          ) : (
+          </div>
+
+          {!leftSidebarOpen ? (
             <button
               onClick={() => setLeftSidebarOpen(true)}
-              className="hidden md:flex h-full w-8 items-start justify-center border-r border-white/[0.1] bg-slate-950/45 pt-3 text-zinc-500 hover:text-zinc-200"
+              className="hidden md:flex h-full w-8 items-start justify-center bg-slate-950/45 pt-3 text-zinc-500 hover:text-zinc-200"
               title="Open explorer"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
-          )}
+          ) : null}
 
           {leftSidebarOpen ? (
             <div
@@ -1203,22 +1307,8 @@ export default function VaultPage() {
           <section className="min-w-0 flex-1 flex flex-col">
             <div className="border-b border-white/[0.1] bg-white/[0.03] px-3 py-2 flex items-center gap-2">
               <button
-                onClick={() => setLeftSidebarOpen((prev) => !prev)}
-                className="rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
-                title="Toggle explorer (Ctrl/Cmd+B)"
-              >
-                {leftSidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              </button>
-              <button
-                onClick={() => setRightSidebarOpen((prev) => !prev)}
-                className="rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
-                title="Toggle context (Ctrl/Cmd+.)"
-              >
-                {rightSidebarOpen ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-              </button>
-              <button
                 onClick={() => setQuickSwitcherOpen(true)}
-                className="ml-1 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-zinc-300 hover:bg-white/[0.08]"
+                className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-zinc-300 hover:bg-white/[0.08]"
               >
                 Command Palette
               </button>
@@ -1369,9 +1459,14 @@ export default function VaultPage() {
             />
           ) : null}
 
-          {rightSidebarOpen ? (
+          <div
+            className="relative shrink-0 overflow-hidden border-l border-white/[0.1] bg-slate-950/45 transition-[width] duration-300 ease-out"
+            style={{ width: rightSidebarOpen ? rightPaneWidth : 0 }}
+          >
             <aside
-              className="shrink-0 min-w-[240px] max-w-[520px] border-l border-white/[0.1] bg-slate-950/45 flex flex-col min-h-0"
+              className={`flex h-full min-w-[240px] max-w-[520px] flex-col transition-opacity duration-200 ${
+                rightSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
+              }`}
               style={{ width: rightPaneWidth }}
             >
               <div className="border-b border-white/10 px-3 py-2.5 flex items-center justify-between">
@@ -1435,17 +1530,28 @@ export default function VaultPage() {
                 <section>
                   <div className="mb-1.5 flex items-center gap-1.5 text-xs text-zinc-400">
                     <Link2 className="h-3.5 w-3.5" />
-                    Outgoing Links
+                    Outgoing Links / [[wikilinks]]
                   </div>
                   <div className="space-y-1.5">
-                    {selectedMeta?.outgoing?.length ? (
-                      selectedMeta.outgoing.map((path) => (
+                    {outgoingLinks.length ? (
+                      outgoingLinks.map((item) => (
                         <button
-                          key={path}
-                          onClick={() => selectNote(path)}
-                          className="block w-full truncate rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-left text-xs hover:bg-white/[0.08]"
+                          key={`${item.path || item.target}`}
+                          onClick={() => {
+                            if (item.path) {
+                              selectNote(item.path);
+                              return;
+                            }
+                            void createNoteFromWikiLink(item.target);
+                          }}
+                          className={`block w-full truncate rounded-md border px-2 py-1.5 text-left text-xs ${
+                            item.path
+                              ? "border-white/10 bg-white/[0.03] hover:bg-white/[0.08]"
+                              : "border-cyan-400/30 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
+                          }`}
+                          title={item.path ? "Open note" : `Create [[${item.target}]]`}
                         >
-                          {path}
+                          {item.path ? item.label : `[[${item.target}]] (create)`}
                         </button>
                       ))
                     ) : (
@@ -1489,16 +1595,16 @@ export default function VaultPage() {
                 </section>
               </div>
             </aside>
-          ) : (
+          </div>
+          {!rightSidebarOpen ? (
             <button
               onClick={() => setRightSidebarOpen(true)}
-              className="hidden md:flex h-full w-8 items-start justify-center border-l border-white/[0.1] bg-slate-950/45 pt-3 text-zinc-500 hover:text-zinc-200"
+              className="hidden md:flex h-full w-8 items-start justify-center bg-slate-950/45 pt-3 text-zinc-500 hover:text-zinc-200"
               title="Open context"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-          )}
-        </div>
+          ) : null}
         </div>
 
         {quickSwitcherOpen ? (
