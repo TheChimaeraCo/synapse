@@ -9,6 +9,7 @@ import { BUILTIN_TOOLS } from "@/lib/builtinTools";
 import { extractBearerToken, safeEqualSecret } from "@/lib/security";
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // --- Rate Limiting ---
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
@@ -95,6 +96,11 @@ async function validateAndSetup(req: NextRequest) {
 
   const userMessageId = await convexClient.mutation(api.functions.messages.create, {
     gatewayId, sessionId, agentId, role: "user", content: message, metadata: mergedMetadata, conversationId,
+  });
+  queueConversationTagger({
+    gatewayId,
+    conversationId,
+    userMessageId: userMessageId as Id<"messages">,
   });
 
   return { apiKey, message, stream, gatewayId, agentId, sessionId, conversationId, userMessageId };

@@ -12,6 +12,7 @@ import { createTelegramAttachmentResolver } from "@/lib/agent-sdk/telegram";
 import { ingestInboundAttachments, mergeContentWithFileRefs } from "@/lib/agent-sdk/attachments";
 import { runAgentTurn } from "@/lib/agent-sdk/turn";
 import { MODEL_COSTS } from "@/lib/types";
+import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // --- Deduplication ---
 const DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -256,6 +257,11 @@ export function createBot(config: BotConfig): Bot {
         channelMessageId: String(msg.message_id),
         conversationId,
         ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
+      });
+      queueConversationTagger({
+        gatewayId,
+        conversationId,
+        userMessageId: userMessageId as Id<"messages">,
       });
 
       // Check budget

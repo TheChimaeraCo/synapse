@@ -9,6 +9,7 @@ import { createHash } from "crypto";
 import { fireWebhook } from "@/lib/webhooks";
 import { resolveConversation } from "@/lib/conversationManager";
 import { runAgentTurn } from "@/lib/agent-sdk/turn";
+import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // Simple request deduplication
 const recentRequests = new Map<string, number>();
@@ -87,6 +88,11 @@ export async function POST(req: NextRequest) {
       content: content.trim(),
       conversationId,
       ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
+    });
+    queueConversationTagger({
+      gatewayId: gatewayId as Id<"gateways">,
+      conversationId,
+      userMessageId: messageId as Id<"messages">,
     });
 
     const budgetCheck = await convexClient.query(api.functions.usage.checkBudget, {

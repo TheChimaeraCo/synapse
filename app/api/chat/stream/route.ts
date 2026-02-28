@@ -13,6 +13,7 @@ import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPro
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
 import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // Simple request deduplication: track recent request hashes to prevent double-sends
 const recentRequests = new Map<string, number>();
@@ -199,6 +200,11 @@ export async function POST(req: NextRequest) {
     content: sanitizedContent,
     conversationId,
     ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
+  });
+  queueConversationTagger({
+    gatewayId: gatewayId as Id<"gateways">,
+    conversationId,
+    userMessageId: messageId as Id<"messages">,
   });
 
   // Budget check

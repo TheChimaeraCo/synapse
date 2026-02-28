@@ -11,12 +11,14 @@ const MIN_WORDS_FOR_HARD_PIVOT = 9;
 const DEFAULT_SPLIT_RELEVANCE_THRESHOLD = 28; // 1-100, lower = harder to split
 const QUICK_TANGENT_MAX_WORDS = 12;
 const SPLIT_THRESHOLD_CACHE_TTL_MS = 60_000;
+const SEGMENTATION_ASYNC_CACHE_TTL_MS = 60_000;
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "that", "this", "from", "about", "have", "has", "had", "will", "would",
   "could", "should", "your", "you", "our", "their", "they", "them", "what", "when", "where", "which",
   "while", "just", "like", "want", "need", "help", "please", "talk", "topic", "conversation",
 ]);
 const splitThresholdCache = new Map<string, { value: number; expiresAt: number }>();
+const segmentationAsyncCache = new Map<string, { value: boolean; expiresAt: number }>();
 
 function clampPercent(value: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
@@ -174,6 +176,41 @@ async function getConversationSplitThreshold(gatewayId: Id<"gateways">): Promise
   return parsed;
 }
 
+async function getSegmentationAsyncEnabled(gatewayId: Id<"gateways">): Promise<boolean> {
+  const cacheKey = String(gatewayId);
+  const cached = segmentationAsyncCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  let enabled = true; // default to async analysis to keep request latency low
+  try {
+    const inherited = await convexClient.query(api.functions.gatewayConfig.getWithInheritance, {
+      gatewayId,
+      key: "session.segmentation_async",
+    });
+    if (inherited?.value != null) {
+      enabled = String(inherited.value).toLowerCase() !== "false";
+    }
+  } catch {
+    try {
+      const legacy = await convexClient.query(api.functions.config.get, {
+        key: "session.segmentation_async",
+      });
+      if (legacy != null) {
+        enabled = String(legacy).toLowerCase() !== "false";
+      }
+    } catch {
+      // Ignore and use default.
+    }
+  }
+
+  segmentationAsyncCache.set(cacheKey, {
+    value: enabled,
+    expiresAt: now + SEGMENTATION_ASYNC_CACHE_TTL_MS,
+  });
+  return enabled;
+}
+
 function detectResumeConversationIntent(message: string): boolean {
   const lower = message.toLowerCase().trim();
   const patterns = [
@@ -266,6 +303,7 @@ export async function resolveConversation(
   const wantsNew = detectNewConversationIntent(newMessage);
   const resumeIntent = detectResumeConversationIntent(newMessage);
   const splitThreshold = await getConversationSplitThreshold(gatewayId);
+  const segmentationAsync = await getSegmentationAsyncEnabled(gatewayId);
 
   if (!activeConvo) {
     const historicalLink = wantsNew
@@ -309,8 +347,8 @@ export async function resolveConversation(
   let relevanceScore = 100;
   let classificationResult: { sameTopic: boolean; relevanceScore?: number; suggestedTitle?: string; newTags?: string[] } | null = null;
   const nextCount = activeConvo.messageCount + 1;
-  const shouldClassify = nextCount >= CLASSIFY_AFTER_N_MESSAGES;
-  console.log(`[ConvoSegmentation] Message ${nextCount} in conversation, shouldClassify: ${shouldClassify}`);
+  const shouldClassify = !segmentationAsync && nextCount >= CLASSIFY_AFTER_N_MESSAGES;
+  console.log(`[ConvoSegmentation] Message ${nextCount} in conversation, shouldClassify: ${shouldClassify} (async=${segmentationAsync})`);
   if (!wantsNew && !isLongGap && shouldClassify) {
     try {
       // Get recent messages for classification + include the new incoming message
@@ -366,6 +404,19 @@ export async function resolveConversation(
       }
     } catch (err) {
       console.error("[ConvoSegmentation] Topic classification failed, continuing same convo:", err);
+    }
+  }
+
+  // Async mode: avoid model classification on the request path.
+  if (!shouldClassify && !wantsNew && !isLongGap) {
+    const overlap = activeTopicText ? topicOverlap(activeTopicText, newMessage) : 0;
+    const words = countMeaningfulWords(newMessage);
+    const bridgeLikely = isBridgeMessage(newMessage);
+    const quickTangent = isQuickSideTangent(newMessage);
+    const heuristic = 36 + Math.min(40, overlap * 15) + Math.min(16, words * 2);
+    relevanceScore = clampPercent(heuristic, 68);
+    if (overlap === 0 && !bridgeLikely && !quickTangent && words >= MIN_WORDS_FOR_HARD_PIVOT) {
+      relevanceScore = Math.min(relevanceScore, 24);
     }
   }
 

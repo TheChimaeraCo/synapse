@@ -25,6 +25,12 @@ vi.mock("@/lib/conversationSummarizer", () => ({
 vi.mock("@/convex/_generated/api", () => ({
   api: {
     functions: {
+      gatewayConfig: {
+        getWithInheritance: "gatewayConfig.getWithInheritance",
+      },
+      config: {
+        get: "config.get",
+      },
       conversations: {
         getActive: "conversations.getActive",
         findRelated: "conversations.findRelated",
@@ -57,6 +63,7 @@ type MockState = {
   active: MockConversation | null;
   recentMessages: Array<{ role: string; content: string }>;
   related: Array<{ _id: string; depth: number; title?: string; summary?: string; tags?: string[]; topics?: string[] }>;
+  config: Record<string, string>;
   nextId: number;
 };
 
@@ -74,10 +81,17 @@ function newActive(overrides: Partial<MockConversation> = {}): MockConversation 
 }
 
 function wireConvexMocks() {
-  mocks.query.mockImplementation(async (fn: any) => {
+  mocks.query.mockImplementation(async (fn: any, args: any) => {
     if (fn === (api.functions.conversations.getActive as any)) return state.active;
     if (fn === (api.functions.messages.listByConversation as any)) return state.recentMessages;
     if (fn === (api.functions.conversations.findRelated as any)) return state.related;
+    if (fn === (api.functions.gatewayConfig.getWithInheritance as any)) {
+      const value = state.config[args?.key];
+      return value !== undefined ? { value, inherited: false } : null;
+    }
+    if (fn === (api.functions.config.get as any)) {
+      return state.config[args?.key] ?? null;
+    }
     throw new Error(`Unhandled query fn: ${fn}`);
   });
 
@@ -127,6 +141,10 @@ describe("conversation segmentation e2e", () => {
       active: null,
       recentMessages: [],
       related: [],
+      config: {
+        "session.segmentation_async": "false",
+        "session.conversation_split_threshold": "28",
+      },
       nextId: 1,
     };
 

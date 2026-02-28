@@ -7,6 +7,7 @@ import { splitMessage } from "./send";
 import { executeTools, toProviderTools } from "../toolExecutor";
 import { BUILTIN_TOOLS } from "../builtinTools";
 import { applyResponsePrefix, normalizeChunkMode, parseChunkLimit } from "@/lib/messageFormatting";
+import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // --- Deduplication ---
 const DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -150,6 +151,11 @@ export function createDiscordBot(config: DiscordBotConfig): Client {
         channelMessageId: msg.id,
         conversationId,
         ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
+      });
+      queueConversationTagger({
+        gatewayId,
+        conversationId,
+        userMessageId: userMessageId as Id<"messages">,
       });
 
       // Check budget

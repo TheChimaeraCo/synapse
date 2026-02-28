@@ -9,6 +9,7 @@ import { executeTools, toProviderTools } from "../toolExecutor";
 import { BUILTIN_TOOLS } from "../builtinTools";
 import { resolveConversation } from "../conversationManager";
 import { applyResponsePrefix, normalizeChunkMode, parseChunkLimit } from "@/lib/messageFormatting";
+import { queueConversationTagger } from "@/lib/conversationTagger";
 
 const CONVEX_URL = process.env.CONVEX_URL || process.env.CONVEX_SELF_HOSTED_URL || process.env.NEXT_PUBLIC_CONVEX_URL || "http://127.0.0.1:3220";
 
@@ -178,6 +179,11 @@ async function processMessage(event: any): Promise<void> {
     channelMessageId: event.ts,
     conversationId,
     ...(segmentationMeta ? { metadata: { segmentation: segmentationMeta } } : {}),
+  });
+  queueConversationTagger({
+    gatewayId,
+    conversationId,
+    userMessageId: userMessageId as Id<"messages">,
   });
 
   // Check budget

@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConfigSettings } from "@/lib/useConfigSettings";
+import { Toggle } from "@/components/ui/toggle";
 
 export function SessionsTab() {
   const { get, set, save, saving, loading } = useConfigSettings("session.");
@@ -70,6 +71,11 @@ export function SessionsTab() {
           <CardTitle className="text-sm text-zinc-300">Conversation Segmentation</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <Toggle
+            checked={get("segmentation_async", "true") === "true"}
+            onChange={(v) => set("segmentation_async", v ? "true" : "false")}
+            label="Async segmentation/tagging worker (faster responses)"
+          />
           <div>
             <label className="text-sm text-zinc-400 mb-1 block">
               New Conversation Trigger Threshold (1-100)

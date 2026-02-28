@@ -376,10 +376,13 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
   const isSystem = message.role === "system";
   const isFailed = message.content?.startsWith("Error:");
   const segmentation = (message.metadata as any)?.segmentation as
-    | { relevanceScore?: number; splitThreshold?: number; topicShifted?: boolean; reason?: string }
+    | { relevanceScore?: number; asyncRelevanceScore?: number; splitThreshold?: number; topicShifted?: boolean; reason?: string }
     | undefined;
-  const relevanceScore = typeof segmentation?.relevanceScore === "number"
-    ? Math.max(1, Math.min(100, Math.round(segmentation.relevanceScore)))
+  const rawScore = typeof segmentation?.asyncRelevanceScore === "number"
+    ? segmentation.asyncRelevanceScore
+    : segmentation?.relevanceScore;
+  const relevanceScore = typeof rawScore === "number"
+    ? Math.max(1, Math.min(100, Math.round(rawScore)))
     : null;
   const splitThreshold = typeof segmentation?.splitThreshold === "number"
     ? Math.max(1, Math.min(100, Math.round(segmentation.splitThreshold)))
