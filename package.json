@@ -17,7 +17,7 @@
     "env:pull": "node scripts/convex-env.js pull",
     "env:push": "node scripts/convex-env.js push",
     "dev": "node scripts/convex-env.js pull --silent && next dev",
-    "build": "node scripts/convex-env.js pull --silent && next build",
+    "build": "node scripts/convex-env.js pull --silent && next build --webpack",
     "start": "node scripts/convex-env.js pull --silent && next start",
     "init": "node scripts/init.js",
     "synapse": "node scripts/init.js",
