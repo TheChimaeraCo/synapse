@@ -45,7 +45,7 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
   const [activeGateway, setActiveGateway] = useState<Gateway | null>(null);
   const [activeRole, setActiveRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const router = useRouter();
   const { status } = useSession();
 

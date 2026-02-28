@@ -103,6 +103,8 @@ interface ToastEditorLike {
   destroy: () => void;
 }
 
+type EditorRuntime = "loading" | "ready" | "fallback";
+
 function buildVaultTree(notes: VaultNote[]): VaultTreeNode[] {
   const root: VaultTreeNode = {
     id: "folder:",
@@ -260,8 +262,11 @@ export default function VaultPage() {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [quickSearch, setQuickSearch] = useState("");
+  const [editorRuntime, setEditorRuntime] = useState<EditorRuntime>("loading");
+  const [editorRuntimeMessage, setEditorRuntimeMessage] = useState<string | null>(null);
 
   const editorHostRef = useRef<HTMLDivElement | null>(null);
+  const fallbackEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const toastEditorRef = useRef<ToastEditorLike | null>(null);
   const toastApplyingRef = useRef(false);
   const quickInputRef = useRef<HTMLInputElement | null>(null);
@@ -287,49 +292,81 @@ export default function VaultPage() {
     toastApplyingRef.current = false;
   }, []);
 
+  const applyEditorChange = useCallback((nextValue: string) => {
+    yLastTypingAtRef.current = Date.now();
+    setContent(nextValue);
+    if (toastApplyingRef.current || yApplyingRemoteRef.current) return;
+    const yText = yTextRef.current;
+    if (yText) applyTextPatch(yText, nextValue);
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     let editorInstance: ToastEditorLike | null = null;
+    let fallbackTimer: number | null = null;
 
     const mountEditor = async () => {
       if (!editorHostRef.current || toastEditorRef.current) return;
-      const mod = await import("@toast-ui/editor");
-      if (disposed || !editorHostRef.current) return;
+      try {
+        const mod = await import("@toast-ui/editor");
+        if (disposed || !editorHostRef.current) return;
 
-      const EditorCtor = (mod as any).Editor as new (opts: Record<string, unknown>) => ToastEditorLike;
-      editorInstance = new EditorCtor({
-        el: editorHostRef.current,
-        height: "100%",
-        initialEditType: "wysiwyg",
-        initialValue: "",
-        hideModeSwitch: true,
-        usageStatistics: false,
-        autofocus: false,
-        toolbarItems: [
-          ["heading", "bold", "italic", "strike"],
-          ["hr", "quote"],
-          ["ul", "ol", "task"],
-          ["table", "link"],
-          ["code", "codeblock"],
-        ],
-      });
+        const EditorCtor =
+          (mod as any).Editor ||
+          (mod as any).default?.Editor ||
+          (mod as any).default;
+        if (typeof EditorCtor !== "function") {
+          throw new Error("Toast UI editor constructor was not found");
+        }
 
-      editorInstance.on("change", () => {
-        const nextValue = editorInstance?.getMarkdown() || "";
-        yLastTypingAtRef.current = Date.now();
-        setContent(nextValue);
-        if (toastApplyingRef.current || yApplyingRemoteRef.current) return;
-        const yText = yTextRef.current;
-        if (yText) applyTextPatch(yText, nextValue);
-      });
+        const instance = new EditorCtor({
+          el: editorHostRef.current,
+          height: "100%",
+          initialEditType: "wysiwyg",
+          initialValue: "",
+          hideModeSwitch: true,
+          usageStatistics: false,
+          autofocus: false,
+          toolbarItems: [
+            ["heading", "bold", "italic", "strike"],
+            ["hr", "quote"],
+            ["ul", "ol", "task"],
+            ["table", "link"],
+            ["code", "codeblock"],
+          ],
+        });
+        editorInstance = instance;
 
-      toastEditorRef.current = editorInstance;
+        instance.on("change", () => {
+          const nextValue = instance.getMarkdown() || "";
+          applyEditorChange(nextValue);
+        });
+
+        toastEditorRef.current = editorInstance;
+        setEditorRuntime("ready");
+        setEditorRuntimeMessage(null);
+      } catch (err: any) {
+        console.error("[vault] failed to initialize live markdown editor", err);
+        if (!disposed) {
+          setEditorRuntime("fallback");
+          setEditorRuntimeMessage(err?.message || "Live editor failed to initialize");
+        }
+      }
     };
 
+    setEditorRuntime("loading");
+    setEditorRuntimeMessage(null);
+    fallbackTimer = window.setTimeout(() => {
+      if (!toastEditorRef.current) {
+        setEditorRuntime("fallback");
+        setEditorRuntimeMessage("Live editor timed out, using fallback editor");
+      }
+    }, 2000);
     void mountEditor();
 
     return () => {
       disposed = true;
+      if (fallbackTimer) window.clearTimeout(fallbackTimer);
       if (editorInstance) {
         try {
           editorInstance.destroy();
@@ -339,7 +376,7 @@ export default function VaultPage() {
         toastEditorRef.current = null;
       }
     };
-  }, []);
+  }, [applyEditorChange]);
 
   const refreshIndex = useCallback(async () => {
     setLoadingIndex(true);
@@ -599,7 +636,10 @@ export default function VaultPage() {
     yPendingUpdatesRef.current = [];
 
     const stateVector = Y.encodeStateVector(yDoc);
-    const active = !!editorHostRef.current && editorHostRef.current.contains(document.activeElement);
+    const activeEl = document.activeElement;
+    const active =
+      (!!editorHostRef.current && !!activeEl && editorHostRef.current.contains(activeEl)) ||
+      fallbackEditorRef.current === activeEl;
     const typingWindowMs = 2200;
     const isTyping = active && (Date.now() - yLastTypingAtRef.current) < typingWindowMs;
     const textValue = yText.toString();
@@ -1281,7 +1321,24 @@ export default function VaultPage() {
             ) : (
               <div className="flex-1 min-h-0 bg-[#1b1f2a] p-3">
                 <div className="h-full overflow-hidden rounded-lg border border-white/10 bg-[#1f2430] shadow-inner">
-                  <div ref={editorHostRef} className="vault-toast-editor h-full w-full" />
+                  {editorRuntime === "fallback" ? (
+                    <div className="h-full flex flex-col">
+                      {editorRuntimeMessage ? (
+                        <div className="border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
+                          {editorRuntimeMessage}
+                        </div>
+                      ) : null}
+                      <textarea
+                        ref={fallbackEditorRef}
+                        value={content}
+                        onChange={(event) => applyEditorChange(event.target.value)}
+                        className="h-full w-full resize-none border-0 bg-transparent px-4 py-3 font-mono text-sm leading-6 text-zinc-100 outline-none"
+                        spellCheck={false}
+                      />
+                    </div>
+                  ) : (
+                    <div ref={editorHostRef} className="vault-toast-editor h-full w-full" />
+                  )}
                 </div>
               </div>
             )}
