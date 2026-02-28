@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
+  ArrowRightLeft,
   BookOpen,
   ChevronLeft,
   ChevronRight,
@@ -15,14 +16,17 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   Hash,
   Link2,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
   Search,
   Sparkles,
   Tags,
+  Trash2,
   X,
 } from "lucide-react";
 import * as Y from "yjs";
@@ -85,6 +89,15 @@ interface VaultTreeNode {
   children: VaultTreeNode[];
   path?: string;
   note?: VaultNote;
+}
+
+interface PaletteCommand {
+  id: string;
+  label: string;
+  description: string;
+  shortcut?: string;
+  disabled?: boolean;
+  run: () => void;
 }
 
 function buildVaultTree(notes: VaultNote[]): VaultTreeNode[] {
@@ -238,6 +251,9 @@ export default function VaultPage() {
   const [yjsLiveMode, setYjsLiveMode] = useState(false);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+  const [leftPaneWidth, setLeftPaneWidth] = useState(320);
+  const [rightPaneWidth, setRightPaneWidth] = useState(320);
+  const [resizingPane, setResizingPane] = useState<"left" | "right" | null>(null);
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
@@ -339,6 +355,126 @@ export default function VaultPage() {
       toast.error(err?.message || "Failed to create note");
     }
   }, [index, openNote, refreshIndex]);
+
+  const createFolder = useCallback(async () => {
+    if (!index) return;
+    const raw = window.prompt("New folder path (inside vault):", "new-folder");
+    if (!raw) return;
+    const clean = raw.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+    if (!clean) return;
+    const fullPath = `${index.vaultPath}/${clean}`.replace(/\/+/g, "/");
+    try {
+      const res = await gatewayFetch("/api/files/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "mkdir", path: fullPath }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to create folder");
+      setExpandedFolders((prev) => {
+        const next = new Set(prev);
+        const parts = clean.split("/").filter(Boolean);
+        let current = "";
+        for (const part of parts) {
+          current = current ? `${current}/${part}` : part;
+          next.add(`folder:${current}`);
+        }
+        return next;
+      });
+      await refreshIndex();
+      toast.success("Folder created");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to create folder");
+    }
+  }, [index, refreshIndex]);
+
+  const renameCurrentNote = useCallback(async () => {
+    if (!index || !selectedPath) return;
+    const current = index.notes.find((note) => note.path === selectedPath);
+    if (!current) return;
+    const currentRel = current.vaultRelativePath;
+    const extMatch = currentRel.match(/\.(md|markdown)$/i);
+    const ext = extMatch?.[0] || ".md";
+    const slash = currentRel.lastIndexOf("/");
+    const dir = slash >= 0 ? `${currentRel.slice(0, slash + 1)}` : "";
+    const base = currentRel.slice(slash + 1).replace(/\.(md|markdown)$/i, "");
+    const raw = window.prompt("Rename note", base);
+    if (!raw) return;
+    const nextBase = raw.trim().replace(/[\\/]/g, "");
+    if (!nextBase) return;
+    const nextRel = `${dir}${nextBase}${ext}`;
+    const destination = `${index.vaultPath}/${nextRel}`.replace(/\/+/g, "/");
+    try {
+      const res = await gatewayFetch("/api/files/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "move", path: selectedPath, destination }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to rename note");
+      setOpenTabs((prev) => prev.map((path) => (path === selectedPath ? destination : path)));
+      setSelectedPath(destination);
+      await refreshIndex();
+      toast.success("Note renamed");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to rename note");
+    }
+  }, [index, refreshIndex, selectedPath]);
+
+  const moveCurrentNote = useCallback(async () => {
+    if (!index || !selectedPath) return;
+    const current = index.notes.find((note) => note.path === selectedPath);
+    if (!current) return;
+    const raw = window.prompt("Move note to path (inside vault)", current.vaultRelativePath);
+    if (!raw) return;
+    const clean = raw.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!clean) return;
+    const withExt = /\.(md|markdown)$/i.test(clean) ? clean : `${clean}.md`;
+    const destination = `${index.vaultPath}/${withExt}`.replace(/\/+/g, "/");
+    try {
+      const res = await gatewayFetch("/api/files/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "move", path: selectedPath, destination }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to move note");
+      setOpenTabs((prev) => prev.map((path) => (path === selectedPath ? destination : path)));
+      setSelectedPath(destination);
+      await refreshIndex();
+      toast.success("Note moved");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to move note");
+    }
+  }, [index, refreshIndex, selectedPath]);
+
+  const deleteCurrentNote = useCallback(async () => {
+    if (!selectedPath) return;
+    if (!window.confirm(`Delete note?\n\n${selectedPath}`)) return;
+    try {
+      const res = await gatewayFetch("/api/files/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", path: selectedPath }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to delete note");
+      const pathToDelete = selectedPath;
+      setOpenTabs((prev) => {
+        const idx = prev.indexOf(pathToDelete);
+        const next = prev.filter((path) => path !== pathToDelete);
+        if (selectedPath === pathToDelete) {
+          const fallback = next[Math.max(0, idx - 1)] || next[idx] || null;
+          setSelectedPath(fallback);
+        }
+        return next;
+      });
+      await refreshIndex();
+      toast.success("Note deleted");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to delete note");
+    }
+  }, [refreshIndex, selectedPath]);
 
   const analyzeInChat = useCallback(() => {
     if (!selectedPath) return;
@@ -523,6 +659,12 @@ export default function VaultPage() {
         void saveNote();
         return;
       }
+      if (withMod && key === "n") {
+        e.preventDefault();
+        if (e.shiftKey) void createFolder();
+        else void createNote();
+        return;
+      }
       if (withMod && (key === "p" || key === "o")) {
         e.preventDefault();
         setQuickSwitcherOpen(true);
@@ -548,7 +690,7 @@ export default function VaultPage() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [quickSwitcherOpen, saveNote]);
+  }, [createFolder, createNote, quickSwitcherOpen, saveNote]);
 
   useEffect(() => {
     if (!quickSwitcherOpen) return;
@@ -558,6 +700,49 @@ export default function VaultPage() {
     }, 10);
     return () => window.clearTimeout(id);
   }, [quickSwitcherOpen]);
+
+  useEffect(() => {
+    const leftStored = window.localStorage.getItem("vault_left_pane_width");
+    const rightStored = window.localStorage.getItem("vault_right_pane_width");
+    if (leftStored) {
+      const parsed = Number.parseInt(leftStored, 10);
+      if (Number.isFinite(parsed)) setLeftPaneWidth(Math.max(240, Math.min(520, parsed)));
+    }
+    if (rightStored) {
+      const parsed = Number.parseInt(rightStored, 10);
+      if (Number.isFinite(parsed)) setRightPaneWidth(Math.max(240, Math.min(520, parsed)));
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("vault_left_pane_width", String(leftPaneWidth));
+  }, [leftPaneWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem("vault_right_pane_width", String(rightPaneWidth));
+  }, [rightPaneWidth]);
+
+  useEffect(() => {
+    if (!resizingPane) return;
+    const onMouseMove = (event: MouseEvent) => {
+      const vw = window.innerWidth || 1440;
+      const min = 240;
+      const max = Math.min(520, Math.max(320, Math.floor(vw * 0.45)));
+      if (resizingPane === "left") {
+        setLeftPaneWidth(Math.max(min, Math.min(max, event.clientX)));
+      } else {
+        const next = vw - event.clientX;
+        setRightPaneWidth(Math.max(min, Math.min(max, next)));
+      }
+    };
+    const onMouseUp = () => setResizingPane(null);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [resizingPane]);
 
   useEffect(() => () => {
     void syncYjsOnce({ offline: true }).catch(() => {});
@@ -668,6 +853,112 @@ export default function VaultPage() {
     });
   }, [selectedPath]);
 
+  const paletteCommands = useMemo<PaletteCommand[]>(() => [
+    {
+      id: "new-note",
+      label: "New Note",
+      description: "Create a new markdown note in the vault",
+      shortcut: "Ctrl/Cmd+N",
+      run: () => { void createNote(); },
+    },
+    {
+      id: "new-folder",
+      label: "New Folder",
+      description: "Create a folder in the vault tree",
+      run: () => { void createFolder(); },
+    },
+    {
+      id: "save-note",
+      label: "Save Note",
+      description: "Save current note",
+      shortcut: "Ctrl/Cmd+S",
+      disabled: !selectedPath || !isDirty,
+      run: () => { void saveNote(); },
+    },
+    {
+      id: "rename-note",
+      label: "Rename Current Note",
+      description: "Rename the selected note",
+      disabled: !selectedPath,
+      run: () => { void renameCurrentNote(); },
+    },
+    {
+      id: "move-note",
+      label: "Move Current Note",
+      description: "Move selected note to another folder",
+      disabled: !selectedPath,
+      run: () => { void moveCurrentNote(); },
+    },
+    {
+      id: "delete-note",
+      label: "Delete Current Note",
+      description: "Delete selected note",
+      disabled: !selectedPath,
+      run: () => { void deleteCurrentNote(); },
+    },
+    {
+      id: "toggle-left",
+      label: leftSidebarOpen ? "Hide Left Explorer" : "Show Left Explorer",
+      description: "Toggle file explorer pane",
+      shortcut: "Ctrl/Cmd+B",
+      run: () => setLeftSidebarOpen((prev) => !prev),
+    },
+    {
+      id: "toggle-right",
+      label: rightSidebarOpen ? "Hide Right Context" : "Show Right Context",
+      description: "Toggle note context pane",
+      shortcut: "Ctrl/Cmd+.",
+      run: () => setRightSidebarOpen((prev) => !prev),
+    },
+    {
+      id: "view-edit",
+      label: "View: Edit",
+      description: "Switch editor to edit mode",
+      run: () => setViewMode("edit"),
+    },
+    {
+      id: "view-preview",
+      label: "View: Preview",
+      description: "Switch editor to preview mode",
+      run: () => setViewMode("preview"),
+    },
+    {
+      id: "view-split",
+      label: "View: Split",
+      description: "Switch editor to split mode",
+      run: () => setViewMode("split"),
+    },
+    {
+      id: "analyze",
+      label: "Analyze Current Note",
+      description: "Send current note context to agent chat",
+      disabled: !selectedPath,
+      run: () => analyzeInChat(),
+    },
+  ], [
+    analyzeInChat,
+    createFolder,
+    createNote,
+    deleteCurrentNote,
+    isDirty,
+    leftSidebarOpen,
+    moveCurrentNote,
+    renameCurrentNote,
+    rightSidebarOpen,
+    saveNote,
+    selectedPath,
+  ]);
+
+  const normalizedQuickSearch = quickSearch.replace(/^>\s*/, "").trim().toLowerCase();
+  const commandMode = quickSearch.trim().startsWith(">");
+  const filteredPaletteCommands = useMemo(() => {
+    if (!normalizedQuickSearch) return paletteCommands;
+    return paletteCommands.filter((command) =>
+      command.label.toLowerCase().includes(normalizedQuickSearch) ||
+      command.description.toLowerCase().includes(normalizedQuickSearch)
+    );
+  }, [normalizedQuickSearch, paletteCommands]);
+
   const renderTreeNodes = useCallback((nodes: VaultTreeNode[], depth = 0) => (
     nodes.map((node) => {
       if (node.type === "folder") {
@@ -719,7 +1010,10 @@ export default function VaultPage() {
       <div className="h-full bg-[#1f2129] text-zinc-100">
         <div className="flex h-full min-h-0">
           {leftSidebarOpen ? (
-            <aside className="w-[320px] min-w-[280px] max-w-[380px] border-r border-white/10 bg-[#171922] flex flex-col min-h-0">
+            <aside
+              className="shrink-0 min-w-[240px] max-w-[520px] border-r border-white/10 bg-[#171922] flex flex-col min-h-0"
+              style={{ width: leftPaneWidth }}
+            >
               <div className="border-b border-white/10 p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="text-[11px] uppercase tracking-[0.16em] text-zinc-400 flex items-center gap-1.5">
@@ -733,6 +1027,13 @@ export default function VaultPage() {
                       title="New note"
                     >
                       <Plus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => void createFolder()}
+                      className="p-1.5 rounded hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-100"
+                      title="New folder"
+                    >
+                      <FolderPlus className="h-3.5 w-3.5" />
                     </button>
                     <button
                       onClick={() => void refreshIndex()}
@@ -766,7 +1067,7 @@ export default function VaultPage() {
                 >
                   <span className="inline-flex items-center gap-1.5">
                     <Command className="h-3.5 w-3.5 text-zinc-500" />
-                    Quick Switcher
+                    Command Palette
                   </span>
                 </button>
                 <div className="flex items-center gap-3 text-[11px] text-zinc-500">
@@ -795,6 +1096,18 @@ export default function VaultPage() {
             </button>
           )}
 
+          {leftSidebarOpen ? (
+            <div
+              role="separator"
+              aria-label="Resize explorer"
+              className="hidden md:block w-1.5 cursor-col-resize bg-transparent hover:bg-cyan-400/30 transition-colors"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setResizingPane("left");
+              }}
+            />
+          ) : null}
+
           <section className="min-w-0 flex-1 flex flex-col">
             <div className="border-b border-white/10 bg-[#1b1d26] px-3 py-2 flex items-center gap-2">
               <button
@@ -815,7 +1128,7 @@ export default function VaultPage() {
                 onClick={() => setQuickSwitcherOpen(true)}
                 className="ml-1 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-zinc-300 hover:bg-white/[0.08]"
               >
-                Quick Switcher
+                Command Palette
               </button>
               <div className="ml-auto inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[11px] text-zinc-400">
                 <CircleDot className="h-3.5 w-3.5" />
@@ -889,6 +1202,30 @@ export default function VaultPage() {
                 <Sparkles className="h-3.5 w-3.5" />
                 Analyze
               </button>
+              <button
+                onClick={() => void renameCurrentNote()}
+                disabled={!selectedPath}
+                className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/[0.03] px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-50"
+                title="Rename note"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => void moveCurrentNote()}
+                disabled={!selectedPath}
+                className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/[0.03] px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-50"
+                title="Move note"
+              >
+                <ArrowRightLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => void deleteCurrentNote()}
+                disabled={!selectedPath}
+                className="inline-flex items-center gap-1.5 rounded-md border border-red-400/30 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-200 hover:bg-red-500/20 disabled:opacity-50"
+                title="Delete note"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
             </div>
 
             {!selectedPath ? (
@@ -957,7 +1294,22 @@ export default function VaultPage() {
           </section>
 
           {rightSidebarOpen ? (
-            <aside className="w-[320px] min-w-[280px] max-w-[380px] border-l border-white/10 bg-[#171922] flex flex-col min-h-0">
+            <div
+              role="separator"
+              aria-label="Resize context"
+              className="hidden md:block w-1.5 cursor-col-resize bg-transparent hover:bg-cyan-400/30 transition-colors"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setResizingPane("right");
+              }}
+            />
+          ) : null}
+
+          {rightSidebarOpen ? (
+            <aside
+              className="shrink-0 min-w-[240px] max-w-[520px] border-l border-white/10 bg-[#171922] flex flex-col min-h-0"
+              style={{ width: rightPaneWidth }}
+            >
               <div className="border-b border-white/10 px-3 py-2.5 flex items-center justify-between">
                 <div className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">Context</div>
                 <button
@@ -1094,26 +1446,73 @@ export default function VaultPage() {
                     ref={quickInputRef}
                     value={quickSearch}
                     onChange={(e) => setQuickSearch(e.target.value)}
-                    placeholder="Quick switcher: search notes by title, path, or tag..."
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      if (commandMode) {
+                        const command = filteredPaletteCommands.find((item) => !item.disabled);
+                        if (command) {
+                          command.run();
+                          setQuickSwitcherOpen(false);
+                          setQuickSearch("");
+                        }
+                        return;
+                      }
+                      const first = quickResults[0];
+                      if (first) selectNote(first.path);
+                    }}
+                    placeholder="Quick switcher: notes, or type > for commands..."
                     className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-500"
                   />
                 </div>
                 <div className="mt-2 text-[11px] text-zinc-500">
-                  Press <kbd className="rounded border border-white/20 px-1">Esc</kbd> to close • <kbd className="rounded border border-white/20 px-1">Ctrl/Cmd + P</kbd> to open
+                  Press <kbd className="rounded border border-white/20 px-1">Esc</kbd> to close • <kbd className="rounded border border-white/20 px-1">Ctrl/Cmd + P</kbd> to open • <kbd className="rounded border border-white/20 px-1">Ctrl/Cmd + N</kbd> new note
                 </div>
               </div>
               <div className="max-h-[55vh] overflow-auto p-2">
-                {quickResults.length ? quickResults.map((note) => (
-                  <button
-                    key={note.path}
-                    onClick={() => selectNote(note.path)}
-                    className="w-full rounded-md px-3 py-2 text-left hover:bg-white/[0.06]"
-                  >
-                    <div className="text-sm text-zinc-100 truncate">{note.title}</div>
-                    <div className="text-[11px] text-zinc-500 truncate">{note.vaultRelativePath}</div>
-                  </button>
-                )) : (
-                  <div className="px-3 py-3 text-sm text-zinc-500">No matching notes.</div>
+                {commandMode ? (
+                  <>
+                    <div className="px-3 py-1.5 text-[11px] uppercase tracking-[0.16em] text-zinc-500">Commands</div>
+                    {filteredPaletteCommands.length ? filteredPaletteCommands.map((command) => (
+                      <button
+                        key={command.id}
+                        onClick={() => {
+                          if (command.disabled) return;
+                          command.run();
+                          setQuickSwitcherOpen(false);
+                          setQuickSearch("");
+                        }}
+                        disabled={command.disabled}
+                        className="w-full rounded-md px-3 py-2 text-left hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm text-zinc-100 truncate">{command.label}</div>
+                          {command.shortcut ? (
+                            <span className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-zinc-500">{command.shortcut}</span>
+                          ) : null}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 truncate">{command.description}</div>
+                      </button>
+                    )) : (
+                      <div className="px-3 py-3 text-sm text-zinc-500">No matching commands.</div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="px-3 py-1.5 text-[11px] uppercase tracking-[0.16em] text-zinc-500">Notes</div>
+                    {quickResults.length ? quickResults.map((note) => (
+                      <button
+                        key={note.path}
+                        onClick={() => selectNote(note.path)}
+                        className="w-full rounded-md px-3 py-2 text-left hover:bg-white/[0.06]"
+                      >
+                        <div className="text-sm text-zinc-100 truncate">{note.title}</div>
+                        <div className="text-[11px] text-zinc-500 truncate">{note.vaultRelativePath}</div>
+                      </button>
+                    )) : (
+                      <div className="px-3 py-3 text-sm text-zinc-500">No matching notes.</div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
