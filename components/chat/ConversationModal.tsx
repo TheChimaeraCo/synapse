@@ -40,6 +40,23 @@ interface ConversationFile {
   url?: string;
 }
 
+interface ConversationKnowledge {
+  _id: string;
+  category: string;
+  key: string;
+  value: string;
+  confidence: number;
+  source?: string;
+  sourceType?: "conversation" | "message";
+  sourceMessage?: {
+    _id: string;
+    role: string;
+    content: string;
+    createdAt: number;
+  } | null;
+  updatedAt?: number;
+}
+
 interface Props {
   conversationId: string;
   onClose: () => void;
@@ -64,17 +81,23 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
   const [convo, setConvo] = useState<ConversationData | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [files, setFiles] = useState<ConversationFile[]>([]);
+  const [knowledgeEntries, setKnowledgeEntries] = useState<ConversationKnowledge[]>([]);
   const [loading, setLoading] = useState(true);
   const [showMessages, setShowMessages] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      setConvo(null);
+      setMessages([]);
+      setFiles([]);
+      setKnowledgeEntries([]);
       try {
-        const [convoRes, msgsRes, filesRes] = await Promise.all([
+        const [convoRes, msgsRes, filesRes, knowledgeRes] = await Promise.all([
           gatewayFetch(`/api/conversations/${conversationId}`),
           gatewayFetch(`/api/conversations/${conversationId}/messages`),
           gatewayFetch(`/api/conversations/${conversationId}/files?includeChain=true`),
+          gatewayFetch(`/api/conversations/${conversationId}/knowledge`),
         ]);
         if (convoRes.ok) {
           const data = await convoRes.json();
@@ -87,6 +110,10 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
         if (filesRes.ok) {
           const data = await filesRes.json();
           setFiles(data.files || []);
+        }
+        if (knowledgeRes.ok) {
+          const data = await knowledgeRes.json();
+          setKnowledgeEntries(data.entries || []);
         }
       } catch {}
       setLoading(false);
@@ -246,6 +273,38 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
                 </div>
               )}
 
+              {knowledgeEntries.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">
+                    Saved Knowledge ({knowledgeEntries.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {knowledgeEntries.slice(0, 20).map((entry) => (
+                      <div key={entry._id} className="glass rounded-lg p-3">
+                        <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                          <span className="text-[10px] font-medium uppercase tracking-wide text-blue-300 bg-blue-500/15 px-2 py-0.5 rounded-full">
+                            {entry.sourceType === "message" ? "from message" : "from summary"}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 uppercase">{entry.category}</span>
+                          <span className="text-[10px] text-zinc-500">
+                            confidence {Math.round((entry.confidence || 0) * 100)}%
+                          </span>
+                        </div>
+                        <p className="text-sm text-zinc-300">
+                          <span className="text-zinc-400">{entry.key}:</span> {entry.value}
+                        </p>
+                        {entry.sourceMessage?.content && (
+                          <p className="text-[11px] text-zinc-500 mt-1">
+                            Source ({entry.sourceMessage.role}): {entry.sourceMessage.content.slice(0, 140)}
+                            {entry.sourceMessage.content.length > 140 ? "..." : ""}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Messages toggle */}
               <div>
                 <button
@@ -321,7 +380,7 @@ export function ConversationModal({ conversationId, onClose, onContinue }: Props
               )}
 
               {/* Empty state */}
-              {!convo?.summary && (!convo?.topics || convo.topics.length === 0) && (!convo?.decisions || convo.decisions.length === 0) && (!convo?.stateUpdates || convo.stateUpdates.length === 0) && messages.length === 0 && files.length === 0 && (
+              {!convo?.summary && (!convo?.topics || convo.topics.length === 0) && (!convo?.decisions || convo.decisions.length === 0) && (!convo?.stateUpdates || convo.stateUpdates.length === 0) && knowledgeEntries.length === 0 && messages.length === 0 && files.length === 0 && (
                 <div className="text-center text-zinc-600 py-8">
                   <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm">This conversation hasn't been summarized yet.</p>

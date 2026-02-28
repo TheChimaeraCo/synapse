@@ -142,6 +142,7 @@ async function persistStateUpdatesAsKnowledge(args: {
   gatewayId: Id<"gateways">;
   sessionId: Id<"sessions">;
   agentId: Id<"agents">;
+  sourceMessageId?: Id<"messages">;
   updates: Array<{
     domain: string;
     attribute: string;
@@ -185,8 +186,40 @@ async function persistStateUpdatesAsKnowledge(args: {
       value: value.slice(0, 240),
       confidence: typeof update.confidence === "number" ? Math.max(0.5, Math.min(1, update.confidence)) : 0.8,
       source: "conversation_summary",
+      sourceMessageId: args.sourceMessageId,
     });
   }
+}
+
+async function resolveSourceMessageId(
+  conversationId: Id<"conversations">,
+  convo: {
+    sessionId: Id<"sessions">;
+    startSeq?: number;
+    endSeq?: number;
+  }
+): Promise<Id<"messages"> | undefined> {
+  let messages: Array<{ _id?: Id<"messages">; role: string }> = [];
+  if (
+    typeof convo.startSeq === "number" &&
+    typeof convo.endSeq === "number" &&
+    convo.endSeq >= convo.startSeq
+  ) {
+    messages = await convexClient.query(api.functions.messages.getBySeqRange, {
+      sessionId: convo.sessionId,
+      startSeq: convo.startSeq,
+      endSeq: convo.endSeq,
+    }) as any;
+  } else {
+    messages = await convexClient.query(api.functions.messages.listByConversation, {
+      conversationId,
+      limit: 200,
+    }) as any;
+  }
+
+  const filtered = messages.filter((m: any) => m.role === "user" || m.role === "assistant");
+  return filtered.slice().reverse().find((m: any) => m.role === "user" && m._id)?._id
+    || filtered[filtered.length - 1]?._id;
 }
 
 function parseBool(value: unknown): boolean {
@@ -406,12 +439,18 @@ export async function summarizeConversation(
     if (!convo || convo.status !== "closed") return;
     if (convo.summary) {
       try {
+        const sourceMessageId = await resolveSourceMessageId(conversationId, {
+          sessionId: convo.sessionId,
+          startSeq: convo.startSeq,
+          endSeq: convo.endSeq,
+        }).catch(() => undefined);
         const session = await convexClient.query(api.functions.sessions.get, { id: convo.sessionId });
         if (session?.agentId && Array.isArray(convo.stateUpdates) && convo.stateUpdates.length > 0) {
           await persistStateUpdatesAsKnowledge({
             gatewayId: convo.gatewayId,
             sessionId: convo.sessionId,
             agentId: session.agentId,
+            sourceMessageId,
             updates: convo.stateUpdates,
           });
         }
@@ -423,7 +462,7 @@ export async function summarizeConversation(
 
     // Get messages for this exact conversation segment.
     // Prefer seq range because it's stable even for old rows missing conversationId.
-    let messages: Array<{ role: string; content: string; seq?: number; conversationId?: Id<"conversations"> }> = [];
+    let messages: Array<{ _id?: Id<"messages">; role: string; content: string; seq?: number; conversationId?: Id<"conversations"> }> = [];
     if (
       typeof convo.startSeq === "number" &&
       typeof convo.endSeq === "number" &&
@@ -451,6 +490,8 @@ export async function summarizeConversation(
     }
 
     messages = messages.filter((m) => m.role === "user" || m.role === "assistant");
+    const sourceMessageId = messages.slice().reverse().find((m: any) => m.role === "user" && m._id)?._id
+      || messages[messages.length - 1]?._id;
 
     if (messages.length < 2) {
       // Too few messages, just set a basic title
@@ -546,6 +587,7 @@ export async function summarizeConversation(
           gatewayId: convo.gatewayId,
           sessionId: convo.sessionId,
           agentId: session.agentId,
+          sourceMessageId,
           updates: stateUpdates,
         });
       } catch (err) {
