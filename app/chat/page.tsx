@@ -125,6 +125,17 @@ export default function ChatPage() {
     window.dispatchEvent(new CustomEvent("synapse:active-session", { detail: { sessionId } }));
   }, [sessionId]);
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
+      if (event.key.toLowerCase() !== "k") return;
+      event.preventDefault();
+      setConvoSidebarOpen(true);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   const handleSelectConversation = useCallback((id: string, startSeq?: number) => {
     if (startSeq) setScrollToSeq(startSeq);
   }, []);
@@ -195,6 +206,13 @@ export default function ChatPage() {
     }, 500);
   }, [askInPopup, gatewayId, activeChannel]);
 
+  const handleChatSurfaceClick = useCallback((event: any) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest("button, a, input, textarea, select, [role='button'], [contenteditable='true']")) return;
+    window.dispatchEvent(new Event("synapse:focus-composer"));
+  }, []);
+
   if (loading) {
     return (
       <AppShell title="Chat">
@@ -256,7 +274,11 @@ export default function ChatPage() {
           />
 
           {sessionId ? (
-            <div className="flex flex-1 flex-col min-h-0 overflow-hidden" onMouseUp={handleMouseUp}>
+            <div
+              className="flex flex-1 flex-col min-h-0 overflow-hidden"
+              onMouseUp={handleMouseUp}
+              onClickCapture={handleChatSurfaceClick}
+            >
               <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain">
                 <ChatWindow sessionId={sessionId} scrollToSeq={scrollToSeq} />
               </div>

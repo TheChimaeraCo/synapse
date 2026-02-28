@@ -232,6 +232,16 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     }
   }, [loaded, messages, sessionId]);
 
+  useEffect(() => {
+    const lastUser = [...messages].reverse().find((m: any) => m.role === "user" && m.content?.trim());
+    if (!lastUser?.content) return;
+    window.dispatchEvent(
+      new CustomEvent("synapse:last-user-message", {
+        detail: { sessionId, content: lastUser.content },
+      })
+    );
+  }, [messages, sessionId]);
+
   const scrollToBottom = useCallback(() => {
     const container = getScrollContainer();
     if (container) {

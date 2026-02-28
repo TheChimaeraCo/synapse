@@ -4,7 +4,7 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, Bot, ChevronDown, Clock, Volume2 } from "lucide-react";
+import { Send, Square, X, Paperclip, FileIcon, Loader2, Mic, Bot, ChevronDown, Clock, Volume2, RotateCcw, Star } from "lucide-react";
 import { toast } from "sonner";
 import { useSession } from "next-auth/react";
 import { getCommandSuggestions } from "@/lib/slashCommands";
@@ -25,6 +25,21 @@ type BrowserSpeechRecognition = {
 
 type BrowserSpeechRecognitionCtor = new () => BrowserSpeechRecognition;
 
+type ComposerShortcutMode = "enter" | "mod-enter";
+
+const QUICK_PROMPTS = [
+  { id: "plan", label: "Plan Task", prompt: "Break this task into clear steps and start with the highest-impact step." },
+  { id: "summarize", label: "Summarize", prompt: "Summarize this into key points, decisions, and next actions." },
+  { id: "debug", label: "Debug", prompt: "Debug this issue step by step and provide the exact fix." },
+  { id: "ship", label: "Ship It", prompt: "Implement the change now and include verification output." },
+];
+
+const CONTEXT_CHIPS = [
+  { id: "vault", label: "Vault Context", text: "Use relevant notes from Vault as context for this response." },
+  { id: "history", label: "Prior Context", text: "Reference important decisions from earlier in this conversation." },
+  { id: "files", label: "File Context", text: "If files are attached, extract key details before answering." },
+];
+
 export function ChatInput({ sessionId }: { sessionId: string }) {
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
@@ -36,6 +51,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
+  const [sendShortcut, setSendShortcut] = useState<ComposerShortcutMode>("enter");
+  const [favoritePromptIds, setFavoritePromptIds] = useState<string[]>([]);
+  const [usage, setUsage] = useState<{ totalTokens: number; cost: number } | null>(null);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
   const [transcribing, setTranscribing] = useState(false);
@@ -77,6 +95,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const streamSpeechQueueRef = useRef<string[]>([]);
   const streamSpeechLoopActiveRef = useRef(false);
   const streamSpeechUsedRef = useRef(false);
+  const lastUserMessageRef = useRef<string>("");
   const processingVoiceTurnRef = useRef(false);
   const groqTtsUnavailableRef = useRef(false);
   const voiceInputStreamRef = useRef<MediaStream | null>(null);
@@ -113,6 +132,37 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     textarea.style.height = `${nextHeight}px`;
     textarea.style.overflowY = textarea.scrollHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
   }, []);
+
+  const insertIntoComposer = useCallback((text: string) => {
+    setContent((prev) => (prev.trim().length ? `${prev.trimEnd()}\n${text}` : text));
+    focusComposer();
+  }, [focusComposer]);
+
+  const toggleFavoritePrompt = useCallback((promptId: string) => {
+    setFavoritePromptIds((prev) =>
+      prev.includes(promptId) ? prev.filter((id) => id !== promptId) : [...prev, promptId]
+    );
+  }, []);
+
+  const restoreLastUserMessage = useCallback(async () => {
+    if (lastUserMessageRef.current) {
+      setContent(lastUserMessageRef.current);
+      focusComposer();
+      return;
+    }
+    try {
+      const res = await gatewayFetch(`/api/sessions/${sessionId}/messages?limit=80`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const messages = Array.isArray(data?.messages) ? data.messages : [];
+      const lastUser = [...messages].reverse().find((m: any) => m.role === "user" && m.content?.trim());
+      if (lastUser?.content?.trim()) {
+        lastUserMessageRef.current = lastUser.content;
+        setContent(lastUser.content);
+        focusComposer();
+      }
+    } catch {}
+  }, [focusComposer, sessionId]);
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
@@ -158,12 +208,94 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedShortcut = localStorage.getItem("synapse:chat:send-shortcut");
+    if (storedShortcut === "enter" || storedShortcut === "mod-enter") {
+      setSendShortcut(storedShortcut);
+    }
+    const storedFavorites = localStorage.getItem("synapse:chat:favorite-prompts");
+    if (storedFavorites) {
+      try {
+        const parsed = JSON.parse(storedFavorites);
+        if (Array.isArray(parsed)) setFavoritePromptIds(parsed.filter((v) => typeof v === "string"));
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("synapse:chat:send-shortcut", sendShortcut);
+  }, [sendShortcut]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("synapse:chat:favorite-prompts", JSON.stringify(favoritePromptIds));
+  }, [favoritePromptIds]);
+
+  useEffect(() => {
     focusComposer(120);
   }, [focusComposer, sessionId]);
 
   useEffect(() => {
     resizeComposer();
   }, [content, resizeComposer]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const draftKey = `synapse:chat:draft:${sessionId}`;
+    const saved = localStorage.getItem(draftKey);
+    if (saved != null && saved.length > 0) {
+      setContent(saved);
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const draftKey = `synapse:chat:draft:${sessionId}`;
+    if (!content.trim()) {
+      localStorage.removeItem(draftKey);
+      return;
+    }
+    localStorage.setItem(draftKey, content);
+  }, [content, sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchUsage = async () => {
+      try {
+        const res = await gatewayFetch(`/api/sessions/${sessionId}/cost`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        setUsage({
+          totalTokens: Number(data?.totalTokens || 0),
+          cost: Number(data?.cost || 0),
+        });
+      } catch {}
+    };
+    void fetchUsage();
+    const id = window.setInterval(fetchUsage, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    const handler = () => focusComposer();
+    window.addEventListener("synapse:focus-composer", handler);
+    return () => window.removeEventListener("synapse:focus-composer", handler);
+  }, [focusComposer]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { content?: string } | undefined;
+      if (detail?.content?.trim()) {
+        lastUserMessageRef.current = detail.content;
+      }
+    };
+    window.addEventListener("synapse:last-user-message", handler);
+    return () => window.removeEventListener("synapse:last-user-message", handler);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -397,6 +529,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     if (!messageToSend) return;
 
     // Now send the message
+    lastUserMessageRef.current = messageToSend;
     setSending(true);
     try {
       await sendMessage(messageToSend);
@@ -420,7 +553,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     })();
   };
 
-  const handleComposerClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+  const handleComposerClick = useCallback((event: any) => {
     const target = event.target as HTMLElement | null;
     if (!target) return;
     if (target.closest("button, input, textarea, a, select, [role='button']")) return;
@@ -1417,7 +1550,24 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       }
     }
 
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Escape" && chatStreaming) {
+      e.preventDefault();
+      handleStop();
+      return;
+    }
+
+    if (e.key === "ArrowUp" && !content.trim() && !showSuggestions) {
+      e.preventDefault();
+      void restoreLastUserMessage();
+      return;
+    }
+
+    const wantsSend =
+      sendShortcut === "enter"
+        ? e.key === "Enter" && !e.shiftKey
+        : e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey;
+
+    if (wantsSend) {
       e.preventDefault();
       handleSend();
     }
@@ -1493,6 +1643,16 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               ringClass: "border-cyan-200/30",
               coreClass: "from-cyan-300 via-sky-300 to-blue-500 animate-pulse-glow",
             };
+  const activeSuggestion = showSuggestions ? suggestions[selectedIdx] : null;
+  const favoritePrompts = QUICK_PROMPTS.filter((p) => favoritePromptIds.includes(p.id));
+  const quickPrompts = [
+    ...favoritePrompts,
+    ...QUICK_PROMPTS.filter((p) => !favoritePromptIds.includes(p.id)),
+  ].slice(0, 4);
+  const sendHint =
+    sendShortcut === "enter"
+      ? "Enter to send • Shift+Enter for newline"
+      : "Cmd/Ctrl+Enter to send • Enter for newline";
 
   return (
     <div
@@ -1517,6 +1677,64 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             ))}
           </div>
         )}
+
+        {activeSuggestion && (
+          <div className="mb-2 rounded-lg border border-cyan-300/20 bg-cyan-500/[0.08] px-3 py-2 text-xs text-cyan-100">
+            <span className="font-mono text-cyan-200">/{activeSuggestion.name}</span>
+            <span className="ml-2 text-cyan-100/90">{activeSuggestion.description}</span>
+            <span className="ml-2 text-cyan-200/70">{activeSuggestion.usage}</span>
+          </div>
+        )}
+
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {quickPrompts.map((prompt) => {
+            const favorite = favoritePromptIds.includes(prompt.id);
+            return (
+              <div
+                key={prompt.id}
+                className="inline-flex items-center gap-1 rounded-full border border-white/[0.12] bg-white/[0.04] px-1 py-1 text-[11px]"
+                title={prompt.prompt}
+              >
+                <button
+                  type="button"
+                  onClick={() => insertIntoComposer(prompt.prompt)}
+                  className="rounded-full px-2 py-0.5 text-zinc-300 hover:bg-white/[0.08] transition-colors"
+                >
+                  {prompt.label}
+                </button>
+                <button
+                  type="button"
+                  aria-label={favorite ? `Remove ${prompt.label} from favorites` : `Favorite ${prompt.label}`}
+                  onClick={() => toggleFavoritePrompt(prompt.id)}
+                  className={favorite ? "rounded-full p-1 text-yellow-300 hover:bg-white/[0.08]" : "rounded-full p-1 text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.08]"}
+                >
+                  <Star className={`h-3 w-3 ${favorite ? "fill-yellow-300" : ""}`} />
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setSendShortcut((prev) => (prev === "enter" ? "mod-enter" : "enter"))}
+            className="rounded-full border border-white/[0.12] bg-white/[0.04] px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.08] transition-colors"
+            title="Toggle send shortcut"
+          >
+            {sendShortcut === "enter" ? "Enter Send" : "Cmd/Ctrl+Enter Send"}
+          </button>
+        </div>
+
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {CONTEXT_CHIPS.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => insertIntoComposer(chip.text)}
+              className="rounded-full border border-white/[0.1] bg-white/[0.03] px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.07] transition-colors"
+            >
+              + {chip.label}
+            </button>
+          ))}
+        </div>
 
         {voiceMode && (
           <div className="mb-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-2xl px-4 py-3">
@@ -1658,6 +1876,19 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             className="min-h-[68px] max-h-56 resize-none bg-card text-base sm:text-sm leading-relaxed"
             rows={2}
           />
+          {!chatStreaming && !content.trim() && !attachedFile && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => (window as any).__synapse_chat?.retryLastMessage?.()}
+              className="shrink-0 self-end min-w-[44px] min-h-[44px] text-zinc-400 hover:text-zinc-200"
+              aria-label="Regenerate last response"
+              title="Regenerate last response"
+            >
+              <RotateCcw className="h-4 w-4" />
+            </Button>
+          )}
           {chatStreaming ? (
             <Button
               onClick={handleStop}
@@ -1678,6 +1909,17 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             >
               <Send className="h-4 w-4" />
             </Button>
+          )}
+        </div>
+
+        <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
+          <span>{sendHint} • Esc to stop • ↑ to edit last prompt</span>
+          {usage ? (
+            <span>
+              {usage.totalTokens.toLocaleString()} tokens • ${usage.cost.toFixed(4)}
+            </span>
+          ) : (
+            <span>Usage loading...</span>
           )}
         </div>
       </div>
