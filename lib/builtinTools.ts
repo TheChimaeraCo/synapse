@@ -1836,6 +1836,42 @@ const newConversation: BuiltinTool = {
 
 function parseNaturalTime(when: string, now: number): { scheduledAt?: number; cronExpr?: string } {
   const lower = when.toLowerCase().trim();
+  const dayNames: Record<string, number> = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  };
+
+  const parseClock = (rawHour?: string, rawMinute?: string, ampm?: string): { hour: number; minute: number } => {
+    let hour = parseInt(rawHour || "9", 10);
+    const minute = parseInt(rawMinute || "0", 10);
+    const suffix = (ampm || "").toLowerCase();
+    if (suffix === "pm" && hour < 12) hour += 12;
+    if (suffix === "am" && hour === 12) hour = 0;
+    return { hour, minute };
+  };
+
+  const resolveWeekday = (
+    weekday: number,
+    mode: "next" | "this_or_next",
+    hour: number,
+    minute: number,
+  ): number => {
+    const d = new Date(now);
+    const current = d.getDay();
+    let delta = (weekday - current + 7) % 7;
+    if (mode === "next" && delta === 0) delta = 7;
+    d.setDate(d.getDate() + delta);
+    d.setHours(hour, minute, 0, 0);
+    if (mode === "this_or_next" && d.getTime() <= now) {
+      d.setDate(d.getDate() + 7);
+    }
+    return d.getTime();
+  };
 
   // "in X minutes/hours/days"
   const inMatch = lower.match(/^in\s+(\d+)\s+(minute|min|hour|hr|day|week)s?$/);
@@ -1849,28 +1885,36 @@ function parseNaturalTime(when: string, now: number): { scheduledAt?: number; cr
   // "tomorrow at HH:MM" or "tomorrow at Ham/Hpm"
   const tomorrowMatch = lower.match(/^tomorrow\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (tomorrowMatch) {
-    let h = parseInt(tomorrowMatch[1]);
-    const m = parseInt(tomorrowMatch[2] || "0");
-    const ampm = tomorrowMatch[3];
-    if (ampm === "pm" && h < 12) h += 12;
-    if (ampm === "am" && h === 12) h = 0;
+    const { hour, minute } = parseClock(tomorrowMatch[1], tomorrowMatch[2], tomorrowMatch[3]);
     const d = new Date(now);
-    d.setUTCDate(d.getUTCDate() + 1);
-    d.setUTCHours(h, m, 0, 0);
+    d.setDate(d.getDate() + 1);
+    d.setHours(hour, minute, 0, 0);
     return { scheduledAt: d.getTime() };
+  }
+
+  // "next friday at 3pm" / "next friday"
+  const nextDowMatch = lower.match(/^next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/);
+  if (nextDowMatch) {
+    const weekday = dayNames[nextDowMatch[1]];
+    const { hour, minute } = parseClock(nextDowMatch[2], nextDowMatch[3], nextDowMatch[4]);
+    return { scheduledAt: resolveWeekday(weekday, "next", hour, minute) };
+  }
+
+  // "friday at 3pm" / "this friday at 3pm" / "friday"
+  const dowMatch = lower.match(/^(?:this\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/);
+  if (dowMatch) {
+    const weekday = dayNames[dowMatch[1]];
+    const { hour, minute } = parseClock(dowMatch[2], dowMatch[3], dowMatch[4]);
+    return { scheduledAt: resolveWeekday(weekday, "this_or_next", hour, minute) };
   }
 
   // "at HH:MM" (today or tomorrow if past)
   const atMatch = lower.match(/^at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (atMatch) {
-    let h = parseInt(atMatch[1]);
-    const m = parseInt(atMatch[2] || "0");
-    const ampm = atMatch[3];
-    if (ampm === "pm" && h < 12) h += 12;
-    if (ampm === "am" && h === 12) h = 0;
+    const { hour, minute } = parseClock(atMatch[1], atMatch[2], atMatch[3]);
     const d = new Date(now);
-    d.setUTCHours(h, m, 0, 0);
-    if (d.getTime() <= now) d.setUTCDate(d.getUTCDate() + 1);
+    d.setHours(hour, minute, 0, 0);
+    if (d.getTime() <= now) d.setDate(d.getDate() + 1);
     return { scheduledAt: d.getTime() };
   }
 
@@ -1886,7 +1930,6 @@ function parseNaturalTime(when: string, now: number): { scheduledAt?: number; cr
   }
 
   // "every week at HH:MM" or "every Monday/Tuesday/etc at HH:MM"
-  const dayNames: Record<string, number> = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
   const everyDowMatch = lower.match(/^every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|week)\s*(?:at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/);
   if (everyDowMatch) {
     const dayOrWeek = everyDowMatch[1];
@@ -1953,11 +1996,14 @@ const addCalendarEvent: BuiltinTool = {
       const durationMinutes = Number.isFinite(args.duration_minutes)
         ? Math.max(5, Math.min(24 * 60, Math.floor(args.duration_minutes)))
         : 60;
+      const whenText = typeof args.when === "string" ? args.when.trim() : "";
+      const naturalWhen = whenText ? parseNaturalTime(whenText, now).scheduledAt : undefined;
 
       const startAt =
         parseCalendarTimestamp(args.start_at)
-        ?? parseCalendarTimestamp(args.when)
-        ?? parseNaturalTime(args.when || "", now).scheduledAt
+        ?? naturalWhen
+        // Keep as last-resort fallback for absolute date-like strings.
+        ?? (whenText ? parseCalendarTimestamp(whenText) : null)
         ?? (now + 30 * 60 * 1000);
 
       let endAt =
