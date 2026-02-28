@@ -41,29 +41,31 @@ function useConversationData(convoId: string | undefined) {
   return data;
 }
 
-export function ConversationSavedDivider({ conversationId }: { conversationId: string }) {
-  const data = useConversationData(conversationId);
+export function ConversationSavedDivider({
+  conversationId,
+  conversation,
+}: {
+  conversationId?: string;
+  conversation?: ConversationData | null;
+}) {
+  const fetched = useConversationData(conversationId);
+  const data = conversation ?? fetched;
 
   return (
-    <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-4 my-6 text-center backdrop-blur-xl">
-      <div className="text-white/15 text-[10px] tracking-[0.2em] uppercase mb-2 font-medium">
-        ── topic shift ──
+    <div className="my-6">
+      <div className="flex items-center gap-3 text-white/40 text-[10px] tracking-[0.24em] uppercase font-medium">
+        <span className="h-px flex-1 bg-white/[0.12]" />
+        <span>New Convo</span>
+        <span className="h-px flex-1 bg-white/[0.12]" />
       </div>
-      {data?.title && (
-        <div className="text-zinc-300 text-sm font-medium mb-1">{data.title}</div>
-      )}
-      {data?.summary && (
-        <div className="text-zinc-500 text-xs mb-2 max-w-lg mx-auto">{data.summary}</div>
-      )}
-      {data?.tags && data.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 justify-center">
-          {data.tags.map((t, i) => (
-            <span key={i} className="bg-blue-500/15 text-blue-300/80 px-2 py-0.5 rounded-full text-xs">
-              {t}
-            </span>
-          ))}
+      <div className="mt-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 backdrop-blur-xl">
+        {data?.title ? (
+          <div className="text-zinc-300 text-xs font-medium mb-1">{data.title}</div>
+        ) : null}
+        <div className="text-zinc-500 text-xs">
+          {data?.summary?.trim() || "Starting a new conversation thread."}
         </div>
-      )}
+      </div>
     </div>
   );
 }

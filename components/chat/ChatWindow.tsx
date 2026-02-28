@@ -1,7 +1,7 @@
 "use client";
 import { gatewayFetch } from "@/lib/gatewayFetch";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { MessageBubble } from "./MessageBubble";
 import { ConversationSavedDivider } from "./ConversationDivider";
@@ -16,6 +16,7 @@ import { toast } from "sonner";
 interface ConversationBookmark {
   _id: string;
   title?: string;
+  summary?: string;
   tags?: string[];
   startSeq?: number;
   endSeq?: number;
@@ -40,6 +41,23 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     () => scrollContainerRef.current?.closest(".overflow-y-auto") as HTMLElement | null,
     []
   );
+  const convoByStartSeq = useMemo(() => {
+    const map = new Map<number, ConversationBookmark>();
+    for (const convo of conversations) {
+      if (typeof convo.startSeq !== "number") continue;
+      if (!map.has(convo.startSeq)) map.set(convo.startSeq, convo);
+    }
+    return map;
+  }, [conversations]);
+  const convoByBoundarySeq = useMemo(() => {
+    const map = new Map<number, ConversationBookmark>();
+    for (const convo of conversations) {
+      if (typeof convo.endSeq !== "number") continue;
+      const boundary = convo.endSeq + 1;
+      if (!map.has(boundary)) map.set(boundary, convo);
+    }
+    return map;
+  }, [conversations]);
 
   // Fetch pinned messages
   const fetchPins = useCallback(async () => {
@@ -273,18 +291,18 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
 
       <div className="flex flex-col gap-4 max-w-4xl mx-auto w-full">
         {messages.map((msg: any, idx: number) => {
-          // Check if a closed conversation ends right before this message
-          const closedConvo = conversations.find(
-            (c) => c.status === "closed" && c.endSeq != null && msg.seq != null && msg.seq === (c.endSeq! + 1)
-          );
+          const seq = typeof msg.seq === "number" ? msg.seq : null;
+          const startedConvo = seq != null ? convoByStartSeq.get(seq) : undefined;
+          const closedBoundaryConvo = seq != null ? convoByBoundarySeq.get(seq) : undefined;
+          const boundaryConvo = idx > 0 ? startedConvo ?? closedBoundaryConvo : undefined;
           // Show timestamp divider if 5+ minute gap from previous message
           const prevMsg = idx > 0 ? messages[idx - 1] : null;
           const showTimestamp = prevMsg && msg._creationTime && prevMsg._creationTime &&
             (msg._creationTime - prevMsg._creationTime) >= 5 * 60 * 1000;
           return (
             <div key={msg._id}>
-              {closedConvo && (
-                <ConversationSavedDivider conversationId={closedConvo._id} />
+              {boundaryConvo && (
+                <ConversationSavedDivider conversation={boundaryConvo} conversationId={boundaryConvo._id} />
               )}
               {showTimestamp && (
                 <div className="flex justify-center py-2">
