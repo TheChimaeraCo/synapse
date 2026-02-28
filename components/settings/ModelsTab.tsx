@@ -1,7 +1,7 @@
 "use client";
 import { HelpTooltip } from "@/components/HelpTooltip";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ModelSearchInput } from "@/components/settings/ModelSearchInput";
@@ -40,7 +40,7 @@ export function ModelsTab() {
   const fallbacks = get("fallback_chain") ? get("fallback_chain").split(",") : [];
   const imageModel = get("image_model", "");
   const thinkingLevel = get("thinking_level", "off");
-  const modelSuggestions = useMemo(() => {
+  const modelSuggestions = (() => {
     const out = new Set<string>();
     for (const model of ALL_MODELS) out.add(model);
     for (const model of allowlist) out.add(model);
@@ -50,7 +50,7 @@ export function ModelsTab() {
     if (newAlias.model) out.add(newAlias.model);
     if (newFallback) out.add(newFallback);
     return Array.from(out).sort((a, b) => a.localeCompare(b));
-  }, [allowlist, fallbacks, aliases, imageModel, newAlias.model, newFallback]);
+  })();
 
   const toggleModel = (model: string) => {
     const updated = allowlist.includes(model)

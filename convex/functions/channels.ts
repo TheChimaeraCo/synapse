@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "../_generated/server";
+import type { Doc } from "../_generated/dataModel";
 
 export const list = query({
   args: { gatewayId: v.id("gateways") },
@@ -233,7 +234,7 @@ export const getPublicMessages = query({
     const channelSessions = sessions.filter((s) => s.channelId === args.channelId);
     if (channelSessions.length === 0) return [];
     // Get messages from all sessions in this channel
-    const allMessages = [];
+    const allMessages: Doc<"messages">[] = [];
     for (const sess of channelSessions) {
       const msgs = await ctx.db
         .query("messages")

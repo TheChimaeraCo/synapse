@@ -95,7 +95,7 @@ export const getStats = query({
       .withIndex("by_gatewayId", (q) => q.eq("gatewayId", args.gatewayId))
       .collect();
 
-    const stats = [];
+    const stats: any[] = [];
     for (const project of projects) {
       const tasks = await ctx.db
         .query("tasks")

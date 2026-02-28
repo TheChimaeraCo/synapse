@@ -446,7 +446,8 @@ You don't have a name yet. You don't have a personality yet. You're discovering 
     topicSection = await buildTopicContext(
       agent.gatewayId,
       userMessage,
-      800 // soft cap for topic context
+      800, // soft cap for topic context
+      sessionDoc?.userId
     );
   } catch (err) {
     console.error("Topic context failed:", err);

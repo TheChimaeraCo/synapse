@@ -1069,6 +1069,25 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     };
   }, [voiceMode, voiceSettings.autoTranscribe]);
 
+  // Ready-state nudge: recover quickly if refs drift and watchdog misses a cycle.
+  useEffect(() => {
+    if (!voiceMode || !voiceSettings.autoTranscribe) return;
+    if (recording || transcribing || chatStreaming || voiceAwaitingReply || ttsPlaying) return;
+    const timer = window.setTimeout(() => {
+      if (
+        voiceModeRef.current
+        && !recordingRef.current
+        && !transcribingRef.current
+        && !voiceAwaitingReplyRef.current
+        && !chatStreamingRef.current
+        && !ttsPlayingRef.current
+      ) {
+        void startRecordingRef.current(true);
+      }
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [chatStreaming, recording, transcribing, ttsPlaying, voiceAwaitingReply, voiceMode, voiceSettings.autoTranscribe]);
+
   // Barge-in monitor: if user starts speaking while assistant is generating, interrupt and listen.
   useEffect(() => {
     if (!voiceMode || !voiceSettings.bargeIn || !voiceSettings.autoTranscribe || recording || transcribing) {

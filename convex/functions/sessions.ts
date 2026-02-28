@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "../_generated/server";
+import type { Doc } from "../_generated/dataModel";
 import { decodeConfigForRead } from "../lib/configCrypto";
 
 async function getGatewayConfigValue(
@@ -132,7 +133,7 @@ export const findOrCreate = mutation({
     const timeoutMinutes = await getGatewayNumberConfig(ctx, args.gatewayId, "session.timeout_minutes", 0);
     const maxConcurrent = await getGatewayNumberConfig(ctx, args.gatewayId, "session.max_concurrent", 100);
 
-    let existing = null;
+    let existing: Doc<"sessions"> | null = null;
     if (sessionMode === "shared") {
       const shared = await ctx.db
         .query("sessions")

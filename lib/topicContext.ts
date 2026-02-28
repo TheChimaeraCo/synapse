@@ -13,13 +13,15 @@ function estimateTokens(text: string): number {
 export async function buildTopicContext(
   gatewayId: Id<"gateways">,
   userMessage: string,
-  tokenBudget: number = 500
+  tokenBudget: number = 500,
+  userId?: Id<"authUsers">
 ): Promise<string> {
   if (!userMessage.trim()) return "";
 
   try {
     const related = await convexClient.query(api.functions.conversations.findRelated, {
       gatewayId,
+      ...(userId ? { userId } : {}),
       queryText: userMessage,
       limit: 5,
     });

@@ -162,7 +162,7 @@ export const listForUser = query({
       .query("gatewayMembers")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
       .collect();
-    const result = [];
+    const result: any[] = [];
     for (const m of memberships) {
       const gateway = await ctx.db.get(m.gatewayId);
       if (gateway) result.push({ ...gateway, role: m.role });

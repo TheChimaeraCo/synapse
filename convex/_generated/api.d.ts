@@ -9,6 +9,7 @@
  */
 
 import type * as actions_ai from "../actions/ai.js";
+import type * as actions_autonomy from "../actions/autonomy.js";
 import type * as actions_embeddings from "../actions/embeddings.js";
 import type * as actions_heartbeat from "../actions/heartbeat.js";
 import type * as actions_proactive from "../actions/proactive.js";
@@ -22,6 +23,7 @@ import type * as functions_agentMessages from "../functions/agentMessages.js";
 import type * as functions_agents from "../functions/agents.js";
 import type * as functions_approvals from "../functions/approvals.js";
 import type * as functions_auditLog from "../functions/auditLog.js";
+import type * as functions_autonomy from "../functions/autonomy.js";
 import type * as functions_channels from "../functions/channels.js";
 import type * as functions_circuitBreakers from "../functions/circuitBreakers.js";
 import type * as functions_config from "../functions/config.js";
@@ -80,6 +82,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "actions/ai": typeof actions_ai;
+  "actions/autonomy": typeof actions_autonomy;
   "actions/embeddings": typeof actions_embeddings;
   "actions/heartbeat": typeof actions_heartbeat;
   "actions/proactive": typeof actions_proactive;
@@ -93,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   "functions/agents": typeof functions_agents;
   "functions/approvals": typeof functions_approvals;
   "functions/auditLog": typeof functions_auditLog;
+  "functions/autonomy": typeof functions_autonomy;
   "functions/channels": typeof functions_channels;
   "functions/circuitBreakers": typeof functions_circuitBreakers;
   "functions/config": typeof functions_config;

@@ -8,7 +8,7 @@ export const list = query({
       .query("gatewayMembers")
       .withIndex("by_gatewayId", (q) => q.eq("gatewayId", args.gatewayId))
       .collect();
-    const result = [];
+    const result: any[] = [];
     for (const m of members) {
       const user = await ctx.db.get(m.userId);
       result.push({ ...m, user });
@@ -93,7 +93,7 @@ export const getForUser = query({
       .query("gatewayMembers")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
       .collect();
-    const result = [];
+    const result: any[] = [];
     for (const m of memberships) {
       const gateway = await ctx.db.get(m.gatewayId);
       if (gateway) result.push({ ...m, gateway });

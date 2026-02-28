@@ -13,15 +13,23 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(url.searchParams.get("limit") || "50");
     const search = url.searchParams.get("search") || undefined;
     const channelId = url.searchParams.get("channelId");
+    const fetchLimit = channelId ? Math.max(limit, 500) : limit;
 
     let sessions = await convex.query(api.functions.sessions.list, {
       gatewayId: gatewayId as Id<"gateways">,
       ...(status ? { status } : {}),
-      limit,
+      limit: fetchLimit,
     });
 
-    if (channelId && sessions) {
+    // For channel-scoped lookups (used by chat bootstrapping), prefer a non-empty
+    // session so existing history is surfaced instead of a freshly created blank one.
+    if (channelId && sessions?.length) {
       sessions = sessions.filter((s: any) => s.channelId === channelId);
+      const withMessages = sessions.filter((s: any) => (s.messageCount || 0) > 0);
+      if (withMessages.length > 0) {
+        sessions = withMessages;
+      }
+      sessions = sessions.slice(0, limit);
     }
 
     if (search && sessions) {

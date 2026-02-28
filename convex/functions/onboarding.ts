@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation } from "../_generated/server";
+import type { Doc } from "../_generated/dataModel";
 
 export const getOnboardingState = query({
   args: { gatewayId: v.id("gateways"), userId: v.id("authUsers") },
@@ -100,7 +101,7 @@ export const completeSoul = mutation({
   },
   handler: async (ctx, args) => {
     // Get onboarding state for birth conversation (optional - API channels may not have userId)
-    let state = null;
+    let state: Doc<"onboardingState"> | null = null;
     if (args.userId) {
       state = await ctx.db
         .query("onboardingState")

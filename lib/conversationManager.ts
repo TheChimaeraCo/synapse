@@ -6,6 +6,7 @@ import { summarizeConversation } from "@/lib/conversationSummarizer";
 
 const CONVERSATION_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours - only timeout after a long absence, AI classifier handles topic shifts
 const CLASSIFY_AFTER_N_MESSAGES = 3; // Start classifying early so topic shifts are detected promptly
+const MIN_WORDS_FOR_AUTO_SHIFT = 6;
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "that", "this", "from", "about", "have", "has", "had", "will", "would",
   "could", "should", "your", "you", "our", "their", "they", "them", "what", "when", "where", "which",
@@ -27,6 +28,20 @@ function topicOverlap(a: string, b: string): number {
   if (aWords.size === 0) return 0;
   const bWords = tokenizeTopic(b);
   return bWords.filter((w) => aWords.has(w)).length;
+}
+
+function countMeaningfulWords(message: string): number {
+  return tokenizeTopic(message).length;
+}
+
+function isBridgeMessage(message: string): boolean {
+  const lower = message.toLowerCase().trim();
+  const bridgePatterns = [
+    /\b(also|btw|by the way|quick thing|quick note|side note|on that note)\b/,
+    /\b(one more thing|while we're at it|before we move on)\b/,
+    /\b(and|plus|another)\b/,
+  ];
+  return bridgePatterns.some((p) => p.test(lower));
 }
 
 function detectResumeConversationIntent(message: string): boolean {
@@ -62,6 +77,7 @@ async function findHistoricalContinuation(
   try {
     const candidates = await convexClient.query(api.functions.conversations.findRelated, {
       gatewayId,
+      ...( _userId ? { userId: _userId } : {}),
       queryText: message,
       limit: 8,
     });
@@ -152,6 +168,31 @@ export async function resolveConversation(
       );
       classificationResult = classification;
       topicShifted = !classification.sameTopic;
+      if (topicShifted) {
+        const activeTopicText = [
+          activeConvo.title,
+          activeConvo.summary,
+          ...(activeConvo.tags || []),
+          ...(activeConvo.topics || []),
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const overlap = activeTopicText ? topicOverlap(activeTopicText, newMessage) : 0;
+        const wordCount = countMeaningfulWords(newMessage);
+        const bridgeLikely = isBridgeMessage(newMessage);
+        const weakShiftSignal =
+          overlap >= 1 ||
+          wordCount < MIN_WORDS_FOR_AUTO_SHIFT ||
+          bridgeLikely ||
+          resumeIntent;
+
+        if (weakShiftSignal) {
+          topicShifted = false;
+          console.log(
+            `[ConvoSegmentation] Dampened classifier shift (overlap=${overlap}, words=${wordCount}, bridge=${bridgeLikely}, resumeIntent=${resumeIntent}). Staying in current conversation.`
+          );
+        }
+      }
       if (topicShifted) {
         console.log(`[ConvoSegmentation] AI detected topic shift after ${activeConvo.messageCount} messages. New topic: ${classification.suggestedTitle || "unknown"}`);
       } else if (!activeConvo.title && classification.suggestedTitle) {
