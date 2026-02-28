@@ -12,7 +12,6 @@ import {
   CircleDot,
   Clock3,
   Command,
-  ExternalLink,
   FileText,
   Folder,
   FolderOpen,
@@ -226,7 +225,6 @@ function cursorFromTextSelection(text: string, selStart: number, selEnd: number)
 
 export default function VaultPage() {
   const router = useRouter();
-  const embeddedUrl = (process.env.NEXT_PUBLIC_OBSIDIAN_EMBED_URL || "").trim();
   const [index, setIndex] = useState<VaultIndexResponse | null>(null);
   const [loadingIndex, setLoadingIndex] = useState(true);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -244,7 +242,6 @@ export default function VaultPage() {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [quickSearch, setQuickSearch] = useState("");
-  const [embedMode, setEmbedMode] = useState<boolean>(Boolean(embeddedUrl));
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const quickInputRef = useRef<HTMLInputElement | null>(null);
@@ -531,11 +528,6 @@ export default function VaultPage() {
         setQuickSwitcherOpen(true);
         return;
       }
-      if (embeddedUrl && withMod && e.shiftKey && key === "e") {
-        e.preventDefault();
-        setEmbedMode((prev) => !prev);
-        return;
-      }
       if (withMod && key === "b") {
         e.preventDefault();
         setLeftSidebarOpen((prev) => !prev);
@@ -556,7 +548,7 @@ export default function VaultPage() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [embeddedUrl, quickSwitcherOpen, saveNote]);
+  }, [quickSwitcherOpen, saveNote]);
 
   useEffect(() => {
     if (!quickSwitcherOpen) return;
@@ -566,18 +558,6 @@ export default function VaultPage() {
     }, 10);
     return () => window.clearTimeout(id);
   }, [quickSwitcherOpen]);
-
-  useEffect(() => {
-    if (!embeddedUrl) return;
-    const saved = window.localStorage.getItem("synapse_vault_embed_mode");
-    if (saved === "1") setEmbedMode(true);
-    if (saved === "0") setEmbedMode(false);
-  }, [embeddedUrl]);
-
-  useEffect(() => {
-    if (!embeddedUrl) return;
-    window.localStorage.setItem("synapse_vault_embed_mode", embedMode ? "1" : "0");
-  }, [embedMode, embeddedUrl]);
 
   useEffect(() => () => {
     void syncYjsOnce({ offline: true }).catch(() => {});
@@ -734,45 +714,6 @@ export default function VaultPage() {
     })
   ), [expandedFolders, selectNote, selectedPath]);
 
-  if (embedMode && embeddedUrl) {
-    return (
-      <AppShell title="Vault">
-        <div className="h-full bg-[#151821] text-zinc-100 flex flex-col">
-          <div className="flex items-center gap-2 border-b border-white/10 bg-[#11141b] px-3 py-2">
-            <div className="text-xs uppercase tracking-[0.16em] text-zinc-400">Embedded Obsidian</div>
-            <div className="text-[11px] text-zinc-500 truncate max-w-[40vw]">{embeddedUrl}</div>
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                onClick={() => setEmbedMode(false)}
-                className="rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/[0.08]"
-                title="Switch to native vault workspace"
-              >
-                Native View
-              </button>
-              <a
-                href={embeddedUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-md border border-cyan-400/35 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20"
-              >
-                Open Standalone
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </div>
-          </div>
-          <div className="min-h-0 flex-1">
-            <iframe
-              src={embeddedUrl}
-              title="Obsidian Embedded"
-              className="h-full w-full border-0"
-              allow="clipboard-read; clipboard-write; fullscreen"
-            />
-          </div>
-        </div>
-      </AppShell>
-    );
-  }
-
   return (
     <AppShell title="Vault">
       <div className="h-full bg-[#1f2129] text-zinc-100">
@@ -876,15 +817,6 @@ export default function VaultPage() {
               >
                 Quick Switcher
               </button>
-              {embeddedUrl ? (
-                <button
-                  onClick={() => setEmbedMode(true)}
-                  className="rounded-md border border-cyan-400/35 bg-cyan-500/10 px-2 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20"
-                  title="Switch to embedded Obsidian frame (Ctrl/Cmd+Shift+E)"
-                >
-                  Embedded View
-                </button>
-              ) : null}
               <div className="ml-auto inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[11px] text-zinc-400">
                 <CircleDot className="h-3.5 w-3.5" />
                 {yjsLiveMode ? "Live Sync" : "Solo"}
