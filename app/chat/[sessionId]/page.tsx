@@ -52,7 +52,9 @@ export default function ChatSessionPage({
         />
 
         <DropZone sessionId={sessionId}>
-          <ChatWindow sessionId={sessionId} scrollToSeq={scrollToSeq} />
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <ChatWindow sessionId={sessionId} scrollToSeq={scrollToSeq} />
+          </div>
           {gatewayId && <LiveAgentsPanel sessionId={sessionId} gatewayId={gatewayId} />}
           <ChatInput sessionId={sessionId} />
         </DropZone>

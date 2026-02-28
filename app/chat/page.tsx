@@ -257,7 +257,7 @@ export default function ChatPage() {
 
           {sessionId ? (
             <div className="flex flex-1 flex-col min-h-0 overflow-hidden" onMouseUp={handleMouseUp}>
-              <div className="flex-1 overflow-y-auto min-h-0">
+              <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain">
                 <ChatWindow sessionId={sessionId} scrollToSeq={scrollToSeq} />
               </div>
               {gatewayId && !isPlatformChannel && <LiveAgentsPanel sessionId={sessionId} gatewayId={gatewayId} />}

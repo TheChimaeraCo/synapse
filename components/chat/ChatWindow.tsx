@@ -36,6 +36,10 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   const gatewayId = (session?.user as any)?.gatewayId;
   const [conversations, setConversations] = useState<ConversationBookmark[]>([]);
   const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<string>>(new Set());
+  const getScrollContainer = useCallback(
+    () => scrollContainerRef.current?.closest(".overflow-y-auto") as HTMLElement | null,
+    []
+  );
 
   // Fetch pinned messages
   const fetchPins = useCallback(async () => {
@@ -135,27 +139,36 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   useEffect(() => {
     if (!scrollToSeq || !loaded) return;
     const timer = setTimeout(() => {
+      const container = getScrollContainer();
+      if (!container) return;
       const el = document.getElementById(`msg-seq-${scrollToSeq}`);
       if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = el.getBoundingClientRect();
+        const top = container.scrollTop + (targetRect.top - containerRect.top) - 16;
+        container.scrollTo({ top: Math.max(top, 0), behavior: "smooth" });
       }
     }, 100);
     return () => clearTimeout(timer);
-  }, [scrollToSeq, loaded]);
+  }, [getScrollContainer, scrollToSeq, loaded]);
 
   // Initial scroll to bottom once loaded
   useEffect(() => {
     if (loaded && !initialScrollDone.current) {
       initialScrollDone.current = true;
       setTimeout(() => {
-        bottomRef.current?.scrollIntoView({ behavior: "auto" });
+        const container = getScrollContainer();
+        if (!container) return;
+        container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+        userScrolledUp.current = false;
+        setShowScrollBtn(false);
       }, 50);
     }
-  }, [loaded]);
+  }, [getScrollContainer, loaded]);
 
   // Track scroll position to show/hide scroll-to-bottom button
   useEffect(() => {
-    const container = scrollContainerRef.current?.closest(".overflow-y-auto") as HTMLElement | null;
+    const container = getScrollContainer();
     if (!container) return;
     const handleScroll = () => {
       const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
@@ -165,7 +178,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     };
     container.addEventListener("scroll", handleScroll, { passive: true });
     return () => container.removeEventListener("scroll", handleScroll);
-  }, [loaded]);
+  }, [getScrollContainer, loaded]);
 
   // Auto-scroll on new messages / streaming (only if user hasn't scrolled up)
   useEffect(() => {
@@ -173,12 +186,15 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
     const newStream = streamingContent || "";
     if (newCount > prevCountRef.current || newStream.length > prevStreamRef.current.length) {
       if (!userScrolledUp.current) {
-        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+        const container = getScrollContainer();
+        if (container) {
+          container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+        }
       }
     }
     prevCountRef.current = newCount;
     prevStreamRef.current = newStream;
-  }, [messages.length, streamingContent]);
+  }, [getScrollContainer, messages.length, streamingContent]);
 
   // Initialize assistant event baseline from loaded history once.
   useEffect(() => {
@@ -217,10 +233,13 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
   }, [loaded, messages, sessionId]);
 
   const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = getScrollContainer();
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    }
     userScrolledUp.current = false;
     setShowScrollBtn(false);
-  }, []);
+  }, [getScrollContainer]);
 
   if (!loaded) {
     return (
