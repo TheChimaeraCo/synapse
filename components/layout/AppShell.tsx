@@ -124,7 +124,7 @@ export function AppShell({
 
   return (
     <div
-      className="relative flex h-screen overflow-hidden"
+      className="relative flex min-h-0 overflow-hidden"
       style={viewportHeight ? { height: `${viewportHeight}px` } : { height: "100dvh" }}
     >
       <div className="pointer-events-none absolute inset-0 -z-10">
