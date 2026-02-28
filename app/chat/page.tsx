@@ -136,6 +136,20 @@ export default function ChatPage() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (event.key.length !== 1 && event.key !== "Backspace") return;
+      window.dispatchEvent(new CustomEvent("synapse:composer-type", { detail: { key: event.key } }));
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   const handleSelectConversation = useCallback((id: string, startSeq?: number) => {
     if (startSeq) setScrollToSeq(startSeq);
   }, []);
@@ -206,13 +220,6 @@ export default function ChatPage() {
     }, 500);
   }, [askInPopup, gatewayId, activeChannel]);
 
-  const handleChatSurfaceClick = useCallback((event: any) => {
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
-    if (target.closest("button, a, input, textarea, select, [role='button'], [contenteditable='true']")) return;
-    window.dispatchEvent(new Event("synapse:focus-composer"));
-  }, []);
-
   if (loading) {
     return (
       <AppShell title="Chat">
@@ -277,7 +284,6 @@ export default function ChatPage() {
             <div
               className="flex flex-1 flex-col min-h-0 overflow-hidden"
               onMouseUp={handleMouseUp}
-              onClickCapture={handleChatSurfaceClick}
             >
               <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain">
                 <ChatWindow sessionId={sessionId} scrollToSeq={scrollToSeq} />

@@ -288,6 +288,24 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { key?: string } | undefined;
+      const key = detail?.key;
+      if (!key) return;
+      focusComposer();
+      if (key === "Backspace") {
+        setContent((prev) => (prev.length ? prev.slice(0, -1) : prev));
+        return;
+      }
+      if (key.length === 1) {
+        setContent((prev) => `${prev}${key}`);
+      }
+    };
+    window.addEventListener("synapse:composer-type", handler);
+    return () => window.removeEventListener("synapse:composer-type", handler);
+  }, [focusComposer]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
       const detail = (event as CustomEvent).detail as { content?: string } | undefined;
       if (detail?.content?.trim()) {
         lastUserMessageRef.current = detail.content;

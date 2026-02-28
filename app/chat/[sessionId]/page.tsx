@@ -43,16 +43,23 @@ export default function ChatSessionPage({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const handleChatSurfaceClick = useCallback((event: any) => {
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
-    if (target.closest("button, a, input, textarea, select, [role='button'], [contenteditable='true']")) return;
-    window.dispatchEvent(new Event("synapse:focus-composer"));
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (event.key.length !== 1 && event.key !== "Backspace") return;
+      window.dispatchEvent(new CustomEvent("synapse:composer-type", { detail: { key: event.key } }));
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
 
   return (
     <AppShell title="Chat">
-      <div className="relative flex h-full flex-col -m-4 lg:-m-6" onClickCapture={handleChatSurfaceClick}>
+      <div className="relative flex h-full flex-col -m-4 lg:-m-6">
         <Button
           variant="ghost"
           size="icon"
