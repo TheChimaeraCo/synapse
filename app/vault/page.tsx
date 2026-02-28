@@ -1098,11 +1098,12 @@ export default function VaultPage() {
 
   return (
     <AppShell title="Vault">
-      <div className="h-full bg-[#1f2129] text-zinc-100">
-        <div ref={panelsRef} className="flex h-full min-h-0">
+      <div className="h-full overflow-auto p-4 lg:p-8 text-zinc-100">
+        <div className="mx-auto h-full max-w-[96rem] rounded-3xl border border-white/[0.1] bg-white/[0.04] shadow-[0_12px_38px_rgba(3,8,20,0.32)]">
+          <div ref={panelsRef} className="flex h-full min-h-[680px]">
           {leftSidebarOpen ? (
             <aside
-              className="shrink-0 min-w-[240px] max-w-[520px] border-r border-white/10 bg-[#171922] flex flex-col min-h-0"
+              className="shrink-0 min-w-[240px] max-w-[520px] border-r border-white/[0.1] bg-slate-950/45 flex flex-col min-h-0"
               style={{ width: leftPaneWidth }}
             >
               <div className="border-b border-white/10 p-3 space-y-2">
@@ -1180,7 +1181,7 @@ export default function VaultPage() {
           ) : (
             <button
               onClick={() => setLeftSidebarOpen(true)}
-              className="hidden md:flex h-full w-8 items-start justify-center border-r border-white/10 bg-[#171922] pt-3 text-zinc-500 hover:text-zinc-200"
+              className="hidden md:flex h-full w-8 items-start justify-center border-r border-white/[0.1] bg-slate-950/45 pt-3 text-zinc-500 hover:text-zinc-200"
               title="Open explorer"
             >
               <ChevronRight className="h-4 w-4" />
@@ -1200,7 +1201,7 @@ export default function VaultPage() {
           ) : null}
 
           <section className="min-w-0 flex-1 flex flex-col">
-            <div className="border-b border-white/10 bg-[#1b1d26] px-3 py-2 flex items-center gap-2">
+            <div className="border-b border-white/[0.1] bg-white/[0.03] px-3 py-2 flex items-center gap-2">
               <button
                 onClick={() => setLeftSidebarOpen((prev) => !prev)}
                 className="rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
@@ -1229,7 +1230,7 @@ export default function VaultPage() {
               </div>
             </div>
 
-            <div className="border-b border-white/10 bg-[#171922] flex items-end gap-1 overflow-x-auto px-2 pt-2">
+            <div className="border-b border-white/[0.1] bg-white/[0.02] flex items-end gap-1 overflow-x-auto px-2 pt-2">
               {openTabNotes.map((note) => {
                 const active = note.path === selectedPath;
                 return (
@@ -1238,7 +1239,7 @@ export default function VaultPage() {
                     onClick={() => selectNote(note.path)}
                     className={`group flex items-center gap-2 rounded-t-md border border-b-0 px-3 py-1.5 text-xs ${
                       active
-                        ? "border-cyan-400/40 bg-[#202531] text-cyan-100"
+                        ? "border-cyan-400/40 bg-slate-900/75 text-cyan-100"
                         : "border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.08]"
                     }`}
                   >
@@ -1259,7 +1260,7 @@ export default function VaultPage() {
               })}
             </div>
 
-            <div className="border-b border-white/10 bg-[#1b1d26] px-3 py-2 flex flex-wrap items-center gap-2">
+            <div className="border-b border-white/[0.1] bg-white/[0.03] px-3 py-2 flex flex-wrap items-center gap-2">
               <div className="min-w-0 flex-1 text-sm truncate text-zinc-300">
                 {selectedMeta?.vaultRelativePath || "Select a note"}
                 {isDirty ? <span className="ml-1 text-amber-300">*</span> : null}
@@ -1314,8 +1315,8 @@ export default function VaultPage() {
                 Choose a note from the explorer to begin.
               </div>
             ) : (
-              <div className="flex-1 min-h-0 bg-[#1b1f2a] p-3">
-                <div className="relative h-full overflow-hidden rounded-lg border border-white/10 bg-[#1f2430] shadow-inner">
+              <div className="flex-1 min-h-0 bg-white/[0.02] p-3">
+                <div className="relative h-full overflow-hidden rounded-xl border border-white/[0.1] bg-slate-950/55 shadow-inner">
                   {editorRuntime === "fallback" ? (
                     <div className="h-full flex flex-col">
                       {editorRuntimeMessage ? (
@@ -1335,7 +1336,7 @@ export default function VaultPage() {
                     <div ref={editorHostRef} className="vault-toast-editor h-full w-full" />
                   )}
                   {loadingNote ? (
-                    <div className="absolute inset-0 z-10 grid place-items-center bg-[#1f2430]/70 text-sm text-zinc-300 backdrop-blur-[1px]">
+                    <div className="absolute inset-0 z-10 grid place-items-center bg-slate-950/60 text-sm text-zinc-300 backdrop-blur-[1px]">
                       Loading note...
                     </div>
                   ) : null}
@@ -1343,7 +1344,7 @@ export default function VaultPage() {
               </div>
             )}
 
-            <div className="h-8 border-t border-white/10 bg-[#171922] px-3 flex items-center justify-between text-[11px] text-zinc-500">
+            <div className="h-8 border-t border-white/[0.1] bg-white/[0.02] px-3 flex items-center justify-between text-[11px] text-zinc-500">
               <div className="inline-flex items-center gap-2">
                 <Clock3 className="h-3.5 w-3.5" />
                 {selectedMeta?.updatedAt ? `Updated ${new Date(selectedMeta.updatedAt).toLocaleString()}` : "No note selected"}
@@ -1370,7 +1371,7 @@ export default function VaultPage() {
 
           {rightSidebarOpen ? (
             <aside
-              className="shrink-0 min-w-[240px] max-w-[520px] border-l border-white/10 bg-[#171922] flex flex-col min-h-0"
+              className="shrink-0 min-w-[240px] max-w-[520px] border-l border-white/[0.1] bg-slate-950/45 flex flex-col min-h-0"
               style={{ width: rightPaneWidth }}
             >
               <div className="border-b border-white/10 px-3 py-2.5 flex items-center justify-between">
@@ -1491,17 +1492,18 @@ export default function VaultPage() {
           ) : (
             <button
               onClick={() => setRightSidebarOpen(true)}
-              className="hidden md:flex h-full w-8 items-start justify-center border-l border-white/10 bg-[#171922] pt-3 text-zinc-500 hover:text-zinc-200"
+              className="hidden md:flex h-full w-8 items-start justify-center border-l border-white/[0.1] bg-slate-950/45 pt-3 text-zinc-500 hover:text-zinc-200"
               title="Open context"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
           )}
         </div>
+        </div>
 
         {quickSwitcherOpen ? (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[1px] flex items-start justify-center p-6">
-            <div className="w-full max-w-2xl rounded-xl border border-white/10 bg-[#151821] shadow-[0_20px_70px_rgba(0,0,0,0.55)]">
+            <div className="w-full max-w-2xl rounded-2xl border border-white/[0.12] bg-slate-950/92 shadow-[0_20px_70px_rgba(0,0,0,0.55)]">
               <div className="border-b border-white/10 p-3">
                 <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
                   <Search className="h-4 w-4 text-zinc-500" />
