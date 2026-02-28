@@ -265,6 +265,7 @@ export default function VaultPage() {
   const [editorRuntime, setEditorRuntime] = useState<EditorRuntime>("loading");
   const [editorRuntimeMessage, setEditorRuntimeMessage] = useState<string | null>(null);
 
+  const panelsRef = useRef<HTMLDivElement | null>(null);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const fallbackEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const toastEditorRef = useRef<ToastEditorLike | null>(null);
@@ -301,76 +302,69 @@ export default function VaultPage() {
     if (yText) applyTextPatch(yText, nextValue);
   }, []);
 
-  useEffect(() => {
-    let disposed = false;
-    let editorInstance: ToastEditorLike | null = null;
-
-    const mountEditor = async () => {
-      if (!editorHostRef.current || toastEditorRef.current) return;
-      try {
-        const mod = await import("@toast-ui/editor");
-        if (disposed || !editorHostRef.current) return;
-
-        const EditorCtor =
-          (mod as any).Editor ||
-          (mod as any).default?.Editor ||
-          (mod as any).default;
-        if (typeof EditorCtor !== "function") {
-          throw new Error("Toast UI editor constructor was not found");
-        }
-
-        const instance = new EditorCtor({
-          el: editorHostRef.current,
-          height: "100%",
-          initialEditType: "wysiwyg",
-          initialValue: "",
-          hideModeSwitch: true,
-          usageStatistics: false,
-          autofocus: false,
-          toolbarItems: [
-            ["heading", "bold", "italic", "strike"],
-            ["hr", "quote"],
-            ["ul", "ol", "task"],
-            ["table", "link"],
-            ["code", "codeblock"],
-          ],
-        });
-        editorInstance = instance;
-        instance.setMarkdown(latestContentRef.current || "", false);
-
-        instance.on("change", () => {
-          const nextValue = instance.getMarkdown() || "";
-          applyEditorChange(nextValue);
-        });
-
-        toastEditorRef.current = editorInstance;
-        setEditorRuntime("ready");
-        setEditorRuntimeMessage(null);
-      } catch (err: any) {
-        console.error("[vault] failed to initialize live markdown editor", err);
-        if (!disposed) {
-          setEditorRuntime("fallback");
-          setEditorRuntimeMessage(err?.message || "Live editor failed to initialize");
-        }
-      }
-    };
-
+  const initializeToastEditor = useCallback(async () => {
+    if (!editorHostRef.current || toastEditorRef.current) return;
     setEditorRuntime("loading");
     setEditorRuntimeMessage(null);
-    void mountEditor();
+    try {
+      const mod = await import("@toast-ui/editor");
+      if (!editorHostRef.current || toastEditorRef.current) return;
 
-    return () => {
-      disposed = true;
-      if (editorInstance) {
-        try {
-          editorInstance.destroy();
-        } catch {}
+      const EditorCtor =
+        (mod as any).Editor ||
+        (mod as any).default?.Editor ||
+        (mod as any).default;
+      if (typeof EditorCtor !== "function") {
+        throw new Error("Toast UI editor constructor was not found");
       }
-      if (toastEditorRef.current === editorInstance) {
-        toastEditorRef.current = null;
-      }
-    };
+
+      const instance = new EditorCtor({
+        el: editorHostRef.current,
+        height: "100%",
+        initialEditType: "wysiwyg",
+        initialValue: "",
+        hideModeSwitch: true,
+        usageStatistics: false,
+        autofocus: false,
+        toolbarItems: [
+          ["heading", "bold", "italic", "strike"],
+          ["hr", "quote"],
+          ["ul", "ol", "task"],
+          ["table", "link"],
+          ["code", "codeblock"],
+        ],
+      });
+      instance.setMarkdown(latestContentRef.current || "", false);
+      instance.on("change", () => {
+        const nextValue = instance.getMarkdown() || "";
+        applyEditorChange(nextValue);
+      });
+
+      toastEditorRef.current = instance;
+      setEditorRuntime("ready");
+      setEditorRuntimeMessage(null);
+    } catch (err: any) {
+      console.error("[vault] failed to initialize live markdown editor", err);
+      setEditorRuntime("fallback");
+      setEditorRuntimeMessage(err?.message || "Live editor failed to initialize");
+    }
   }, [applyEditorChange]);
+
+  useEffect(() => {
+    if (!selectedPath || loadingNote) return;
+    void initializeToastEditor();
+  }, [initializeToastEditor, loadingNote, selectedPath]);
+
+  useEffect(() => {
+    return () => {
+      const instance = toastEditorRef.current;
+      if (!instance) return;
+      try {
+        instance.destroy();
+      } catch {}
+      toastEditorRef.current = null;
+    };
+  }, []);
 
   const refreshIndex = useCallback(async () => {
     setLoadingIndex(true);
@@ -834,13 +828,17 @@ export default function VaultPage() {
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
     const onMouseMove = (event: MouseEvent) => {
-      const vw = window.innerWidth || 1440;
+      const rect = panelsRef.current?.getBoundingClientRect();
+      const containerLeft = rect?.left ?? 0;
+      const containerRight = rect?.right ?? (window.innerWidth || 1440);
+      const containerWidth = rect?.width ?? (window.innerWidth || 1440);
       const min = 240;
-      const max = Math.min(520, Math.max(320, Math.floor(vw * 0.45)));
+      const max = Math.min(520, Math.max(320, Math.floor(containerWidth * 0.45)));
       if (resizingPane === "left") {
-        setLeftPaneWidth(Math.max(min, Math.min(max, event.clientX)));
+        const next = event.clientX - containerLeft;
+        setLeftPaneWidth(Math.max(min, Math.min(max, next)));
       } else {
-        const next = vw - event.clientX;
+        const next = containerRight - event.clientX;
         setRightPaneWidth(Math.max(min, Math.min(max, next)));
       }
     };
@@ -1101,7 +1099,7 @@ export default function VaultPage() {
   return (
     <AppShell title="Vault">
       <div className="h-full bg-[#1f2129] text-zinc-100">
-        <div className="flex h-full min-h-0">
+        <div ref={panelsRef} className="flex h-full min-h-0">
           {leftSidebarOpen ? (
             <aside
               className="shrink-0 min-w-[240px] max-w-[520px] border-r border-white/10 bg-[#171922] flex flex-col min-h-0"
@@ -1315,11 +1313,9 @@ export default function VaultPage() {
               <div className="flex-1 grid place-items-center text-sm text-zinc-500">
                 Choose a note from the explorer to begin.
               </div>
-            ) : loadingNote ? (
-              <div className="flex-1 grid place-items-center text-sm text-zinc-500">Loading note...</div>
             ) : (
               <div className="flex-1 min-h-0 bg-[#1b1f2a] p-3">
-                <div className="h-full overflow-hidden rounded-lg border border-white/10 bg-[#1f2430] shadow-inner">
+                <div className="relative h-full overflow-hidden rounded-lg border border-white/10 bg-[#1f2430] shadow-inner">
                   {editorRuntime === "fallback" ? (
                     <div className="h-full flex flex-col">
                       {editorRuntimeMessage ? (
@@ -1338,6 +1334,11 @@ export default function VaultPage() {
                   ) : (
                     <div ref={editorHostRef} className="vault-toast-editor h-full w-full" />
                   )}
+                  {loadingNote ? (
+                    <div className="absolute inset-0 z-10 grid place-items-center bg-[#1f2430]/70 text-sm text-zinc-300 backdrop-blur-[1px]">
+                      Loading note...
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}
