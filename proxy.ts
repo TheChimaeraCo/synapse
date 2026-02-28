@@ -40,6 +40,8 @@ export async function proxy(req: NextRequest) {
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/invites") ||
     pathname.startsWith("/api/health") ||
+    // Calendar feed is protected by unguessable token in URL and must be public for calendar clients.
+    pathname.startsWith("/api/calendar/feed/") ||
     pathname.startsWith("/api/push/vapid") ||
     pathname.startsWith("/api/setup") ||
     pathname.startsWith("/api/channels/api-message") ||
