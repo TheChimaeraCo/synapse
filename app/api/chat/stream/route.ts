@@ -46,8 +46,16 @@ function sseEvent(data: Record<string, any>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
-function buildNoOutputRecoveryMessage(userMessage?: string): string {
+function buildNoOutputRecoveryMessage(userMessage?: string, previousUserTurn?: string | null): string {
   const text = (userMessage || "").trim().toLowerCase();
+  const prior = (previousUserTurn || "").trim();
+
+  if (/\b(current convo|current conversation|our convo|our conversation|current context|look at .*convo|look at .*conversation)\b/.test(text)) {
+    if (prior) {
+      return `From our recent conversation, the active topic is: "${prior.slice(0, 220)}". Ask a specific follow-up and I'll continue from there.`;
+    }
+    return "I can use the current conversation context, but I need a specific follow-up question to continue.";
+  }
 
   if (/\b(continue|go ahead|retry|try again)\b/.test(text)) {
     return "There isn't a pending partial response to continue. Please resend the full request and I'll run it now.";
@@ -65,10 +73,11 @@ function buildNoOutputRecoveryMessage(userMessage?: string): string {
 
 function buildToolFallbackMessage(
   toolLogs: Array<{ tool: string; summary: string; isError: boolean }>,
-  userMessage?: string
+  userMessage?: string,
+  previousUserTurn?: string | null
 ): string {
   if (!toolLogs.length) {
-    return buildNoOutputRecoveryMessage(userMessage);
+    return buildNoOutputRecoveryMessage(userMessage, previousUserTurn);
   }
 
   const successful = toolLogs.filter((t) => !t.isError).slice(-4);
@@ -332,6 +341,8 @@ export async function POST(req: NextRequest) {
       let toolCallsAttempted = 0;
       let successfulToolResults = 0;
       let failedToolResults = 0;
+      let previousUserTurnForFallback: string | null = null;
+      let emptyOutputRecoveryInjected = false;
 
       try {
         throwIfAborted();
@@ -344,6 +355,7 @@ export async function POST(req: NextRequest) {
 
         const userTurns = claudeMessages.filter((m) => m.role === "user");
         const previousUserTurn = userTurns.length >= 2 ? userTurns[userTurns.length - 2]?.content : null;
+        previousUserTurnForFallback = previousUserTurn;
         const shouldApplyContinuityGuard =
           isUnderspecifiedFollowup(sanitizedContent) &&
           Boolean(previousUserTurn);
@@ -581,6 +593,17 @@ export async function POST(req: NextRequest) {
 
           fullContent += roundText;
 
+          if (
+            round === 0 &&
+            !emptyOutputRecoveryInjected &&
+            roundText.trim().length === 0 &&
+            toolCalls.length === 0
+          ) {
+            emptyOutputRecoveryInjected = true;
+            context.systemPrompt = `${context.systemPrompt}\n\n## Output Recovery\nYour previous response was empty. Reply now with a direct plain-text answer to the user's latest message. Do not return an empty response.`;
+            continue;
+          }
+
           if (toolCalls.length === 0) break;
           throwIfAborted();
           toolCallsAttempted += toolCalls.length;
@@ -707,7 +730,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (!generatedAnyAssistantText) {
-          fullContent = buildToolFallbackMessage(toolLogsForFallback, sanitizedContent);
+          fullContent = buildToolFallbackMessage(toolLogsForFallback, sanitizedContent, previousUserTurnForFallback);
           emit({ type: "clear" });
           emit({ type: "token", content: fullContent });
         }
