@@ -927,6 +927,58 @@ export default defineSchema({
   }).index("by_endpoint", ["endpoint"])
     .index("by_gatewayId", ["gatewayId"]),
 
+  // --- API INTEGRATIONS ---
+  apiIntegrations: defineTable({
+    gatewayId: v.id("gateways"),
+    name: v.string(),
+    slug: v.string(),
+    type: v.union(v.literal("rest"), v.literal("mcp")),
+    baseUrl: v.string(),
+    authType: v.union(
+      v.literal("none"),
+      v.literal("bearer"),
+      v.literal("header"),
+      v.literal("query"),
+      v.literal("basic"),
+    ),
+    authConfig: v.optional(v.any()),
+    healthPath: v.optional(v.string()),
+    enabled: v.boolean(),
+    allowPrivateNetwork: v.optional(v.boolean()),
+    lastHealthStatus: v.optional(v.union(v.literal("healthy"), v.literal("degraded"), v.literal("down"))),
+    lastHealthCode: v.optional(v.number()),
+    lastHealthError: v.optional(v.string()),
+    lastHealthAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_gatewayId", ["gatewayId"])
+    .index("by_gateway_slug", ["gatewayId", "slug"]),
+
+  apiIntegrationEndpoints: defineTable({
+    gatewayId: v.id("gateways"),
+    integrationId: v.id("apiIntegrations"),
+    name: v.string(),
+    slug: v.string(),
+    toolName: v.string(),
+    method: v.string(),
+    path: v.string(),
+    description: v.optional(v.string()),
+    headers: v.optional(v.any()),
+    queryTemplate: v.optional(v.any()),
+    bodyTemplate: v.optional(v.any()),
+    argsSchema: v.optional(v.any()),
+    timeoutMs: v.optional(v.number()),
+    enabled: v.boolean(),
+    exposeAsTool: v.boolean(),
+    requiresApproval: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_gatewayId", ["gatewayId"])
+    .index("by_integrationId", ["integrationId"])
+    .index("by_gateway_toolName", ["gatewayId", "toolName"]),
+
   // --- WEBHOOKS ---
   webhooks: defineTable({
     gatewayId: v.id("gateways"),

@@ -6,6 +6,7 @@ import { Type } from "@sinclair/typebox";
 import * as vm from "vm";
 import { createHash } from "crypto";
 import { findModuleForTool, readModuleConfig, resolveModuleToolRoute } from "@/lib/modules/config";
+import { executeIntegrationEndpointBySlugs } from "@/lib/integrationRuntime";
 import {
   getModuleRecord,
   listModuleRecords,
@@ -357,10 +358,24 @@ export async function executeDynamicTool(
     },
   };
 
+  const integrationCall = async (
+    integrationSlug: string,
+    endpointSlug: string,
+    endpointArgs: Record<string, any>,
+  ) => {
+    return await executeIntegrationEndpointBySlugs({
+      gatewayId: context.gatewayId as any,
+      integrationSlug,
+      endpointSlug,
+      args: endpointArgs || {},
+    });
+  };
+
   const sandbox = {
     args,
     context,
     moduleStore,
+    integrationCall,
     fetch: globalThis.fetch,
     JSON,
     Math,

@@ -39,8 +39,8 @@ export async function GET(req: NextRequest) {
       gatewayId: gatewayId as Id<"gateways">,
     });
 
-    // Filter tools by availability (some require higher tier)
-    const available = all.filter((t: any) => TOOL_REGISTRY.has(t.name));
+    // Keep builtins that exist in the runtime registry, plus dynamic/custom tools.
+    const available = all.filter((t: any) => TOOL_REGISTRY.has(t.name) || Boolean(t.handlerCode));
     return NextResponse.json({ tools: available });
   } catch (err) {
     return handleGatewayError(err);
@@ -51,7 +51,18 @@ export async function PUT(req: NextRequest) {
   try {
     const { role } = await getGatewayContext(req);
     requireToolManager(role);
-    const { id, enabled, requiresApproval, providerProfileId, provider, model } = await req.json();
+    const {
+      id,
+      enabled,
+      requiresApproval,
+      providerProfileId,
+      provider,
+      model,
+      description,
+      category,
+      parameters,
+      handlerCode,
+    } = await req.json();
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
@@ -62,6 +73,10 @@ export async function PUT(req: NextRequest) {
       ...(providerProfileId !== undefined ? { providerProfileId } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(model !== undefined ? { model } : {}),
+      ...(description !== undefined ? { description } : {}),
+      ...(category !== undefined ? { category } : {}),
+      ...(parameters !== undefined ? { parameters } : {}),
+      ...(handlerCode !== undefined ? { handlerCode } : {}),
     });
     return NextResponse.json({ success: true });
   } catch (err) {

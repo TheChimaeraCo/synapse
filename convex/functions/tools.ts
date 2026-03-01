@@ -47,12 +47,25 @@ export const create = mutation({
     model: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Upsert - if exists, skip
+    // Upsert - if exists, patch definition.
     const existing = await ctx.db
       .query("tools")
       .withIndex("by_name", (q) => q.eq("gatewayId", args.gatewayId).eq("name", args.name))
       .first();
-    if (existing) return existing._id;
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        description: args.description,
+        category: args.category,
+        enabled: args.enabled,
+        requiresApproval: args.requiresApproval,
+        parameters: args.parameters,
+        ...(args.handlerCode !== undefined ? { handlerCode: args.handlerCode } : {}),
+        ...(args.providerProfileId !== undefined ? { providerProfileId: args.providerProfileId } : {}),
+        ...(args.provider !== undefined ? { provider: args.provider } : {}),
+        ...(args.model !== undefined ? { model: args.model } : {}),
+      });
+      return existing._id;
+    }
 
     return await ctx.db.insert("tools", {
       ...args,
@@ -69,6 +82,10 @@ export const update = mutation({
     providerProfileId: v.optional(v.string()),
     provider: v.optional(v.string()),
     model: v.optional(v.string()),
+    description: v.optional(v.string()),
+    category: v.optional(v.string()),
+    parameters: v.optional(v.any()),
+    handlerCode: v.optional(v.string()),
   },
   handler: async (ctx, { id, ...fields }) => {
     const existing = await ctx.db.get(id);
@@ -79,6 +96,10 @@ export const update = mutation({
     if (fields.providerProfileId !== undefined) updates.providerProfileId = fields.providerProfileId;
     if (fields.provider !== undefined) updates.provider = fields.provider;
     if (fields.model !== undefined) updates.model = fields.model;
+    if (fields.description !== undefined) updates.description = fields.description;
+    if (fields.category !== undefined) updates.category = fields.category;
+    if (fields.parameters !== undefined) updates.parameters = fields.parameters;
+    if (fields.handlerCode !== undefined) updates.handlerCode = fields.handlerCode;
     await ctx.db.patch(id, updates);
   },
 });
