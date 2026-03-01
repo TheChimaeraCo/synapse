@@ -383,6 +383,7 @@ export async function POST(req: NextRequest) {
       let previousUserTurnForFallback: string | null = null;
       let previousAssistantTurnForFallback: string | null = null;
       let emptyOutputRecoveryInjected = false;
+      let retriedWithoutTools = false;
 
       try {
         throwIfAborted();
@@ -605,6 +606,7 @@ export async function POST(req: NextRequest) {
           throwIfAborted();
           const toolCalls: Array<{ type: "toolCall"; id: string; name: string; arguments: Record<string, any> }> = [];
           let roundText = "";
+          let roundError: string | null = null;
 
           const aiStream = streamSimple(model, context, options);
           for await (const event of aiStream) {
@@ -631,6 +633,14 @@ export async function POST(req: NextRequest) {
               }
             } else if (event.type === "toolcall_end") {
               toolCalls.push(event.toolCall);
+            } else if (event.type === "error") {
+              const rawError = (event as any).error;
+              roundError =
+                rawError?.friendlyMessage
+                || rawError?.errorMessage
+                || rawError?.message
+                || "Model stream error";
+              console.error("[Chat] streamSimple error event:", rawError);
             } else if (event.type === "done") {
               usage.input += event.message.usage.input;
               usage.output += event.message.usage.output;
@@ -649,6 +659,25 @@ export async function POST(req: NextRequest) {
             emptyOutputRecoveryInjected = true;
             context.systemPrompt = `${context.systemPrompt}\n\n## Output Recovery\nYour previous response was empty. Reply now with a direct plain-text answer to the user's latest message. Do not return an empty response.`;
             continue;
+          }
+
+          if (
+            roundError &&
+            round === 0 &&
+            !retriedWithoutTools &&
+            Boolean(context.tools) &&
+            roundText.trim().length === 0 &&
+            toolCalls.length === 0
+          ) {
+            retriedWithoutTools = true;
+            console.warn(`[Chat] Initial stream errored with tools enabled; retrying once without tools. Error: ${roundError}`);
+            delete (context as any).tools;
+            context.systemPrompt = `${context.systemPrompt}\n\n## Runtime Tool Fallback\nTool calling is unavailable for this turn. Respond directly without invoking tools.`;
+            continue;
+          }
+
+          if (roundError) {
+            throw new Error(roundError);
           }
 
           if (toolCalls.length === 0) break;
