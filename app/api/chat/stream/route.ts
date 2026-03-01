@@ -46,11 +46,29 @@ function sseEvent(data: Record<string, any>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
+function buildNoOutputRecoveryMessage(userMessage?: string): string {
+  const text = (userMessage || "").trim().toLowerCase();
+
+  if (/\b(continue|go ahead|retry|try again)\b/.test(text)) {
+    return "There isn't a pending partial response to continue. Please resend the full request and I'll run it now.";
+  }
+
+  if (/\b(look up|lookup|find|search|research)\b/.test(text)) {
+    if (/\bliquidation\b.*\bpallet|\bpallet\b.*\bliquidation\b/.test(text)) {
+      return "I can do that. Share your target category, budget, and location, and I'll pull live liquidation pallet sources and listings.";
+    }
+    return "I can run that lookup. Please share the exact target, budget, and location so I can return concrete listings.";
+  }
+
+  return "I didn't receive a usable model output for that turn. Please resend your full request and I'll handle it directly.";
+}
+
 function buildToolFallbackMessage(
-  toolLogs: Array<{ tool: string; summary: string; isError: boolean }>
+  toolLogs: Array<{ tool: string; summary: string; isError: boolean }>,
+  userMessage?: string
 ): string {
   if (!toolLogs.length) {
-    return "I couldn't produce a final response this turn. Ask me to continue and I'll pick it up.";
+    return buildNoOutputRecoveryMessage(userMessage);
   }
 
   const successful = toolLogs.filter((t) => !t.isError).slice(-4);
@@ -689,7 +707,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (!generatedAnyAssistantText) {
-          fullContent = buildToolFallbackMessage(toolLogsForFallback);
+          fullContent = buildToolFallbackMessage(toolLogsForFallback, sanitizedContent);
           emit({ type: "clear" });
           emit({ type: "token", content: fullContent });
         }
