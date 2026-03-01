@@ -534,4 +534,44 @@ describe("conversation segmentation e2e", () => {
       })
     );
   });
+
+  it("still performs resume handoff when phrased as a short question", async () => {
+    state.config["session.segmentation_pending_confirm"] = "true";
+    state.active = newActive({
+      messageCount: 9,
+      depth: 3,
+      title: "Calendar sync debugging",
+      summary: "Debugging ICS feed URL subscriptions and token rotation behavior.",
+      tags: ["calendar", "ics"],
+    });
+    state.recentMessages = [
+      { role: "user", content: "The feed URL works but updates are delayed in Google." },
+      { role: "assistant", content: "That delay is expected for ICS polling feeds." },
+    ];
+    state.related = [{
+      _id: "story-8",
+      depth: 2,
+      title: "Looter Shooter worldbuilding",
+      summary: "Lattice lore, factions, and player campaign arc.",
+      tags: ["looter", "story", "lattice"],
+      topics: ["lore", "factions"],
+    }];
+    mocks.classifyTopic.mockResolvedValueOnce({
+      sameTopic: true,
+      relevanceScore: 92,
+      suggestedTitle: "Calendar sync follow-up",
+      newTags: ["calendar"],
+    });
+
+    const resolved = await resolveConversation(
+      "session-1" as any,
+      "gateway-1" as any,
+      undefined,
+      "where did we leave off on the story?"
+    );
+
+    expect(resolved.conversationId).toBe("convo-1");
+    expect(resolved.segmentation.reason).toBe("resume_handoff");
+    expect(mocks.mutation).toHaveBeenCalledWith(api.functions.conversations.close, { id: "active-1" });
+  });
 });

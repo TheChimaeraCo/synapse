@@ -453,8 +453,7 @@ export async function resolveConversation(
     resumeIntent &&
     activeOverlap === 0 &&
     meaningfulWords >= 2 &&
-    !bridgeLikely &&
-    !quickTangent;
+    !bridgeLikely;
 
   if (pendingState.shouldClear) {
     pendingCandidate = null;
