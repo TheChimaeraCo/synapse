@@ -93,6 +93,11 @@ export interface ToolResult {
   toolName: string;
   content: string;
   isError: boolean;
+  uiAction?: {
+    type: string;
+    payload?: any;
+    message?: string;
+  };
 }
 
 interface ApprovalRow {
@@ -106,6 +111,35 @@ interface SessionApprovalState {
   pending: ApprovalRow[];
   approved: ApprovalRow[];
   denied: ApprovalRow[];
+}
+
+function extractUiActionPayload(rawContent: string): {
+  content: string;
+  uiAction?: { type: string; payload?: any; message?: string };
+} {
+  const marker = "__UI_ACTION__";
+  if (typeof rawContent !== "string" || !rawContent.startsWith(marker)) {
+    return { content: rawContent };
+  }
+  const json = rawContent.slice(marker.length).trim();
+  try {
+    const parsed = JSON.parse(json);
+    const type = typeof parsed?.type === "string" ? parsed.type : "";
+    if (!type) return { content: rawContent };
+    const message = typeof parsed?.message === "string"
+      ? parsed.message
+      : "Action required: complete the secure form in the chat UI.";
+    return {
+      content: message,
+      uiAction: {
+        type,
+        payload: parsed?.payload,
+        message,
+      },
+    };
+  } catch {
+    return { content: rawContent };
+  }
 }
 
 function parseList(value?: string | null): string[] {
@@ -591,7 +625,14 @@ export async function executeTools(
       if (handler) {
         try {
           const output = await handler.handler(call.arguments, context);
-          results.push({ toolCallId: call.id, toolName: call.name, content: output, isError: false });
+          const parsed = extractUiActionPayload(output);
+          results.push({
+            toolCallId: call.id,
+            toolName: call.name,
+            content: parsed.content,
+            isError: false,
+            ...(parsed.uiAction ? { uiAction: parsed.uiAction } : {}),
+          });
           // Cache if applicable
           if (cacheKey) setCachedResult(call.name, cacheKey, output);
         } catch (err: any) {
@@ -606,7 +647,14 @@ export async function executeTools(
         try {
           const module = findModuleForTool(call.name, moduleConfig.installedModules);
           const output = await executeDynamicTool(handlerCode, call.arguments, context, module?.id);
-          results.push({ toolCallId: call.id, toolName: call.name, content: output, isError: false });
+          const parsed = extractUiActionPayload(output);
+          results.push({
+            toolCallId: call.id,
+            toolName: call.name,
+            content: parsed.content,
+            isError: false,
+            ...(parsed.uiAction ? { uiAction: parsed.uiAction } : {}),
+          });
         } catch (err: any) {
           results.push({ toolCallId: call.id, toolName: call.name, content: `Dynamic tool error: ${err.message}`, isError: true });
         }

@@ -4,6 +4,14 @@ import type { Id } from "@/convex/_generated/dataModel";
 
 type IntegrationAuthType = "none" | "bearer" | "header" | "query" | "basic";
 
+export interface DiscoveredEndpoint {
+  name: string;
+  method: string;
+  path: string;
+  description?: string;
+  source?: string;
+}
+
 function cleanSegment(value: string): string {
   return (value || "")
     .toLowerCase()
@@ -129,6 +137,164 @@ async function assertAllowedHost(url: URL, allowPrivateNetwork?: boolean) {
   if (isPrivateIp(url.hostname)) {
     throw new Error("Private network hosts are blocked for this integration.");
   }
+}
+
+function normalizeMethod(method: string): string {
+  const m = String(method || "").trim().toUpperCase();
+  if (!m) return "GET";
+  return m;
+}
+
+function normalizePath(path: string): string {
+  const value = String(path || "").trim();
+  if (!value) return "/";
+  return value.startsWith("/") ? value : `/${value}`;
+}
+
+function uniqByMethodPath(list: DiscoveredEndpoint[]): DiscoveredEndpoint[] {
+  const seen = new Set<string>();
+  const out: DiscoveredEndpoint[] = [];
+  for (const row of list) {
+    const key = `${normalizeMethod(row.method)} ${normalizePath(row.path)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      ...row,
+      method: normalizeMethod(row.method),
+      path: normalizePath(row.path),
+    });
+  }
+  return out;
+}
+
+function endpointNameFromPath(method: string, path: string): string {
+  const clean = normalizePath(path).replace(/[{}]/g, "");
+  const segments = clean.split("/").filter(Boolean).slice(0, 4);
+  const label = segments.join(" ");
+  return `${normalizeMethod(method)} ${label || "root"}`.trim();
+}
+
+function extractOpenApiEndpoints(doc: any, source?: string): DiscoveredEndpoint[] {
+  if (!doc || typeof doc !== "object") return [];
+  const paths = doc.paths;
+  if (!paths || typeof paths !== "object") return [];
+
+  const methods = ["get", "post", "put", "patch", "delete", "options", "head"];
+  const out: DiscoveredEndpoint[] = [];
+
+  for (const [path, config] of Object.entries(paths)) {
+    if (!config || typeof config !== "object") continue;
+    for (const method of methods) {
+      const def = (config as any)[method];
+      if (!def || typeof def !== "object") continue;
+      out.push({
+        name: String(def.operationId || def.summary || endpointNameFromPath(method, path)),
+        method: method.toUpperCase(),
+        path: normalizePath(path),
+        description: String(def.description || def.summary || ""),
+        source,
+      });
+    }
+  }
+  return out;
+}
+
+function extractRegexEndpoints(text: string, source?: string): DiscoveredEndpoint[] {
+  const lines = String(text || "").split(/\r?\n/).slice(0, 3000);
+  const re = /\b(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+((?:\/|https?:\/\/)[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%{}]+)\b/gi;
+  const out: DiscoveredEndpoint[] = [];
+
+  for (const line of lines) {
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(line)) !== null) {
+      const method = normalizeMethod(match[1]);
+      let rawPath = match[2];
+      try {
+        if (rawPath.startsWith("http://") || rawPath.startsWith("https://")) {
+          rawPath = new URL(rawPath).pathname || "/";
+        }
+      } catch {}
+      const path = normalizePath(rawPath);
+      out.push({
+        name: endpointNameFromPath(method, path),
+        method,
+        path,
+        description: line.trim().slice(0, 220),
+        source,
+      });
+    }
+  }
+
+  return out;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function discoverIntegrationEndpoints(opts: {
+  baseUrl?: string;
+  docsUrl?: string;
+  allowPrivateNetwork?: boolean;
+  maxEndpoints?: number;
+}): Promise<DiscoveredEndpoint[]> {
+  const max = Math.max(1, Math.min(100, Number(opts.maxEndpoints || 40)));
+  const urls: Array<{ url: string; source: string }> = [];
+  const docsUrl = String(opts.docsUrl || "").trim();
+  const baseUrl = String(opts.baseUrl || "").trim().replace(/\/+$/, "");
+
+  if (docsUrl) urls.push({ url: docsUrl, source: "docs_url" });
+  if (baseUrl) {
+    urls.push({ url: `${baseUrl}/openapi.json`, source: "openapi.json" });
+    urls.push({ url: `${baseUrl}/swagger.json`, source: "swagger.json" });
+    urls.push({ url: `${baseUrl}/v3/api-docs`, source: "v3/api-docs" });
+  }
+
+  const discovered: DiscoveredEndpoint[] = [];
+  const seenUrl = new Set<string>();
+
+  for (const candidate of urls) {
+    if (!candidate.url || seenUrl.has(candidate.url)) continue;
+    seenUrl.add(candidate.url);
+    let parsed: URL;
+    try {
+      parsed = new URL(candidate.url);
+    } catch {
+      continue;
+    }
+    await assertAllowedHost(parsed, opts.allowPrivateNetwork);
+
+    try {
+      const res = await fetchWithTimeout(parsed.toString(), 12000);
+      if (!res.ok) continue;
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (contentType.includes("json")) {
+        const json = await res.json().catch(() => null);
+        if (json) discovered.push(...extractOpenApiEndpoints(json, candidate.source));
+        continue;
+      }
+      const text = await res.text();
+      if (text) {
+        // Try JSON parse even if content type is incorrect.
+        try {
+          const json = JSON.parse(text);
+          discovered.push(...extractOpenApiEndpoints(json, candidate.source));
+        } catch {
+          discovered.push(...extractRegexEndpoints(text, candidate.source));
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return uniqByMethodPath(discovered).slice(0, max);
 }
 
 export async function executeIntegrationEndpointByToolName(params: {

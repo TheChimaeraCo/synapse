@@ -756,6 +756,13 @@ export async function POST(req: NextRequest) {
               summary: toolResults[i].content.slice(0, 200),
               round: round + 1,
             });
+            if ((toolResults[i] as any).uiAction) {
+              emit({
+                type: "ui_action",
+                action: (toolResults[i] as any).uiAction,
+                tool: toolCalls[i]?.name || "unknown",
+              });
+            }
           }
 
           for (const result of toolResults) {

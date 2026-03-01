@@ -3,7 +3,13 @@ import { getGatewayContext, GatewayError, handleGatewayError } from "@/lib/gatew
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { buildToolName, checkIntegrationHealth, slugify, syncIntegrationTools } from "@/lib/integrationRuntime";
+import {
+  buildToolName,
+  checkIntegrationHealth,
+  discoverIntegrationEndpoints,
+  slugify,
+  syncIntegrationTools,
+} from "@/lib/integrationRuntime";
 
 function requireToolManager(role: string) {
   if (role !== "owner" && role !== "admin") {
@@ -116,6 +122,16 @@ export async function POST(req: NextRequest) {
         ...(health.error ? { error: health.error } : {}),
       });
       return NextResponse.json({ ok: true, health });
+    }
+
+    if (action === "discoverEndpoints") {
+      const discovered = await discoverIntegrationEndpoints({
+        baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
+        docsUrl: body.docsUrl ? String(body.docsUrl) : undefined,
+        allowPrivateNetwork: Boolean(body.allowPrivateNetwork),
+        maxEndpoints: body.maxEndpoints ? Number(body.maxEndpoints) : 40,
+      });
+      return NextResponse.json({ ok: true, endpoints: discovered });
     }
 
     if (action === "createIntegration") {

@@ -901,6 +901,72 @@ const httpRequest: BuiltinTool = {
   },
 };
 
+const integrationOnboard: BuiltinTool = {
+  name: "integration_onboard",
+  description:
+    "Start secure integration onboarding for API/MCP connections. Use this whenever the user asks to add/connect an API, MCP server, or external system. It opens a secure credential prompt in the UI and can auto-discover endpoints from OpenAPI/docs URLs.",
+  category: "integration",
+  requiresApproval: false,
+  parameters: Type.Object({
+    mode: Type.Optional(Type.String({ description: "Integration mode: api/rest or mcp (default: api)" })),
+    name: Type.Optional(Type.String({ description: "Suggested integration display name" })),
+    base_url: Type.Optional(Type.String({ description: "API base URL (e.g. https://api.example.com)" })),
+    docs_url: Type.Optional(Type.String({ description: "OpenAPI/docs URL for endpoint discovery" })),
+    health_path: Type.Optional(Type.String({ description: "Health check path (e.g. /health)" })),
+    auth_hint: Type.Optional(Type.String({ description: "Auth hint: none/bearer/header/query/basic" })),
+    discover_endpoints: Type.Optional(Type.Boolean({ description: "Attempt endpoint discovery now (default true)" })),
+  }),
+  handler: async (args, context) => {
+    try {
+      const modeRaw = String(args.mode || "api").toLowerCase();
+      const mode = modeRaw === "mcp" ? "mcp" : "api";
+      const baseUrl = String(args.base_url || "").trim();
+      const docsUrl = String(args.docs_url || "").trim();
+      const discover = args.discover_endpoints !== false;
+
+      let suggestedEndpoints: Array<{ name: string; method: string; path: string; description?: string; source?: string }> = [];
+      let discoveryNote = "";
+
+      if (discover && (baseUrl || docsUrl)) {
+        try {
+          const { discoverIntegrationEndpoints } = await import("@/lib/integrationRuntime");
+          suggestedEndpoints = await discoverIntegrationEndpoints({
+            baseUrl: baseUrl || undefined,
+            docsUrl: docsUrl || undefined,
+            maxEndpoints: 30,
+          });
+          discoveryNote = suggestedEndpoints.length > 0
+            ? `Discovered ${suggestedEndpoints.length} endpoint(s).`
+            : "No endpoints discovered automatically. You can add endpoints manually in the prompt.";
+        } catch (e: any) {
+          discoveryNote = `Endpoint discovery failed: ${e?.message || "unknown error"}`;
+        }
+      }
+
+      const payload = {
+        type: "integration_onboard",
+        message: "I opened a secure integration setup prompt. Add credentials there and submit to save.",
+        payload: {
+          mode,
+          name: String(args.name || "").trim(),
+          baseUrl,
+          docsUrl,
+          healthPath: String(args.health_path || "/health").trim(),
+          authHint: String(args.auth_hint || "").trim().toLowerCase(),
+          suggestedEndpoints,
+          discoveryNote,
+          gatewayId: context.gatewayId,
+          sessionId: context.sessionId,
+        },
+      };
+
+      return `__UI_ACTION__${JSON.stringify(payload)}`;
+    } catch (e: any) {
+      return `Failed to start integration onboarding: ${e?.message || "unknown error"}`;
+    }
+  },
+};
+
 const fileRead: BuiltinTool = {
   name: "file_read",
   description: "Read the contents of a file from the workspace.",
@@ -2830,6 +2896,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   readUploadedFile,
   codeExecute,
   httpRequest,
+  integrationOnboard,
   fileRead,
   fileWrite,
   fileList,

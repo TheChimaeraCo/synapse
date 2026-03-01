@@ -161,6 +161,16 @@ export function useChat({ sessionId, gatewayId }: UseChatOptions) {
               setIsTyping(true);
             } else if (data.type === "tool_result") {
               setToolLogs(prev => [...prev, { tool: data.tool, success: data.success, summary: data.summary, round: data.round }]);
+            } else if (data.type === "ui_action") {
+              window.dispatchEvent(
+                new CustomEvent("synapse:ui_action", {
+                  detail: {
+                    sessionId,
+                    tool: data.tool,
+                    action: data.action,
+                  },
+                })
+              );
             } else if (data.type === "tool_use") {
               const toolNames = (data.tools || []).join(", ");
               setToolStatus(`Running: ${toolNames}`);
