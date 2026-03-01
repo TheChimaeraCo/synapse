@@ -1,6 +1,9 @@
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { resolveAiSelection } from "@/lib/aiRouting";
+import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 type IntegrationAuthType = "none" | "bearer" | "header" | "query" | "basic";
 
@@ -10,6 +13,26 @@ export interface DiscoveredEndpoint {
   path: string;
   description?: string;
   source?: string;
+}
+
+export interface IntegrationDiscoveryAutofill {
+  name?: string;
+  baseUrl?: string;
+  healthPath?: string;
+  authHint?: IntegrationAuthType;
+  authConfig?: {
+    headerName?: string;
+    queryName?: string;
+    username?: string;
+  };
+  confidence?: number;
+  summary?: string;
+}
+
+export interface IntegrationDiscoveryResult {
+  endpoints: DiscoveredEndpoint[];
+  autofill?: IntegrationDiscoveryAutofill;
+  notes: string[];
 }
 
 function cleanSegment(value: string): string {
@@ -238,30 +261,355 @@ async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<Respons
   }
 }
 
-export async function discoverIntegrationEndpoints(opts: {
+function clip(text: string, max = 12000): string {
+  const t = String(text || "");
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}\n... [truncated]`;
+}
+
+function stripHtml(html: string): string {
+  return String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeAuthHint(value: any): IntegrationAuthType | undefined {
+  if (value === "none" || value === "bearer" || value === "header" || value === "query" || value === "basic") {
+    return value;
+  }
+  return undefined;
+}
+
+function extractLikelyDocLinks(html: string, baseUrl: string): string[] {
+  const out = new Set<string>();
+  const re = /href\s*=\s*["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(html)) !== null) {
+    const raw = String(match[1] || "").trim();
+    if (!raw || raw.startsWith("#")) continue;
+    if (!/(openapi|swagger|api-docs|reference|docs|redoc|postman|\.json|\.ya?ml)/i.test(raw)) continue;
+    try {
+      const next = new URL(raw, baseUrl);
+      if (!["http:", "https:"].includes(next.protocol)) continue;
+      out.add(next.toString());
+      if (out.size >= 8) break;
+    } catch {
+      continue;
+    }
+  }
+  return [...out];
+}
+
+function parseOpenApiAutofill(doc: any): IntegrationDiscoveryAutofill {
+  const out: IntegrationDiscoveryAutofill = {};
+  if (!doc || typeof doc !== "object") return out;
+
+  const title = String(doc.info?.title || "").trim();
+  if (title) out.name = title;
+
+  const serverUrl = String(doc.servers?.[0]?.url || "").trim();
+  if (serverUrl) {
+    try {
+      const parsed = new URL(serverUrl);
+      out.baseUrl = `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+    } catch {}
+  }
+
+  const lower = JSON.stringify(doc).toLowerCase();
+  if (/\bbearer\b|\btoken\b/.test(lower)) {
+    out.authHint = "bearer";
+  }
+  if (/\bapi[\s_-]?key\b/.test(lower)) {
+    if (/\bin:\s*header\b/.test(lower)) out.authHint = "header";
+    if (/\bin:\s*query\b/.test(lower)) out.authHint = "query";
+  }
+
+  const paths = doc.paths && typeof doc.paths === "object" ? Object.keys(doc.paths) : [];
+  const healthPath = paths.find((p) => /^\/(health|healthz|status|ping|ready|live)(\/|$)/i.test(String(p)));
+  if (healthPath) out.healthPath = normalizePath(healthPath);
+  return out;
+}
+
+function inferAutofillFromText(text: string): IntegrationDiscoveryAutofill {
+  const lower = String(text || "").toLowerCase();
+  const out: IntegrationDiscoveryAutofill = {};
+
+  if (/\bbearer\b|\bauthorization:\s*bearer\b|\boauth2?\b|\baccess token\b/.test(lower)) {
+    out.authHint = "bearer";
+  } else if (/\bbasic auth\b|\bauthorization:\s*basic\b/.test(lower)) {
+    out.authHint = "basic";
+  } else if (/\bapi[\s_-]?key\b/.test(lower) && /\bquery\b/.test(lower)) {
+    out.authHint = "query";
+  } else if (/\bapi[\s_-]?key\b/.test(lower)) {
+    out.authHint = "header";
+  }
+
+  const headerMatch = text.match(/\b(X-[A-Za-z0-9-]*API[-_]?KEY|X-API-KEY|API-KEY)\b/i);
+  const queryMatch = text.match(/\b(api[_-]?key|access[_-]?token|token)\b/i);
+  if (headerMatch) out.authConfig = { ...(out.authConfig || {}), headerName: headerMatch[1] };
+  if (queryMatch) out.authConfig = { ...(out.authConfig || {}), queryName: queryMatch[1] };
+
+  const healthMatch = text.match(/\/(healthz?|status|ping|ready|live)(?:\/[A-Za-z0-9._~-]+)?/i);
+  if (healthMatch) out.healthPath = normalizePath(healthMatch[0]);
+
+  return out;
+}
+
+function mergeAutofill(
+  base: IntegrationDiscoveryAutofill | undefined,
+  incoming: IntegrationDiscoveryAutofill | undefined,
+): IntegrationDiscoveryAutofill | undefined {
+  if (!base && !incoming) return undefined;
+  const out: IntegrationDiscoveryAutofill = { ...(base || {}) };
+  if (!incoming) return out;
+
+  if (incoming.name) out.name = incoming.name;
+  if (incoming.baseUrl) out.baseUrl = incoming.baseUrl;
+  if (incoming.healthPath) out.healthPath = incoming.healthPath;
+  if (incoming.authHint) out.authHint = incoming.authHint;
+  if (incoming.summary) out.summary = incoming.summary;
+  if (incoming.confidence !== undefined) out.confidence = incoming.confidence;
+  if (incoming.authConfig) {
+    out.authConfig = {
+      ...(out.authConfig || {}),
+      ...(incoming.authConfig || {}),
+    };
+  }
+  return out;
+}
+
+function safeParseJsonBlock(text: string): any {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch {}
+
+  const fenced = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/```\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1]);
+    } catch {}
+  }
+
+  const first = raw.indexOf("{");
+  const last = raw.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    try {
+      return JSON.parse(raw.slice(first, last + 1));
+    } catch {}
+  }
+
+  return null;
+}
+
+function sanitizeAiAutofill(input: any): IntegrationDiscoveryAutofill | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const name = String(input.name || "").trim();
+  const baseUrl = String(input.baseUrl || "").trim();
+  const healthPath = String(input.healthPath || "").trim();
+  const authHint = normalizeAuthHint(String(input.authType || input.authHint || "").trim().toLowerCase());
+  const headerName = String(input.headerName || input.authConfig?.headerName || "").trim();
+  const queryName = String(input.queryName || input.authConfig?.queryName || "").trim();
+  const username = String(input.username || input.authConfig?.username || "").trim();
+  const summary = String(input.summary || input.notes || "").trim();
+
+  const confidenceRaw = Number(input.confidence);
+  const confidence = Number.isFinite(confidenceRaw)
+    ? Math.max(0, Math.min(100, Math.round(confidenceRaw)))
+    : undefined;
+
+  const authConfig: Record<string, string> = {};
+  if (headerName) authConfig.headerName = headerName;
+  if (queryName) authConfig.queryName = queryName;
+  if (username) authConfig.username = username;
+
+  const out: IntegrationDiscoveryAutofill = {};
+  if (name) out.name = name;
+  if (baseUrl) out.baseUrl = baseUrl;
+  if (healthPath) out.healthPath = normalizePath(healthPath);
+  if (authHint) out.authHint = authHint;
+  if (Object.keys(authConfig).length > 0) out.authConfig = authConfig;
+  if (summary) out.summary = summary;
+  if (confidence !== undefined) out.confidence = confidence;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeAiEndpoints(input: any, source = "ai_docs_agent"): DiscoveredEndpoint[] {
+  if (!Array.isArray(input)) return [];
+  const out: DiscoveredEndpoint[] = [];
+  for (const row of input) {
+    if (!row || typeof row !== "object") continue;
+    const method = normalizeMethod(String((row as any).method || "GET"));
+    let path = String((row as any).path || "").trim();
+    if (!path) continue;
+    try {
+      if (path.startsWith("http://") || path.startsWith("https://")) {
+        path = new URL(path).pathname || "/";
+      }
+    } catch {}
+    const normalizedPath = normalizePath(path);
+    out.push({
+      name: String((row as any).name || endpointNameFromPath(method, normalizedPath)).trim(),
+      method,
+      path: normalizedPath,
+      description: String((row as any).description || "").trim() || undefined,
+      source,
+    });
+  }
+  return out;
+}
+
+async function runIntegrationDiscoverySubagent(opts: {
+  gatewayId?: Id<"gateways"> | string;
   baseUrl?: string;
   docsUrl?: string;
+  sourceText: string;
+  extractedEndpoints: DiscoveredEndpoint[];
+}): Promise<{ autofill?: IntegrationDiscoveryAutofill; endpoints: DiscoveredEndpoint[]; note?: string }> {
+  if (!opts.gatewayId) {
+    return { endpoints: [] };
+  }
+
+  try {
+    const selection = await resolveAiSelection({
+      gatewayId: opts.gatewayId as Id<"gateways">,
+      capability: "analysis",
+      message: "API integration endpoint discovery and config extraction from docs",
+    });
+    if (!selection.apiKey) {
+      return { endpoints: [], note: "AI analysis skipped: no AI API key configured." };
+    }
+
+    const { registerBuiltInApiProviders, getModel, complete } = await import("@mariozechner/pi-ai");
+    registerBuiltInApiProviders();
+
+    const modelResolution = resolveModelCompat({
+      provider: selection.provider,
+      requestedModelId: selection.model,
+      fallbackModelId: defaultModelForProvider(selection.provider),
+      getModel,
+    });
+    const model = modelResolution.model;
+    if (!model) {
+      return { endpoints: [], note: `AI analysis skipped: model "${selection.model}" unavailable.` };
+    }
+
+    const endpointPreview = opts.extractedEndpoints.slice(0, 120).map((ep) => ({
+      name: ep.name,
+      method: ep.method,
+      path: ep.path,
+      description: ep.description,
+    }));
+
+    const prompt = [
+      "Analyze API docs and return JSON only.",
+      "Infer integration setup fields and key endpoints.",
+      "Do not include markdown or commentary.",
+      "",
+      "Return schema:",
+      "{",
+      '  "name": "string or empty",',
+      '  "baseUrl": "string or empty",',
+      '  "healthPath": "string or empty",',
+      '  "authType": "none|bearer|header|query|basic|empty",',
+      '  "headerName": "string or empty",',
+      '  "queryName": "string or empty",',
+      '  "username": "string or empty",',
+      '  "confidence": 0-100,',
+      '  "summary": "one short sentence",',
+      '  "endpoints": [{"name":"...","method":"GET","path":"/...","description":"..."}]',
+      "}",
+      "",
+      `Base URL hint: ${opts.baseUrl || ""}`,
+      `Docs URL hint: ${opts.docsUrl || ""}`,
+      "",
+      "Already extracted endpoints:",
+      JSON.stringify(endpointPreview, null, 2),
+      "",
+      "Docs text:",
+      clip(opts.sourceText, 30000),
+      "",
+      "If unsure, leave fields empty.",
+    ].join("\n");
+
+    const context: any = {
+      systemPrompt:
+        "You are an API integration discovery subagent. Return strictly valid JSON with no code fences.",
+      messages: [
+        {
+          role: "user" as const,
+          content: prompt,
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
+    const result = await complete(model, context, {
+      apiKey: selection.apiKey,
+      maxTokens: 1400,
+    });
+
+    let text = "";
+    for (const block of result.content || []) {
+      if (block?.type === "text") text += block.text;
+    }
+
+    const parsed = safeParseJsonBlock(text);
+    if (!parsed || typeof parsed !== "object") {
+      return { endpoints: [], note: "AI analysis returned unparsable JSON." };
+    }
+
+    const autofill = sanitizeAiAutofill(parsed);
+    const endpoints = sanitizeAiEndpoints(parsed.endpoints);
+    return { autofill, endpoints };
+  } catch (err: any) {
+    return { endpoints: [], note: `AI analysis skipped: ${err?.message || "unknown error"}` };
+  }
+}
+
+async function discoverIntegrationDetailsInternal(opts: {
+  baseUrl?: string;
+  docsUrl?: string;
+  docsText?: string;
+  gatewayId?: Id<"gateways"> | string;
+  aiAssist?: boolean;
   allowPrivateNetwork?: boolean;
   maxEndpoints?: number;
-}): Promise<DiscoveredEndpoint[]> {
+}): Promise<IntegrationDiscoveryResult> {
   const max = Math.max(1, Math.min(100, Number(opts.maxEndpoints || 40)));
   const urls: Array<{ url: string; source: string }> = [];
   const docsUrl = String(opts.docsUrl || "").trim();
   const baseUrl = String(opts.baseUrl || "").trim().replace(/\/+$/, "");
+  const docsText = String(opts.docsText || "").trim();
 
   if (docsUrl) urls.push({ url: docsUrl, source: "docs_url" });
   if (baseUrl) {
     urls.push({ url: `${baseUrl}/openapi.json`, source: "openapi.json" });
     urls.push({ url: `${baseUrl}/swagger.json`, source: "swagger.json" });
     urls.push({ url: `${baseUrl}/v3/api-docs`, source: "v3/api-docs" });
+    urls.push({ url: `${baseUrl}/docs`, source: "docs" });
+    urls.push({ url: `${baseUrl}/api/docs`, source: "api_docs" });
   }
 
   const discovered: DiscoveredEndpoint[] = [];
+  let heuristicAutofill: IntegrationDiscoveryAutofill | undefined = undefined;
+  const notes: string[] = [];
+  const sourceTextChunks: string[] = [];
+
   const seenUrl = new Set<string>();
 
-  for (const candidate of urls) {
+  const queue = [...urls];
+  while (queue.length > 0 && seenUrl.size < 14) {
+    const candidate = queue.shift();
+    if (!candidate) break;
     if (!candidate.url || seenUrl.has(candidate.url)) continue;
     seenUrl.add(candidate.url);
+
     let parsed: URL;
     try {
       parsed = new URL(candidate.url);
@@ -274,17 +622,38 @@ export async function discoverIntegrationEndpoints(opts: {
       const res = await fetchWithTimeout(parsed.toString(), 12000);
       if (!res.ok) continue;
       const contentType = (res.headers.get("content-type") || "").toLowerCase();
+
+      if (contentType.includes("html")) {
+        const html = await res.text();
+        const stripped = stripHtml(html);
+        sourceTextChunks.push(`[${candidate.source}] ${clip(stripped, 4000)}`);
+        discovered.push(...extractRegexEndpoints(stripped, candidate.source));
+        heuristicAutofill = mergeAutofill(heuristicAutofill, inferAutofillFromText(stripped));
+        const links = extractLikelyDocLinks(html, parsed.toString());
+        for (const link of links) {
+          if (!seenUrl.has(link)) queue.push({ url: link, source: `linked:${candidate.source}` });
+        }
+        continue;
+      }
+
       if (contentType.includes("json")) {
         const json = await res.json().catch(() => null);
-        if (json) discovered.push(...extractOpenApiEndpoints(json, candidate.source));
+        if (json) {
+          discovered.push(...extractOpenApiEndpoints(json, candidate.source));
+          heuristicAutofill = mergeAutofill(heuristicAutofill, parseOpenApiAutofill(json));
+          sourceTextChunks.push(`[${candidate.source}] ${clip(JSON.stringify(json), 6000)}`);
+        }
         continue;
       }
       const text = await res.text();
       if (text) {
+        sourceTextChunks.push(`[${candidate.source}] ${clip(stripHtml(text), 5000)}`);
+        heuristicAutofill = mergeAutofill(heuristicAutofill, inferAutofillFromText(text));
         // Try JSON parse even if content type is incorrect.
         try {
           const json = JSON.parse(text);
           discovered.push(...extractOpenApiEndpoints(json, candidate.source));
+          heuristicAutofill = mergeAutofill(heuristicAutofill, parseOpenApiAutofill(json));
         } catch {
           discovered.push(...extractRegexEndpoints(text, candidate.source));
         }
@@ -294,7 +663,66 @@ export async function discoverIntegrationEndpoints(opts: {
     }
   }
 
-  return uniqByMethodPath(discovered).slice(0, max);
+  if (docsText) {
+    sourceTextChunks.push(`[docs_text] ${clip(docsText, 12000)}`);
+    discovered.push(...extractRegexEndpoints(docsText, "docs_text"));
+    heuristicAutofill = mergeAutofill(heuristicAutofill, inferAutofillFromText(docsText));
+  }
+
+  if (baseUrl) {
+    heuristicAutofill = mergeAutofill(heuristicAutofill, { baseUrl });
+  }
+
+  const sourceText = sourceTextChunks.join("\n\n");
+  let aiAutofill: IntegrationDiscoveryAutofill | undefined = undefined;
+  let aiEndpoints: DiscoveredEndpoint[] = [];
+
+  if (opts.aiAssist !== false && sourceText.trim()) {
+    const ai = await runIntegrationDiscoverySubagent({
+      gatewayId: opts.gatewayId,
+      baseUrl,
+      docsUrl,
+      sourceText,
+      extractedEndpoints: discovered,
+    });
+    aiAutofill = ai.autofill;
+    aiEndpoints = ai.endpoints;
+    if (ai.note) notes.push(ai.note);
+  }
+
+  const endpoints = uniqByMethodPath([...discovered, ...aiEndpoints]).slice(0, max);
+  const autofill = mergeAutofill(heuristicAutofill, aiAutofill);
+
+  if (!endpoints.length) {
+    notes.push("No endpoints were discovered. Add endpoint rows manually or provide richer docs.");
+  }
+
+  return { endpoints, autofill, notes };
+}
+
+export async function discoverIntegrationDetails(opts: {
+  baseUrl?: string;
+  docsUrl?: string;
+  docsText?: string;
+  gatewayId?: Id<"gateways"> | string;
+  aiAssist?: boolean;
+  allowPrivateNetwork?: boolean;
+  maxEndpoints?: number;
+}): Promise<IntegrationDiscoveryResult> {
+  return discoverIntegrationDetailsInternal(opts);
+}
+
+export async function discoverIntegrationEndpoints(opts: {
+  baseUrl?: string;
+  docsUrl?: string;
+  docsText?: string;
+  gatewayId?: Id<"gateways"> | string;
+  aiAssist?: boolean;
+  allowPrivateNetwork?: boolean;
+  maxEndpoints?: number;
+}): Promise<DiscoveredEndpoint[]> {
+  const result = await discoverIntegrationDetailsInternal(opts);
+  return result.endpoints;
 }
 
 export async function executeIntegrationEndpointByToolName(params: {

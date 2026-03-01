@@ -6,7 +6,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import {
   buildToolName,
   checkIntegrationHealth,
-  discoverIntegrationEndpoints,
+  discoverIntegrationDetails,
   slugify,
   syncIntegrationTools,
 } from "@/lib/integrationRuntime";
@@ -125,13 +125,21 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "discoverEndpoints") {
-      const discovered = await discoverIntegrationEndpoints({
+      const discovered = await discoverIntegrationDetails({
         baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
         docsUrl: body.docsUrl ? String(body.docsUrl) : undefined,
+        docsText: body.docsText ? String(body.docsText) : undefined,
+        gatewayId: gatewayId as Id<"gateways">,
+        aiAssist: body.aiAssist !== false,
         allowPrivateNetwork: Boolean(body.allowPrivateNetwork),
         maxEndpoints: body.maxEndpoints ? Number(body.maxEndpoints) : 40,
       });
-      return NextResponse.json({ ok: true, endpoints: discovered });
+      return NextResponse.json({
+        ok: true,
+        endpoints: discovered.endpoints,
+        autofill: discovered.autofill || null,
+        notes: discovered.notes || [],
+      });
     }
 
     if (action === "createIntegration") {

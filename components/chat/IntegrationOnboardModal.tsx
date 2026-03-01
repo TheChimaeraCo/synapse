@@ -22,8 +22,15 @@ interface UiActionPayload {
   name?: string;
   baseUrl?: string;
   docsUrl?: string;
+  docsText?: string;
   healthPath?: string;
   authHint?: string;
+  authConfig?: {
+    headerName?: string;
+    queryName?: string;
+    username?: string;
+  };
+  confidence?: number;
   suggestedEndpoints?: Array<{
     name: string;
     method: string;
@@ -71,6 +78,7 @@ export function IntegrationOnboardModal({ sessionId }: { sessionId: string }) {
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [docsUrl, setDocsUrl] = useState("");
+  const [docsText, setDocsText] = useState("");
   const [healthPath, setHealthPath] = useState("/health");
   const [authType, setAuthType] = useState<AuthType>("none");
   const [headerName, setHeaderName] = useState("X-API-Key");
@@ -86,6 +94,32 @@ export function IntegrationOnboardModal({ sessionId }: { sessionId: string }) {
   );
 
   useEffect(() => {
+    const applyAutofill = (payload: UiActionPayload) => {
+      const nextAuth = normalizeAuthHint(payload.authHint);
+      if (payload.name) setName((prev) => (prev.trim() ? prev : String(payload.name || "")));
+      if (payload.baseUrl) setBaseUrl((prev) => (prev.trim() ? prev : String(payload.baseUrl || "")));
+      if (payload.docsText) setDocsText((prev) => (prev.trim() ? prev : String(payload.docsText || "")));
+      if (payload.healthPath) {
+        setHealthPath((prev) => {
+          const p = prev.trim();
+          if (p && p !== "/health") return prev;
+          return String(payload.healthPath || "/health");
+        });
+      }
+      if (nextAuth !== "none") {
+        setAuthType((prev) => (prev === "none" ? nextAuth : prev));
+      }
+      if (payload.authConfig?.headerName) {
+        setHeaderName((prev) => (prev === "X-API-Key" ? String(payload.authConfig?.headerName || prev) : prev));
+      }
+      if (payload.authConfig?.queryName) {
+        setQueryName((prev) => (prev === "api_key" ? String(payload.authConfig?.queryName || prev) : prev));
+      }
+      if (payload.authConfig?.username) {
+        setUsername((prev) => (prev.trim() ? prev : String(payload.authConfig?.username || "")));
+      }
+    };
+
     const handler = (event: Event) => {
       const custom = event as CustomEvent<any>;
       if (!custom.detail || custom.detail.sessionId !== sessionId) return;
@@ -97,11 +131,16 @@ export function IntegrationOnboardModal({ sessionId }: { sessionId: string }) {
       setName(String(payload.name || ""));
       setBaseUrl(String(payload.baseUrl || ""));
       setDocsUrl(String(payload.docsUrl || ""));
+      setDocsText(String(payload.docsText || ""));
       setHealthPath(String(payload.healthPath || "/health"));
       setAuthType(normalizeAuthHint(payload.authHint));
+      setHeaderName(String(payload.authConfig?.headerName || "X-API-Key"));
+      setQueryName(String(payload.authConfig?.queryName || "api_key"));
+      setUsername(String(payload.authConfig?.username || ""));
       setSecretValue("");
       setDiscoveryNote(String(payload.discoveryNote || ""));
       setEndpoints((payload.suggestedEndpoints || []).map(toEndpointDraft));
+      applyAutofill(payload);
       setOpen(true);
     };
 
@@ -129,8 +168,8 @@ export function IntegrationOnboardModal({ sessionId }: { sessionId: string }) {
   };
 
   const discoverEndpoints = async () => {
-    if (!baseUrl.trim() && !docsUrl.trim()) {
-      toast.error("Add a base URL or docs URL first.");
+    if (!baseUrl.trim() && !docsUrl.trim() && !docsText.trim()) {
+      toast.error("Add a base URL, docs URL, or docs text first.");
       return;
     }
     setDiscovering(true);
@@ -142,6 +181,8 @@ export function IntegrationOnboardModal({ sessionId }: { sessionId: string }) {
           action: "discoverEndpoints",
           baseUrl: baseUrl.trim() || undefined,
           docsUrl: docsUrl.trim() || undefined,
+          docsText: docsText.trim() || undefined,
+          aiAssist: true,
           maxEndpoints: 40,
         }),
       });
@@ -149,7 +190,33 @@ export function IntegrationOnboardModal({ sessionId }: { sessionId: string }) {
       if (!res.ok) throw new Error(data?.error || "Endpoint discovery failed");
       const rows = Array.isArray(data.endpoints) ? data.endpoints.map(toEndpointDraft) : [];
       setEndpoints(rows);
-      setDiscoveryNote(rows.length > 0 ? `Discovered ${rows.length} endpoint(s).` : "No endpoints discovered.");
+      const discoveredNote = rows.length > 0 ? `Discovered ${rows.length} endpoint(s).` : "No endpoints discovered.";
+      const extraNote = Array.isArray(data.notes) ? data.notes.filter(Boolean).join(" ") : "";
+      const confidence = Number(data?.autofill?.confidence);
+      const confidenceText = Number.isFinite(confidence) ? ` Confidence: ${Math.round(confidence)}%.` : "";
+      setDiscoveryNote(`${discoveredNote}${confidenceText}${extraNote ? ` ${extraNote}` : ""}`.trim());
+
+      if (data?.autofill) {
+        const autofill = data.autofill;
+        if (autofill.name) setName((prev) => (prev.trim() ? prev : String(autofill.name)));
+        if (autofill.baseUrl) setBaseUrl((prev) => (prev.trim() ? prev : String(autofill.baseUrl)));
+        if (autofill.healthPath) {
+          setHealthPath((prev) => (prev.trim() && prev.trim() !== "/health" ? prev : String(autofill.healthPath)));
+        }
+        if (autofill.authHint) {
+          setAuthType((prev) => (prev === "none" ? normalizeAuthHint(autofill.authHint) : prev));
+        }
+        if (autofill.authConfig?.headerName) {
+          setHeaderName((prev) => (prev === "X-API-Key" ? String(autofill.authConfig.headerName) : prev));
+        }
+        if (autofill.authConfig?.queryName) {
+          setQueryName((prev) => (prev === "api_key" ? String(autofill.authConfig.queryName) : prev));
+        }
+        if (autofill.authConfig?.username) {
+          setUsername((prev) => (prev.trim() ? prev : String(autofill.authConfig.username)));
+        }
+      }
+
       toast.success(rows.length > 0 ? `Discovered ${rows.length} endpoint(s)` : "No endpoints found");
     } catch (err: any) {
       toast.error(err?.message || "Discovery failed");
@@ -273,6 +340,13 @@ export function IntegrationOnboardModal({ sessionId }: { sessionId: string }) {
               onChange={(e) => setDocsUrl(e.target.value)}
               placeholder="Docs/OpenAPI URL (optional)"
               className="bg-white/[0.04] border border-white/[0.1] rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+            />
+            <textarea
+              value={docsText}
+              onChange={(e) => setDocsText(e.target.value)}
+              placeholder="Paste docs snippets/endpoint docs here (optional)"
+              rows={4}
+              className="md:col-span-2 bg-white/[0.04] border border-white/[0.1] rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none resize-y"
             />
             <input
               value={healthPath}

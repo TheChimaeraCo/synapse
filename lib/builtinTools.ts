@@ -912,6 +912,7 @@ const integrationOnboard: BuiltinTool = {
     name: Type.Optional(Type.String({ description: "Suggested integration display name" })),
     base_url: Type.Optional(Type.String({ description: "API base URL (e.g. https://api.example.com)" })),
     docs_url: Type.Optional(Type.String({ description: "OpenAPI/docs URL for endpoint discovery" })),
+    docs_text: Type.Optional(Type.String({ description: "Optional pasted docs text to improve endpoint discovery/autofill" })),
     health_path: Type.Optional(Type.String({ description: "Health check path (e.g. /health)" })),
     auth_hint: Type.Optional(Type.String({ description: "Auth hint: none/bearer/header/query/basic" })),
     discover_endpoints: Type.Optional(Type.Boolean({ description: "Attempt endpoint discovery now (default true)" })),
@@ -922,22 +923,44 @@ const integrationOnboard: BuiltinTool = {
       const mode = modeRaw === "mcp" ? "mcp" : "api";
       const baseUrl = String(args.base_url || "").trim();
       const docsUrl = String(args.docs_url || "").trim();
+      const docsText = String(args.docs_text || "").trim();
       const discover = args.discover_endpoints !== false;
 
       let suggestedEndpoints: Array<{ name: string; method: string; path: string; description?: string; source?: string }> = [];
       let discoveryNote = "";
+      let inferredName = String(args.name || "").trim();
+      let inferredBaseUrl = baseUrl;
+      let inferredHealthPath = String(args.health_path || "/health").trim();
+      let inferredAuthHint = String(args.auth_hint || "").trim().toLowerCase();
+      let inferredAuthConfig: { headerName?: string; queryName?: string; username?: string } = {};
 
-      if (discover && (baseUrl || docsUrl)) {
+      if (discover && (baseUrl || docsUrl || docsText)) {
         try {
-          const { discoverIntegrationEndpoints } = await import("@/lib/integrationRuntime");
-          suggestedEndpoints = await discoverIntegrationEndpoints({
+          const { discoverIntegrationDetails } = await import("@/lib/integrationRuntime");
+          const details = await discoverIntegrationDetails({
             baseUrl: baseUrl || undefined,
             docsUrl: docsUrl || undefined,
+            docsText: docsText || undefined,
+            gatewayId: context.gatewayId,
+            aiAssist: true,
             maxEndpoints: 30,
           });
+          suggestedEndpoints = details.endpoints;
+          if (!inferredName && details.autofill?.name) inferredName = details.autofill.name;
+          if (!inferredBaseUrl && details.autofill?.baseUrl) inferredBaseUrl = details.autofill.baseUrl;
+          if (details.autofill?.healthPath) inferredHealthPath = details.autofill.healthPath;
+          if (!inferredAuthHint && details.autofill?.authHint) inferredAuthHint = details.autofill.authHint;
+          if (details.autofill?.authConfig) inferredAuthConfig = details.autofill.authConfig;
+
           discoveryNote = suggestedEndpoints.length > 0
             ? `Discovered ${suggestedEndpoints.length} endpoint(s).`
             : "No endpoints discovered automatically. You can add endpoints manually in the prompt.";
+          if (details.notes?.length) {
+            discoveryNote = `${discoveryNote} ${details.notes.join(" ")}`.trim();
+          }
+          if (details.autofill?.confidence !== undefined) {
+            discoveryNote = `${discoveryNote} Confidence ${details.autofill.confidence}%.`.trim();
+          }
         } catch (e: any) {
           discoveryNote = `Endpoint discovery failed: ${e?.message || "unknown error"}`;
         }
@@ -948,11 +971,13 @@ const integrationOnboard: BuiltinTool = {
         message: "I opened a secure integration setup prompt. Add credentials there and submit to save.",
         payload: {
           mode,
-          name: String(args.name || "").trim(),
-          baseUrl,
+          name: inferredName,
+          baseUrl: inferredBaseUrl,
           docsUrl,
-          healthPath: String(args.health_path || "/health").trim(),
-          authHint: String(args.auth_hint || "").trim().toLowerCase(),
+          docsText,
+          healthPath: inferredHealthPath,
+          authHint: inferredAuthHint,
+          authConfig: inferredAuthConfig,
           suggestedEndpoints,
           discoveryNote,
           gatewayId: context.gatewayId,
