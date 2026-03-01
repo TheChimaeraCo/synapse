@@ -3,13 +3,12 @@ import { gatewayFetch } from "@/lib/gatewayFetch";
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useSession } from "next-auth/react";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, markdownComponents, remarkPlugins } from "./MessageBubble";
 import { ConversationSavedDivider } from "./ConversationDivider";
 import { ToolApprovalsPopup } from "./ToolApprovalsPopup";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useChat } from "@/hooks/useChat";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 
@@ -321,8 +320,11 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
         {streamingContent && (
           <div className="flex justify-start">
             <div className="max-w-[92%] sm:max-w-[75%] rounded-2xl rounded-bl-md border border-white/[0.14] bg-white/[0.05] backdrop-blur-2xl px-5 py-3 text-sm animate-fade-in shadow-[0_12px_24px_rgba(6,12,24,0.24)]">
-              <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <div className="prose prose-invert prose-sm max-w-none break-words overflow-hidden leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
+                prose-code:bg-white/[0.08] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-blue-300 prose-code:text-[0.8em] prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+                prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline
+              ">
+                <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
                   {streamingContent}
                 </ReactMarkdown>
               </div>

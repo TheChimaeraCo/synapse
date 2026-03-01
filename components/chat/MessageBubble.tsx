@@ -238,7 +238,7 @@ function FallbackTable({ text }: { text: string }) {
 }
 
 // Memoized markdown components to avoid re-creating on every render
-const markdownComponents = {
+export const markdownComponents = {
   p({ children, ...props }: any) {
     // Check if children contain raw pipe-table text that wasn't parsed
     const text = typeof children === "string" ? children : "";
@@ -315,7 +315,7 @@ const markdownComponents = {
   },
 };
 
-const remarkPlugins = [remarkGfm];
+export const remarkPlugins = [remarkGfm];
 
 const REACTION_EMOJIS = ["👍", "👎", "❤️", "🎯", "💡"];
 
