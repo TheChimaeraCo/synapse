@@ -18,6 +18,7 @@ import {
 // Tool cache TTLs in milliseconds
 const TOOL_CACHE_TTLS: Record<string, number> = {
   web_search: 60 * 60 * 1000,      // 1 hour
+  browser_fetch: 15 * 60 * 1000,   // 15 minutes
   code_execute: 5 * 60 * 1000,      // 5 minutes
 };
 
@@ -32,7 +33,7 @@ const DANGEROUS_TOOLS = new Set([
   "pm2_restart",
   "pm2_delete",
 ]);
-const NETWORK_TOOLS = new Set(["web_search", "http_request"]);
+const NETWORK_TOOLS = new Set(["web_search", "browser_fetch", "http_request"]);
 const SECRET_SINK_TOOLS = new Set([
   "shell_exec",
   "convex_deploy",

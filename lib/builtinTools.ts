@@ -388,6 +388,89 @@ async function fetchPagePreview(urlInput: string): Promise<string> {
   return `Direct URL fetch:\n${url}\nTitle: ${title}\n\n${snippet || "(no readable text extracted)"}`;
 }
 
+function resolveChromiumExecutablePath(): string | null {
+  const candidates = [
+    process.env.BROWSER_EXECUTABLE_PATH,
+    process.env.PLAYWRIGHT_CHROMIUM_PATH,
+    "/opt/google/chrome/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {}
+  }
+  return null;
+}
+
+async function fetchPageWithBrowser(
+  urlInput: string,
+  options?: { timeoutMs?: number; maxChars?: number; waitUntil?: "domcontentloaded" | "load" | "networkidle" }
+): Promise<{ title: string; finalUrl: string; text: string; blocked: boolean; engine: string }> {
+  const url = new URL(urlInput);
+  await assertPublicHostname(url.hostname);
+
+  let browser: any = null;
+  try {
+    const { chromium } = await import("playwright-core");
+    const executablePath = resolveChromiumExecutablePath();
+    if (!executablePath) {
+      throw new Error("No Chromium executable found. Set BROWSER_EXECUTABLE_PATH.");
+    }
+
+    const timeoutMs = Math.max(2000, Math.min(30000, Number(options?.timeoutMs || 15000)));
+    const maxChars = Math.max(500, Math.min(20000, Number(options?.maxChars || 6000)));
+    const waitUntil = options?.waitUntil || "domcontentloaded";
+
+    browser = await chromium.launch({
+      executablePath,
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    });
+
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0 (X11; Linux x86_64) SynapseBrowser/1.0",
+    });
+    const page = await context.newPage();
+    await page.goto(url.toString(), { waitUntil, timeout: timeoutMs });
+    await page.waitForTimeout(Math.min(2500, Math.floor(timeoutMs / 4)));
+
+    const pageTitle = (await page.title()).trim();
+    const finalUrl = page.url();
+    const text = await page.evaluate(() => {
+      const bodyText = document.body?.innerText || "";
+      return bodyText.replace(/\s+/g, " ").trim();
+    });
+    const trimmed = text.slice(0, maxChars);
+    const blocked = /access denied|forbidden|captcha|blocked|security check|unusual traffic|verify you are human/i.test(
+      `${pageTitle}\n${trimmed.slice(0, 2000)}`
+    );
+
+    try {
+      const final = new URL(finalUrl);
+      await assertPublicHostname(final.hostname);
+    } catch {}
+
+    return {
+      title: pageTitle || "(no title)",
+      finalUrl,
+      text: trimmed || "(no readable text extracted)",
+      blocked,
+      engine: "playwright-core/chromium",
+    };
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {}
+    }
+  }
+}
+
 const webSearch: BuiltinTool = {
   name: "web_search",
   description: "Search the web for current information. Uses Brave Search when configured with automatic DuckDuckGo fallback. If the query is a direct URL, fetches and summarizes that page.",
@@ -425,6 +508,28 @@ const webSearch: BuiltinTool = {
         const preview = await fetchPagePreview(query);
         const blocked = /access denied|forbidden|permission|URL fetch failed:\s*(401|403|429|503)/i.test(preview);
         if (!blocked) return preview;
+
+        // First fallback: render with a real browser for JS-heavy pages.
+        try {
+          const rendered = await fetchPageWithBrowser(query, {
+            timeoutMs: 18000,
+            maxChars: 7000,
+            waitUntil: "domcontentloaded",
+          });
+          if (!rendered.blocked) {
+            return (
+              `${preview}\n\n` +
+              `Browser fetch (${rendered.engine}):\n${rendered.finalUrl}\nTitle: ${rendered.title}\n\n${rendered.text}`
+            );
+          }
+        } catch (browserErr: any) {
+          // Continue to mirror/search fallbacks.
+          const browserMsg = String(browserErr?.message || "unknown browser error");
+          if (!/No Chromium executable found/i.test(browserMsg)) {
+            // Keep lightweight note only for actionable errors.
+            console.warn(`[web_search] browser fetch fallback failed: ${browserMsg}`);
+          }
+        }
 
         // Try mirror fetch before search. Works for some sites that block bot user agents.
         const mirrored = await fetchViaJinaMirror(query);
@@ -519,6 +624,40 @@ const webSearch: BuiltinTool = {
     } catch (e: any) {
       if (braveError) return `${braveError}\nFallback search error: ${e?.message || "unknown error"}`;
       return `Search error: ${e?.message || "unknown error"}`;
+    }
+  },
+};
+
+const browserFetch: BuiltinTool = {
+  name: "browser_fetch",
+  description:
+    "Fetch and extract a webpage using a real headless browser (Playwright + Chromium). Use for JS-rendered pages or when normal HTTP fetch/search is blocked.",
+  category: "network",
+  requiresApproval: false,
+  parameters: Type.Object({
+    url: Type.String({ description: "Target page URL" }),
+    timeout: Type.Optional(Type.Number({ description: "Timeout in ms (default: 15000, max: 30000)" })),
+    maxChars: Type.Optional(Type.Number({ description: "Max extracted characters (default: 6000, max: 20000)" })),
+    waitUntil: Type.Optional(Type.String({ description: "Navigation wait strategy: domcontentloaded | load | networkidle" })),
+  }),
+  handler: async (args) => {
+    try {
+      const waitRaw = String(args.waitUntil || "").trim().toLowerCase();
+      const waitUntil =
+        waitRaw === "load" || waitRaw === "networkidle" || waitRaw === "domcontentloaded"
+          ? (waitRaw as "domcontentloaded" | "load" | "networkidle")
+          : "domcontentloaded";
+
+      const rendered = await fetchPageWithBrowser(String(args.url || ""), {
+        timeoutMs: Number(args.timeout || 15000),
+        maxChars: Number(args.maxChars || 6000),
+        waitUntil,
+      });
+
+      const blockedNote = rendered.blocked ? "\n\nWarning: page appears blocked by anti-bot protections." : "";
+      return `Browser fetch (${rendered.engine}):\n${rendered.finalUrl}\nTitle: ${rendered.title}\n\n${rendered.text}${blockedNote}`;
+    } catch (e: any) {
+      return `Browser fetch error: ${e?.message || "unknown error"}`;
     }
   },
 };
@@ -3347,6 +3486,7 @@ function isToolAvailable(name: string): boolean {
 
 export const BUILTIN_TOOLS: BuiltinTool[] = [
   webSearch,
+  browserFetch,
   getTime,
   calculator,
   knowledgeQuery,
