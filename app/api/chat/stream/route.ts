@@ -72,6 +72,30 @@ function buildToolFallbackMessage(
   ].join("\n");
 }
 
+function isUnderspecifiedFollowup(content: string): boolean {
+  const text = content.trim().toLowerCase();
+  if (!text || text.length > 120) return false;
+
+  const quickFollowups = new Set([
+    "continue",
+    "go ahead",
+    "do it",
+    "try again",
+    "yes",
+    "yep",
+    "ok",
+    "okay",
+    "sounds good",
+  ]);
+  if (quickFollowups.has(text)) return true;
+
+  const hasActionVerb = /\b(can|could|please|do|run|check|look|research|analyze|summarize|add|fix|update|make|continue|retry)\b/.test(text);
+  const hasReferentialLanguage = /\b(this|that|it|them|those|same|again|another|more|for me)\b/.test(text);
+  const hasGenericResearchAsk = /\b(do some research|research for me|look into (it|this|that))\b/.test(text);
+
+  return (hasActionVerb && hasReferentialLanguage) || hasGenericResearchAsk;
+}
+
 class ClientAbortError extends Error {
   constructor() {
     super("Client disconnected");
@@ -282,10 +306,22 @@ export async function POST(req: NextRequest) {
           sessionId, sessionDoc.agentId, sanitizedContent, 5000, responseConversationId
         );
 
+        const userTurns = claudeMessages.filter((m) => m.role === "user");
+        const previousUserTurn = userTurns.length >= 2 ? userTurns[userTurns.length - 2]?.content : null;
+        const shouldApplyContinuityGuard =
+          isUnderspecifiedFollowup(sanitizedContent) &&
+          Boolean(previousUserTurn);
+
+        const continuityGuard = shouldApplyContinuityGuard
+          ? `\n\n## Continuity Guard\nThe latest user message is a short follow-up.\nInfer the subject from the immediately previous user turn before asking clarification.\nOnly ask a clarifying question if two or more distinct subjects are equally plausible.\nMost likely subject from previous user turn: "${String(previousUserTurn).slice(0, 260)}"`
+          : "";
+
+        const augmentedSystemPrompt = rawSystemPrompt + continuityGuard;
+
         // Layer 4: Embed canary token in system prompt
         const systemPrompt = defenseConfig.enabled
-          ? embedCanaryInPrompt(rawSystemPrompt, sessionId as string)
-          : rawSystemPrompt;
+          ? embedCanaryInPrompt(augmentedSystemPrompt, sessionId as string)
+          : augmentedSystemPrompt;
 
         const agent = await convexClient.query(api.functions.agents.get, { id: sessionDoc.agentId });
         if (!agent) throw new Error("Agent not found");
