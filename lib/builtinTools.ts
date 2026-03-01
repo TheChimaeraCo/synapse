@@ -992,6 +992,90 @@ const integrationOnboard: BuiltinTool = {
   },
 };
 
+const integrationDelete: BuiltinTool = {
+  name: "integration_delete",
+  description:
+    "Delete an API/MCP integration by id, slug, or name. This action is destructive and always requires approval before execution.",
+  category: "integration",
+  requiresApproval: true,
+  parameters: Type.Object({
+    id: Type.Optional(Type.String({ description: "Exact integration id (preferred when known)" })),
+    slug: Type.Optional(Type.String({ description: "Integration slug (e.g. anidb-http-api)" })),
+    name: Type.Optional(Type.String({ description: "Integration name (e.g. AniDB HTTP API)" })),
+    identifier: Type.Optional(Type.String({ description: "Flexible matcher against id/slug/name" })),
+  }),
+  handler: async (args, context) => {
+    try {
+      const role = String(context.userRole || "").toLowerCase();
+      if (role && role !== "owner" && role !== "admin") {
+        return "Owner/admin role required to delete integrations.";
+      }
+
+      const { convexClient } = await import("@/lib/convex");
+      const { api } = await import("@/convex/_generated/api");
+      const { syncIntegrationTools } = await import("@/lib/integrationRuntime");
+
+      const gatewayId = context.gatewayId as any;
+      const rows = await convexClient.query(api.functions.integrations.list, { gatewayId });
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return "No integrations exist for this gateway.";
+      }
+
+      const id = String(args.id || "").trim();
+      const slug = String(args.slug || "").trim().toLowerCase();
+      const name = String(args.name || "").trim().toLowerCase();
+      const identifier = String(args.identifier || "").trim().toLowerCase();
+
+      const candidates = rows.filter((row: any) => {
+        if (id && String(row._id) === id) return true;
+        if (slug && String(row.slug || "").toLowerCase() === slug) return true;
+        if (name && String(row.name || "").toLowerCase() === name) return true;
+        if (identifier) {
+          const rid = String(row._id || "").toLowerCase();
+          const rslug = String(row.slug || "").toLowerCase();
+          const rname = String(row.name || "").toLowerCase();
+          return rid.includes(identifier) || rslug.includes(identifier) || rname.includes(identifier);
+        }
+        return false;
+      });
+
+      if (candidates.length === 0) {
+        const sample = rows
+          .slice(0, 12)
+          .map((r: any) => `- ${r.name} (slug: ${r.slug}, id: ${r._id})`)
+          .join("\n");
+        return `Integration not found. Available integrations:\n${sample}`;
+      }
+
+      if (candidates.length > 1) {
+        const matches = candidates
+          .map((r: any) => `- ${r.name} (slug: ${r.slug}, id: ${r._id})`)
+          .join("\n");
+        return `Multiple integrations matched. Re-run with exact id or slug:\n${matches}`;
+      }
+
+      const target = candidates[0];
+
+      await convexClient.mutation(api.functions.integrations.removeIntegration, { id: target._id });
+
+      const secretKeys = [
+        `integration.${target._id}.secret.token`,
+        `integration.${target._id}.secret.value`,
+        `integration.${target._id}.secret.password`,
+      ];
+      for (const key of secretKeys) {
+        await convexClient.mutation(api.functions.gatewayConfig.remove, { gatewayId, key });
+      }
+
+      await syncIntegrationTools(gatewayId);
+
+      return `Deleted integration "${target.name}" (slug: ${target.slug}). Removed endpoints, synced tools, and cleared stored secrets.`;
+    } catch (e: any) {
+      return `Failed to delete integration: ${e?.message || "unknown error"}`;
+    }
+  },
+};
+
 const fileRead: BuiltinTool = {
   name: "file_read",
   description: "Read the contents of a file from the workspace.",
@@ -2922,6 +3006,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   codeExecute,
   httpRequest,
   integrationOnboard,
+  integrationDelete,
   fileRead,
   fileWrite,
   fileList,
