@@ -257,7 +257,7 @@ function detectResumeConversationIntent(message: string): boolean {
     /\bpick up\b/,
     /\bpick this back up\b/,
     /\bresume\b/,
-    /\bwhere we left off\b/,
+    /\bwhere (?:did )?we (?:leave|left) off\b/,
     /\bas we discussed\b/,
     /\blike before\b/,
     /\bback to\b/,
@@ -276,6 +276,7 @@ type SegmentationReason =
   | "same_topic"
   | "classifier"
   | "pending_confirmed"
+  | "resume_handoff"
   | "hard_pivot"
   | "explicit_new"
   | "long_gap";
@@ -444,6 +445,16 @@ export async function resolveConversation(
   let nextPendingValue: PendingSplitCandidate | null = pendingState.candidate;
   const bridgeLikely = isBridgeMessage(newMessage);
   const quickTangent = isQuickSideTangent(newMessage);
+  const activeOverlap = activeTopicText ? topicOverlap(activeTopicText, newMessage) : 0;
+  const meaningfulWords = countMeaningfulWords(newMessage);
+  const resumeHandoff =
+    !wantsNew &&
+    !isLongGap &&
+    resumeIntent &&
+    activeOverlap === 0 &&
+    meaningfulWords >= 2 &&
+    !bridgeLikely &&
+    !quickTangent;
 
   if (pendingState.shouldClear) {
     pendingCandidate = null;
@@ -538,8 +549,21 @@ export async function resolveConversation(
     console.log("[ConvoSegmentation] Hard pivot detected from message content; starting a new conversation segment.");
   }
 
-  const candidateShift = !wantsNew && !isLongGap && !hardPivot && topicShifted;
-  if (pendingConfirmEnabled && !wantsNew && !isLongGap && !hardPivot) {
+  if (!topicShifted && resumeHandoff) {
+    topicShifted = true;
+    relevanceScore = Math.min(relevanceScore, 8);
+    if (!classificationResult) {
+      classificationResult = {
+        sameTopic: false,
+        relevanceScore: 8,
+        suggestedTitle: "Resumed topic",
+      };
+    }
+    console.log("[ConvoSegmentation] Resume intent points away from active topic; switching to a new conversation segment.");
+  }
+
+  const candidateShift = !wantsNew && !isLongGap && !hardPivot && !resumeHandoff && topicShifted;
+  if (pendingConfirmEnabled && !wantsNew && !isLongGap && !hardPivot && !resumeHandoff) {
     if (pendingCandidate) {
       if (candidateShift) {
         // Second consecutive low-relevance turn confirms a split.
@@ -680,6 +704,8 @@ export async function resolveConversation(
   const relatedConvoIds = Array.from(relatedSet).slice(0, 8) as Id<"conversations">[];
   const splitReason: SegmentationReason = wantsNew
     ? "explicit_new"
+    : resumeHandoff
+      ? "resume_handoff"
     : hardPivot
       ? "hard_pivot"
       : (pendingConfirmEnabled && !wantsNew && !isLongGap && !!pendingCandidate && candidateShift)

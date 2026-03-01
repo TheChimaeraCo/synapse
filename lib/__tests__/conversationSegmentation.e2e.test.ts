@@ -487,4 +487,51 @@ describe("conversation segmentation e2e", () => {
     );
     expect(mocks.mutation).not.toHaveBeenCalledWith(api.functions.conversations.close, { id: "active-1" });
   });
+
+  it("switches conversation immediately when resume intent points to a different domain", async () => {
+    state.config["session.segmentation_pending_confirm"] = "true";
+    state.active = newActive({
+      messageCount: 8,
+      depth: 3,
+      title: "Calendar sync debugging",
+      summary: "Debugging ICS feed URL subscriptions and token rotation behavior.",
+      tags: ["calendar", "ics"],
+    });
+    state.recentMessages = [
+      { role: "user", content: "Events are added but not appearing in Google right away." },
+      { role: "assistant", content: "ICS subscriptions can refresh slowly." },
+    ];
+    state.related = [{
+      _id: "story-7",
+      depth: 2,
+      title: "Looter Shooter worldbuilding",
+      summary: "Lattice lore, faction goals, and story arc checkpoints.",
+      tags: ["looter", "story", "lattice"],
+      topics: ["lore", "factions"],
+    }];
+    mocks.classifyTopic.mockResolvedValueOnce({
+      sameTopic: true,
+      relevanceScore: 86,
+      suggestedTitle: "Calendar sync follow-up",
+      newTags: ["calendar"],
+    });
+
+    const resolved = await resolveConversation(
+      "session-1" as any,
+      "gateway-1" as any,
+      undefined,
+      "where did we leave off on the looter shooter story"
+    );
+
+    expect(resolved.conversationId).toBe("convo-1");
+    expect(resolved.segmentation.reason).toBe("resume_handoff");
+    expect(mocks.mutation).toHaveBeenCalledWith(api.functions.conversations.close, { id: "active-1" });
+    expect(mocks.mutation).toHaveBeenCalledWith(
+      api.functions.conversations.create,
+      expect.objectContaining({
+        previousConvoId: "active-1",
+        depth: 4,
+      })
+    );
+  });
 });
