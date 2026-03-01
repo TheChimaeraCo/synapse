@@ -108,6 +108,52 @@ export async function extractReadableText(
   const bytes = Buffer.from(await res.arrayBuffer());
   const mime = (file.mimeType || "").toLowerCase();
 
+  if (isExcelLike(mime, file.filename)) {
+    try {
+      const xlsxMod: any = await import("xlsx");
+      const XLSX: any = xlsxMod.default || xlsxMod;
+      const workbook = XLSX.read(bytes, {
+        type: "buffer",
+        cellDates: true,
+        dense: true,
+      });
+
+      const sections: string[] = [];
+      const sheetNames = (workbook.SheetNames || []).slice(0, 20);
+      for (const sheetName of sheetNames) {
+        const ws = workbook.Sheets[sheetName];
+        if (!ws) continue;
+
+        let rows = 0;
+        let cols = 0;
+        const ref = String((ws as any)["!ref"] || "");
+        if (ref) {
+          try {
+            const range = XLSX.utils.decode_range(ref);
+            rows = Math.max(0, range.e.r - range.s.r + 1);
+            cols = Math.max(0, range.e.c - range.s.c + 1);
+          } catch {}
+        }
+
+        const csv = XLSX.utils.sheet_to_csv(ws, { blankrows: false }).trim();
+        if (!csv) continue;
+        const dim = rows && cols ? ` (${rows} rows x ${cols} cols)` : "";
+        sections.push(`## Sheet: ${sheetName}${dim}\n${csv}`);
+      }
+
+      if (sections.length > 0) {
+        const text = sections.join("\n\n");
+        return {
+          mode: "text",
+          text: text.slice(0, maxChars),
+          truncated: text.length > maxChars,
+        };
+      }
+    } catch {
+      // Fall through to other extraction methods.
+    }
+  }
+
   if (isTextLike(mime, file.filename)) {
     const text = bytes.toString("utf-8");
     return {

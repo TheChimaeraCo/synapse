@@ -616,7 +616,7 @@ const listConversationFiles: BuiltinTool = {
 
 const readUploadedFile: BuiltinTool = {
   name: "read_uploaded_file",
-  description: "Read and analyze an uploaded file linked to this conversation (PDF, text, JSON, CSV, images with vision-capable models). Uses the dedicated file-reader routing capability, so it can use a different provider/model than chat.",
+  description: "Read and analyze an uploaded file linked to this conversation (PDF, text, JSON, CSV, Excel XLS/XLSX, images with vision-capable models). Uses the dedicated file-reader routing capability, so it can use a different provider/model than chat.",
   category: "file",
   requiresApproval: false,
   parameters: Type.Object({
