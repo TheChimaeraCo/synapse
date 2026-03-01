@@ -46,13 +46,50 @@ function sseEvent(data: Record<string, any>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
-function buildNoOutputRecoveryMessage(userMessage?: string, previousUserTurn?: string | null): string {
+function isControlLikeMessage(text: string): boolean {
+  const value = text.trim().toLowerCase();
+  if (!value) return true;
+  return /^(continue|go ahead|try again|retry|yes|yep|ok|okay|sounds good|look at our current convo|look at our current conversation)$/i.test(value);
+}
+
+function getPreviousSubstantiveUserTurn(messages: Array<{ role: "user" | "assistant"; content: string }>): string | null {
+  const userTurns = messages.filter((m) => m.role === "user").map((m) => m.content);
+  for (let i = userTurns.length - 2; i >= 0; i--) {
+    const candidate = userTurns[i]?.trim();
+    if (!candidate) continue;
+    if (isControlLikeMessage(candidate)) continue;
+    if (candidate.length < 4) continue;
+    return candidate;
+  }
+  return null;
+}
+
+function getPreviousAssistantTurn(messages: Array<{ role: "user" | "assistant"; content: string }>): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    const content = m.content?.trim();
+    if (!content) continue;
+    return content;
+  }
+  return null;
+}
+
+function buildNoOutputRecoveryMessage(
+  userMessage?: string,
+  previousUserTurn?: string | null,
+  previousAssistantTurn?: string | null
+): string {
   const text = (userMessage || "").trim().toLowerCase();
   const prior = (previousUserTurn || "").trim();
+  const priorAssistant = (previousAssistantTurn || "").trim();
 
   if (/\b(current convo|current conversation|our convo|our conversation|current context|look at .*convo|look at .*conversation)\b/.test(text)) {
     if (prior) {
-      return `From our recent conversation, the active topic is: "${prior.slice(0, 220)}". Ask a specific follow-up and I'll continue from there.`;
+      const summaryTail = priorAssistant
+        ? ` Last assistant point: "${priorAssistant.slice(0, 180)}".`
+        : "";
+      return `Active context: "${prior.slice(0, 220)}".${summaryTail} Ask a specific follow-up and I'll continue from there.`;
     }
     return "I can use the current conversation context, but I need a specific follow-up question to continue.";
   }
@@ -63,7 +100,7 @@ function buildNoOutputRecoveryMessage(userMessage?: string, previousUserTurn?: s
 
   if (/\b(look up|lookup|find|search|research)\b/.test(text)) {
     if (/\bliquidation\b.*\bpallet|\bpallet\b.*\bliquidation\b/.test(text)) {
-      return "I can do that. Share your target category, budget, and location, and I'll pull live liquidation pallet sources and listings.";
+      return "Quick starting sources: B-Stock, BULQ, Direct Liquidation, Liquidation.com, Via Trading, and 888Lots. Share category + budget + location and I'll narrow to best-fit pallets.";
     }
     return "I can run that lookup. Please share the exact target, budget, and location so I can return concrete listings.";
   }
@@ -74,10 +111,11 @@ function buildNoOutputRecoveryMessage(userMessage?: string, previousUserTurn?: s
 function buildToolFallbackMessage(
   toolLogs: Array<{ tool: string; summary: string; isError: boolean }>,
   userMessage?: string,
-  previousUserTurn?: string | null
+  previousUserTurn?: string | null,
+  previousAssistantTurn?: string | null
 ): string {
   if (!toolLogs.length) {
-    return buildNoOutputRecoveryMessage(userMessage, previousUserTurn);
+    return buildNoOutputRecoveryMessage(userMessage, previousUserTurn, previousAssistantTurn);
   }
 
   const successful = toolLogs.filter((t) => !t.isError).slice(-4);
@@ -342,6 +380,7 @@ export async function POST(req: NextRequest) {
       let successfulToolResults = 0;
       let failedToolResults = 0;
       let previousUserTurnForFallback: string | null = null;
+      let previousAssistantTurnForFallback: string | null = null;
       let emptyOutputRecoveryInjected = false;
 
       try {
@@ -353,9 +392,10 @@ export async function POST(req: NextRequest) {
           sessionId, sessionDoc.agentId, sanitizedContent, 5000, responseConversationId
         );
 
-        const userTurns = claudeMessages.filter((m) => m.role === "user");
-        const previousUserTurn = userTurns.length >= 2 ? userTurns[userTurns.length - 2]?.content : null;
+        const previousUserTurn = getPreviousSubstantiveUserTurn(claudeMessages);
+        const previousAssistantTurn = getPreviousAssistantTurn(claudeMessages);
         previousUserTurnForFallback = previousUserTurn;
+        previousAssistantTurnForFallback = previousAssistantTurn;
         const shouldApplyContinuityGuard =
           isUnderspecifiedFollowup(sanitizedContent) &&
           Boolean(previousUserTurn);
@@ -730,7 +770,12 @@ export async function POST(req: NextRequest) {
         }
 
         if (!generatedAnyAssistantText) {
-          fullContent = buildToolFallbackMessage(toolLogsForFallback, sanitizedContent, previousUserTurnForFallback);
+          fullContent = buildToolFallbackMessage(
+            toolLogsForFallback,
+            sanitizedContent,
+            previousUserTurnForFallback,
+            previousAssistantTurnForFallback
+          );
           emit({ type: "clear" });
           emit({ type: "token", content: fullContent });
         }
