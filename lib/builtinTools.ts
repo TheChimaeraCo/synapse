@@ -240,6 +240,62 @@ function parseJinaBingText(text: string, maxResults: number): Array<{ title: str
   return out;
 }
 
+function normalizeUrlForMirror(input: string): string {
+  const parsed = new URL(input);
+  const path = `${parsed.pathname || "/"}${parsed.search || ""}${parsed.hash || ""}`;
+  return `http://${parsed.host}${path}`;
+}
+
+function buildSearchQueriesFromUrl(input: string): string[] {
+  const parsed = new URL(input);
+  const host = parsed.hostname.replace(/^www\./i, "");
+  const pathParts = parsed.pathname
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => decodeURIComponent(p));
+
+  const cleanedParts = pathParts
+    .map((p) => p.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  const listingId = cleanedParts.find((p) => /^\d{4,}$/.test(p)) || "";
+  const primarySlug =
+    cleanedParts.find((p) => /listing|lease|sale/i.test(p) === false && p.length > 5)
+    || cleanedParts[cleanedParts.length - 1]
+    || "";
+
+  const queries = [
+    `site:${host} "${primarySlug}"`,
+    primarySlug ? `${host} ${primarySlug}` : host,
+    listingId ? `${host} ${listingId}` : "",
+    input,
+  ].filter(Boolean);
+
+  return Array.from(new Set(queries));
+}
+
+function scoreSearchResultForUrl(
+  resultUrl: string,
+  originalUrl: string,
+): number {
+  try {
+    const result = new URL(resultUrl);
+    const original = new URL(originalUrl);
+    const resultHost = result.hostname.replace(/^www\./i, "");
+    const originalHost = original.hostname.replace(/^www\./i, "");
+    let score = 0;
+    if (resultHost === originalHost) score += 100;
+    if (result.pathname && original.pathname && result.pathname === original.pathname) score += 80;
+    const originalId = original.pathname.match(/\/(\d{4,})(?:\/)?$/)?.[1];
+    if (originalId && result.pathname.includes(originalId)) score += 30;
+    if (result.search && original.search && result.search === original.search) score += 15;
+    return score;
+  } catch {
+    return 0;
+  }
+}
+
 async function fallbackDuckDuckGoSearch(query: string, count: number): Promise<Array<{ title: string; url: string; description: string }>> {
   const url = new URL("https://html.duckduckgo.com/html/");
   url.searchParams.set("q", query);
@@ -271,6 +327,25 @@ async function fallbackJinaBingSearch(query: string, count: number): Promise<Arr
   if (!res.ok) return [];
   const text = await res.text();
   return parseJinaBingText(text, count);
+}
+
+async function fetchViaJinaMirror(urlInput: string): Promise<string | null> {
+  const mirrorTarget = normalizeUrlForMirror(urlInput);
+  const mirrorUrl = `https://r.jina.ai/${mirrorTarget}`;
+  await assertPublicHostname(new URL(mirrorUrl).hostname);
+  const res = await fetch(mirrorUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) SynapseBot/1.0",
+      Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.8",
+    },
+  });
+  if (!res.ok) return null;
+  const text = (await res.text()).trim();
+  if (!text) return null;
+  const blocked = /access denied|forbidden|captcha|security check|blocked/i.test(text.slice(0, 2000));
+  if (blocked) return null;
+  const preview = text.slice(0, 5000);
+  return `URL mirror fetch (r.jina.ai):\n${urlInput}\n\n${preview}`;
 }
 
 function looksLikeUrl(value: string): boolean {
@@ -350,11 +425,34 @@ const webSearch: BuiltinTool = {
         const preview = await fetchPagePreview(query);
         const blocked = /access denied|forbidden|permission|URL fetch failed:\s*(401|403|429|503)/i.test(preview);
         if (!blocked) return preview;
-        const fallbackResults = await fallbackJinaBingSearch(query, count);
-        if (fallbackResults.length > 0) {
+
+        // Try mirror fetch before search. Works for some sites that block bot user agents.
+        const mirrored = await fetchViaJinaMirror(query);
+        if (mirrored) return `${preview}\n\n${mirrored}`;
+
+        // URL-aware search fallback: use site/domain + listing slug instead of raw URL only.
+        const queries = buildSearchQueriesFromUrl(query);
+        const collected = new Map<string, { title: string; url: string; description: string }>();
+        for (const q of queries) {
+          const [ddg, bing] = await Promise.all([
+            fallbackDuckDuckGoSearch(q, count),
+            fallbackJinaBingSearch(q, count),
+          ]);
+          for (const row of [...ddg, ...bing]) {
+            if (!row.url) continue;
+            if (!collected.has(row.url)) collected.set(row.url, row);
+          }
+          if (collected.size >= count * 2) break;
+        }
+
+        const ranked = Array.from(collected.values())
+          .sort((a, b) => scoreSearchResultForUrl(b.url, query) - scoreSearchResultForUrl(a.url, query))
+          .slice(0, count);
+
+        if (ranked.length > 0) {
           return (
-            `${preview}\n\n_Direct fetch was blocked, showing search fallback results:_\n\n` +
-            fallbackResults
+            `${preview}\n\n_Direct fetch was blocked, showing URL-aware fallback results:_\n\n` +
+            ranked
               .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.description || ""}`)
               .join("\n\n")
           );
