@@ -1,11 +1,11 @@
 type GetModelFn = (provider: any, modelId: any) => any;
 
 const ANTIGRAVITY_ALIASES: Record<string, string[]> = {
-  "gemini-3.1-pro": ["gemini-3-pro-high", "gemini-3-pro-low", "gemini-3.1-pro-preview", "gemini-3.1-pro"],
-  "gemini-3.1-pro-preview": ["gemini-3-pro-high", "gemini-3-pro-low", "gemini-3.1-pro-preview", "gemini-3.1-pro"],
-  "gemini-3-pro": ["gemini-3-pro-high", "gemini-3-pro-low", "gemini-3.1-pro", "gemini-3.1-pro-preview"],
-  "gemini-3-pro-high": ["gemini-3-pro-high", "gemini-3-pro-low", "gemini-3.1-pro", "gemini-3.1-pro-preview"],
-  "gemini-3-pro-low": ["gemini-3-pro-low", "gemini-3-pro-high", "gemini-3.1-pro", "gemini-3.1-pro-preview"],
+  "gemini-3.1-pro": ["gemini-3.1-pro", "gemini-3.1-pro-preview", "gemini-3-pro-high", "gemini-3-pro-low"],
+  "gemini-3.1-pro-preview": ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-3-pro-high", "gemini-3-pro-low"],
+  "gemini-3-pro": ["gemini-3.1-pro", "gemini-3.1-pro-preview", "gemini-3-pro-high", "gemini-3-pro-low"],
+  "gemini-3-pro-high": ["gemini-3.1-pro", "gemini-3.1-pro-preview", "gemini-3-pro-high", "gemini-3-pro-low"],
+  "gemini-3-pro-low": ["gemini-3.1-pro", "gemini-3.1-pro-preview", "gemini-3-pro-high", "gemini-3-pro-low"],
   "claude-sonnet-4-20250514": ["claude-sonnet-4-5-thinking", "claude-sonnet-4-5"],
   "claude-opus-4-20250514": ["claude-opus-4-6-thinking", "claude-opus-4-5-thinking"],
   "claude-haiku-3-20250514": ["claude-sonnet-4-5", "claude-sonnet-4-5-thinking"],
@@ -26,6 +26,25 @@ function uniq(values: string[]): string[] {
     out.push(trimmed);
   }
   return out;
+}
+
+function syntheticAntigravityModel(modelId: string, getModel: GetModelFn): any | null {
+  const isGemini31 = modelId === "gemini-3.1-pro" || modelId === "gemini-3.1-pro-preview";
+  if (!isGemini31) return null;
+
+  const base =
+    getModel("google-antigravity", "gemini-3-pro-high")
+    || getModel("google-antigravity", "gemini-3-pro-low")
+    || getModel("google-antigravity", "gemini-3-flash");
+  if (!base) return null;
+
+  return {
+    ...base,
+    id: modelId,
+    name: modelId === "gemini-3.1-pro"
+      ? "Gemini 3.1 Pro (Antigravity Compatibility)"
+      : "Gemini 3.1 Pro Preview (Antigravity Compatibility)",
+  };
 }
 
 function candidateIds(provider: string, requestedModelId: string, fallbackModelId?: string): string[] {
@@ -72,6 +91,17 @@ export function resolveModelCompat(params: {
         requestedModelId,
         usedFallback: id !== requestedModelId,
       };
+    }
+    if (provider === "google-antigravity") {
+      const synthetic = syntheticAntigravityModel(id, getModel);
+      if (synthetic) {
+        return {
+          model: synthetic,
+          modelId: id,
+          requestedModelId,
+          usedFallback: id !== requestedModelId,
+        };
+      }
     }
   }
 
