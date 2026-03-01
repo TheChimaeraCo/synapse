@@ -12,6 +12,7 @@ import { useChat } from "@/hooks/useChat";
 import ReactMarkdown from "react-markdown";
 import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
+import { formatStreamingMarkdown } from "@/lib/markdownFormatting";
 
 interface ConversationBookmark {
   _id: string;
@@ -326,7 +327,7 @@ export function ChatWindow({ sessionId, scrollToSeq }: { sessionId: string; scro
                 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline
               ">
                 <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
-                  {streamingContent}
+                  {formatStreamingMarkdown(streamingContent)}
                 </ReactMarkdown>
               </div>
               <span className="inline-block h-4 w-0.5 animate-pulse bg-primary ml-0.5" />

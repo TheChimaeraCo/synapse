@@ -9,7 +9,7 @@ import { cn, formatRelativeTime, formatCost, formatTokens } from "@/lib/utils";
 import type { MessageDisplay } from "@/lib/types";
 import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { Check, Copy, Download, FileIcon, ImageIcon, Volume2, Loader2, RotateCcw, GitBranch, Star, SmilePlus } from "lucide-react";
-import { preprocessMarkdownTables } from "@/lib/markdownFormatting";
+import { formatMessageMarkdown } from "@/lib/markdownFormatting";
 
 function CodeBlock({ language, children }: { language?: string; children: string }) {
   const [copied, setCopied] = useState(false);
@@ -249,6 +249,35 @@ export const markdownComponents = {
   },
   a({ href, children, ...props }: any) {
     return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
+  },
+  img({ src, alt, ...props }: any) {
+    const raw = String(src || "").trim();
+    let safeSrc = "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        safeSrc = parsed.toString();
+      }
+    } catch {
+      safeSrc = "";
+    }
+    if (!safeSrc) {
+      return (
+        <a href={raw} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">
+          {alt || "Open image"}
+        </a>
+      );
+    }
+    return (
+      <img
+        src={safeSrc}
+        alt={alt || "image"}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        className="my-2 max-h-[420px] w-auto max-w-full rounded-lg border border-white/10 bg-black/20 object-contain"
+        {...props}
+      />
+    );
   },
   h1({ children, ...props }: any) {
     return <h1 className="text-xl font-bold text-white mt-5 mb-2.5 tracking-tight" {...props}>{children}</h1>;
@@ -500,7 +529,7 @@ export const MessageBubble = React.memo(function MessageBubble({ message, onRetr
               remarkPlugins={remarkPlugins}
               components={markdownComponents}
             >
-              {preprocessMarkdownTables(stripFileRefs(message.content))}
+              {formatMessageMarkdown(stripFileRefs(message.content))}
             </ReactMarkdown>
           </div>
         )}

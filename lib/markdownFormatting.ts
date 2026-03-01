@@ -25,9 +25,41 @@ export function preprocessMarkdownTables(content: string): string {
   return result.join("\n");
 }
 
+const IMAGE_URL_RE = /^<?(https?:\/\/[^\s>]+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s>]*)?)>?$/i;
+
+function normalizeImageEmbedLine(line: string): string {
+  const trimmed = line.trim();
+  const match = trimmed.match(IMAGE_URL_RE);
+  if (!match) return line;
+  const url = match[1];
+  return `![image](${url})`;
+}
+
+export function autoEmbedImageUrls(content: string): string {
+  if (!content) return "";
+  const lines = content.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    out.push(inFence ? line : normalizeImageEmbedLine(line));
+  }
+
+  return out.join("\n");
+}
+
+export function formatMessageMarkdown(content: string): string {
+  return preprocessMarkdownTables(autoEmbedImageUrls(content || ""));
+}
+
 export function formatStreamingMarkdown(content: string): string {
   if (!content) return "";
-  let out = preprocessMarkdownTables(content);
+  let out = formatMessageMarkdown(content);
 
   // Keep partial fenced blocks renderable while the stream is in-flight.
   const fenceCount = (out.match(/```/g) || []).length;
