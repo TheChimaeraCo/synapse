@@ -96,6 +96,21 @@ function isUnderspecifiedFollowup(content: string): boolean {
   return (hasActionVerb && hasReferentialLanguage) || hasGenericResearchAsk;
 }
 
+function isLikelyLivePricingRequest(content: string): boolean {
+  const text = content.trim().toLowerCase();
+  if (!text) return false;
+
+  const pricingTerms = /\b(price|pricing|how much|cost|value|worth|market|going rate|sell for|buy for|quote)\b/;
+  const marketSignals = /\b(current|live|today|tcgplayer|ebay|sold listings|listing|listings|msrp)\b/;
+  const pokemonProductTerms = /\b(etb|booster bundle|booster bundles|pokemon|slab|slabs|sealed)\b/;
+
+  return pricingTerms.test(text) && (marketSignals.test(text) || pokemonProductTerms.test(text));
+}
+
+function buildLivePricingUnavailableMessage(): string {
+  return "I can't fetch live market prices right now because lookup tools are unavailable, and I don't want to guess. Please retry in a minute. If you want, I can give MSRP-only baselines clearly labeled as non-live.";
+}
+
 class ClientAbortError extends Error {
   constructor() {
     super("Client disconnected");
@@ -296,6 +311,9 @@ export async function POST(req: NextRequest) {
       let generatedAnyAssistantText = false;
       let assistantPersisted = false;
       const toolLogsForFallback: Array<{ tool: string; summary: string; isError: boolean }> = [];
+      let toolCallsAttempted = 0;
+      let successfulToolResults = 0;
+      let failedToolResults = 0;
 
       try {
         throwIfAborted();
@@ -547,6 +565,7 @@ export async function POST(req: NextRequest) {
 
           if (toolCalls.length === 0) break;
           throwIfAborted();
+          toolCallsAttempted += toolCalls.length;
 
           // Stream individual tool call notifications
           for (const tc of toolCalls) {
@@ -621,6 +640,8 @@ export async function POST(req: NextRequest) {
           }
 
           for (const result of toolResults) {
+            if (result.isError) failedToolResults += 1;
+            else successfulToolResults += 1;
             toolLogsForFallback.push({
               tool: result.toolName,
               summary: result.content.slice(0, 200),
@@ -642,6 +663,18 @@ export async function POST(req: NextRequest) {
 
         const latencyMs = Date.now() - startMs;
         throwIfAborted();
+
+        if (
+          isLikelyLivePricingRequest(sanitizedContent) &&
+          toolCallsAttempted > 0 &&
+          successfulToolResults === 0 &&
+          failedToolResults > 0
+        ) {
+          fullContent = buildLivePricingUnavailableMessage();
+          generatedAnyAssistantText = true;
+          emit({ type: "clear" });
+          emit({ type: "token", content: fullContent });
+        }
 
         // === Prompt Defense: Output validation ===
         if (defenseConfig.enabled && fullContent) {
