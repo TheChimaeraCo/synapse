@@ -13,7 +13,7 @@ import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPro
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
 import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
-import { resolveModelCompat } from "@/lib/modelCompat";
+import { providerSupportsTemperature, resolveModelCompat } from "@/lib/modelCompat";
 import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // Simple request deduplication: track recent request hashes to prevent double-sends
@@ -569,7 +569,7 @@ export async function POST(req: NextRequest) {
 
         const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key, ...thinkingParams };
         if (!CONTINUE_ON_DISCONNECT) options.signal = req.signal;
-        if (provider !== "openai-codex" && agent.temperature !== undefined) {
+        if (providerSupportsTemperature(provider) && agent.temperature !== undefined) {
           options.temperature = agent.temperature;
         }
 

@@ -45,22 +45,84 @@ const webSearchSkill: BuiltinSkill = {
         required: ["query"],
       }),
       handler: async (args) => {
+        const query = String(args.query || "").trim();
+        const count = Math.max(1, Math.min(10, Number(args.count ?? 5)));
+        if (!query) return "Search query is required.";
+
+        const parseDuck = (html: string) => {
+          const decode = (v: string) => v
+            .replace(/&amp;/g, "&")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, "\"")
+            .replace(/&#39;/g, "'");
+          const strip = (v: string) => decode(v.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+          const norm = (href: string) => {
+            if (href.startsWith("http://") || href.startsWith("https://")) return href;
+            if (href.startsWith("/l/?")) {
+              try {
+                const u = new URL(`https://duckduckgo.com${href}`);
+                const uddg = u.searchParams.get("uddg");
+                if (uddg) return decodeURIComponent(uddg);
+              } catch {}
+            }
+            return href;
+          };
+
+          const out: Array<{ title: string; url: string; desc: string }> = [];
+          const anchorRe = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+          let m: RegExpExecArray | null;
+          while ((m = anchorRe.exec(html)) !== null && out.length < count) {
+            const url = norm(String(m[1] || ""));
+            const title = strip(String(m[2] || ""));
+            if (!url || !title) continue;
+            const slice = html.slice(m.index + m[0].length, Math.min(m.index + m[0].length + 1800, html.length));
+            const sm = slice.match(/<(?:a|div)[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/(?:a|div)>/i);
+            out.push({ title, url, desc: sm ? strip(sm[1]) : "" });
+          }
+          return out;
+        };
+
         const apiKey = process.env.BRAVE_SEARCH_API_KEY;
-        if (!apiKey) return "Web search not configured (missing BRAVE_SEARCH_API_KEY).";
+        let braveErr = "";
         try {
-          const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(args.query)}&count=${args.count ?? 5}`;
-          const res = await fetch(url, {
-            headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
-          });
-          if (!res.ok) return `Search failed: ${res.status}`;
-          const data = await res.json();
-          const results = (data.web?.results || []).slice(0, args.count ?? 5);
-          if (!results.length) return "No results found.";
-          return results
-            .map((r: any, i: number) => `### ${i + 1}. ${r.title}\n${r.url}\n${r.description || "No description"}`)
-            .join("\n\n");
+          if (apiKey) {
+            const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
+            const res = await fetch(url, {
+              headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
+            });
+            if (res.ok) {
+              const data = await res.json();
+              const results = (data.web?.results || []).slice(0, count);
+              if (results.length) {
+                return results
+                  .map((r: any, i: number) => `### ${i + 1}. ${r.title}\n${r.url}\n${r.description || "No description"}`)
+                  .join("\n\n");
+              }
+            } else {
+              braveErr = `Brave failed: ${res.status}`;
+            }
+          } else {
+            braveErr = "Brave key missing";
+          }
         } catch (e: any) {
-          return `Search error: ${e.message}`;
+          braveErr = `Brave error: ${e.message}`;
+        }
+
+        try {
+          const u = new URL("https://html.duckduckgo.com/html/");
+          u.searchParams.set("q", query);
+          const res = await fetch(u.toString(), {
+            headers: { "User-Agent": "Mozilla/5.0 SynapseBot/1.0", Accept: "text/html,application/xhtml+xml" },
+          });
+          if (!res.ok) return braveErr ? `${braveErr}\nDuckDuckGo failed: ${res.status}` : `Search failed: ${res.status}`;
+          const html = await res.text();
+          const rows = parseDuck(html);
+          if (!rows.length) return braveErr ? `${braveErr}\nDuckDuckGo returned no results.` : "No results found.";
+          const prefix = braveErr ? `_Brave unavailable (${braveErr}); showing DuckDuckGo fallback._\n\n` : "";
+          return prefix + rows.map((r, i) => `### ${i + 1}. ${r.title}\n${r.url}\n${r.desc || "No description"}`).join("\n\n");
+        } catch (e: any) {
+          return braveErr ? `${braveErr}\nDuckDuckGo error: ${e.message}` : `Search error: ${e.message}`;
         }
       },
     },

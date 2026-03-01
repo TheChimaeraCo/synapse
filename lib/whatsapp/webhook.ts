@@ -241,7 +241,7 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     const { defaultModelForProvider } = await import("../aiRoutingConfig");
-    const { resolveModelCompat } = await import("../modelCompat");
+    const { providerSupportsTemperature, resolveModelCompat } = await import("../modelCompat");
     registerBuiltInApiProviders();
     const customRoutes = await convex.query(api.functions.modelRoutes.list, { gatewayId });
     const { resolveAiSelection } = await import("../aiRouting");
@@ -312,7 +312,7 @@ async function processMessage(msg: WhatsAppMessage, displayName: string, phoneNu
     };
 
     const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
-    if (provider !== "openai-codex" && agent.temperature !== undefined) {
+    if (providerSupportsTemperature(provider) && agent.temperature !== undefined) {
       options.temperature = agent.temperature;
     }
 

@@ -10,7 +10,7 @@ import { extractBearerToken, safeEqualSecret } from "@/lib/security";
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
 import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
-import { resolveModelCompat } from "@/lib/modelCompat";
+import { providerSupportsTemperature, resolveModelCompat } from "@/lib/modelCompat";
 import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // --- Rate Limiting ---
@@ -214,7 +214,7 @@ export async function POST(req: NextRequest) {
 
     const options: any = { maxTokens: config.agent.maxTokens || 4096, apiKey: config.key };
     options.signal = req.signal;
-    if (config.provider !== "openai-codex" && config.agent.temperature !== undefined) {
+    if (providerSupportsTemperature(config.provider) && config.agent.temperature !== undefined) {
       options.temperature = config.agent.temperature;
     }
 

@@ -6,7 +6,7 @@ import { executeTools, toProviderTools } from "@/lib/toolExecutor";
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
 import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
-import { resolveModelCompat } from "@/lib/modelCompat";
+import { providerSupportsTemperature, resolveModelCompat } from "@/lib/modelCompat";
 import { BUILTIN_TOOLS } from "@/lib/builtinTools";
 import type { TaskType } from "@/lib/modelRouter";
 
@@ -227,7 +227,7 @@ export async function runAgentTurn(params: RunAgentTurnParams): Promise<RunAgent
   };
 
   const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
-  if (provider !== "openai-codex" && agent.temperature !== undefined) {
+  if (providerSupportsTemperature(provider) && agent.temperature !== undefined) {
     options.temperature = agent.temperature;
   }
 

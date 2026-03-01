@@ -122,9 +122,200 @@ async function assertPublicHostname(hostname: string): Promise<void> {
   }
 }
 
+function decodeHtmlEntities(value: string): string {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&#x2F;/gi, "/")
+    .replace(/&#x60;/gi, "`")
+    .replace(/&#x3D;/gi, "=")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number.parseInt(n, 10);
+      return Number.isFinite(code) ? String.fromCharCode(code) : "";
+    });
+}
+
+function stripHtmlTags(value: string): string {
+  return decodeHtmlEntities(String(value || "").replace(/<[^>]+>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeResultUrl(rawHref: string): string {
+  const href = String(rawHref || "").trim();
+  if (!href) return "";
+  if (href.startsWith("http://") || href.startsWith("https://")) return href;
+  if (href.startsWith("/l/?")) {
+    try {
+      const u = new URL(`https://duckduckgo.com${href}`);
+      const uddg = u.searchParams.get("uddg");
+      if (uddg) return decodeURIComponent(uddg);
+    } catch {}
+  }
+  return href;
+}
+
+function decodeBingRedirectUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    if (!/bing\.com$/i.test(parsed.hostname)) return rawUrl;
+    if (!parsed.pathname.startsWith("/ck/")) return rawUrl;
+    const u = parsed.searchParams.get("u");
+    if (!u) return rawUrl;
+    const decoded = decodeURIComponent(u);
+    if (decoded.startsWith("http://") || decoded.startsWith("https://")) return decoded;
+    if (decoded.startsWith("a1")) {
+      const payload = decoded.slice(2);
+      try {
+        const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+        const text = Buffer.from(`${b64}${pad}`, "base64").toString("utf8");
+        if (text.startsWith("http://") || text.startsWith("https://")) return text;
+      } catch {}
+    }
+  } catch {}
+  return rawUrl;
+}
+
+function parseDuckDuckGoHtml(html: string, maxResults: number): Array<{ title: string; url: string; description: string }> {
+  const out: Array<{ title: string; url: string; description: string }> = [];
+  const anchorRe = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = anchorRe.exec(html)) !== null && out.length < maxResults) {
+    const url = normalizeResultUrl(match[1]);
+    const title = stripHtmlTags(match[2]);
+    if (!url || !title) continue;
+
+    const searchStart = match.index + match[0].length;
+    const windowHtml = html.slice(searchStart, Math.min(searchStart + 1800, html.length));
+    const snippetMatch = windowHtml.match(/<(?:a|div)[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/(?:a|div)>/i);
+    const description = snippetMatch ? stripHtmlTags(snippetMatch[1]) : "";
+
+    out.push({ title, url, description });
+  }
+
+  return out;
+}
+
+function parseJinaBingText(text: string, maxResults: number): Array<{ title: string; url: string; description: string }> {
+  const lines = String(text || "").split(/\r?\n/);
+  const out: Array<{ title: string; url: string; description: string }> = [];
+  const itemRe = /^\s*(\d+)\.\s+\[(.+?)\]\((https?:\/\/[^\s)]+)\)\s*$/;
+
+  for (let i = 0; i < lines.length && out.length < maxResults; i += 1) {
+    const line = lines[i];
+    const match = line.match(itemRe);
+    if (!match) continue;
+    const rawTitle = match[2].replace(/\*\*/g, "").trim();
+    const rawUrl = match[3].trim();
+    const url = decodeBingRedirectUrl(rawUrl);
+    const descLines: string[] = [];
+
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const next = lines[j].trim();
+      if (!next) {
+        if (descLines.length > 0) break;
+        continue;
+      }
+      if (/^\d+\.\s+\[/.test(next)) break;
+      if (/^-{5,}$/.test(next)) continue;
+      if (next.startsWith("URL Source:") || next.startsWith("Markdown Content:")) continue;
+      if (next.startsWith("*   [")) continue;
+      descLines.push(next);
+      if (descLines.join(" ").length > 320) break;
+    }
+
+    out.push({
+      title: stripHtmlTags(rawTitle),
+      url,
+      description: stripHtmlTags(descLines.join(" ")).slice(0, 320),
+    });
+  }
+
+  return out;
+}
+
+async function fallbackDuckDuckGoSearch(query: string, count: number): Promise<Array<{ title: string; url: string; description: string }>> {
+  const url = new URL("https://html.duckduckgo.com/html/");
+  url.searchParams.set("q", query);
+  await assertPublicHostname(url.hostname);
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) SynapseBot/1.0",
+      Accept: "text/html,application/xhtml+xml",
+    },
+  });
+  if (!res.ok) {
+    return [];
+  }
+
+  const html = await res.text();
+  return parseDuckDuckGoHtml(html, count);
+}
+
+async function fallbackJinaBingSearch(query: string, count: number): Promise<Array<{ title: string; url: string; description: string }>> {
+  const url = `https://r.jina.ai/http://www.bing.com/search?q=${encodeURIComponent(query)}`;
+  await assertPublicHostname(new URL(url).hostname);
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) SynapseBot/1.0",
+      Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.8",
+    },
+  });
+  if (!res.ok) return [];
+  const text = await res.text();
+  return parseJinaBingText(text, count);
+}
+
+function looksLikeUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+async function fetchPagePreview(urlInput: string): Promise<string> {
+  const url = new URL(urlInput);
+  await assertPublicHostname(url.hostname);
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) SynapseBot/1.0",
+      Accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+    },
+  });
+  if (!res.ok) return `URL fetch failed: ${res.status}`;
+
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    const json = await res.json().catch(() => null);
+    const payload = json ? JSON.stringify(json, null, 2) : "(invalid JSON)";
+    return `Direct URL fetch:\n${url}\nContent-Type: ${contentType}\n\n${payload.slice(0, 5000)}`;
+  }
+
+  const html = await res.text();
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? stripHtmlTags(titleMatch[1]) : "(no title)";
+  const text = stripHtmlTags(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " "),
+  );
+  const snippet = text.slice(0, 5000);
+  return `Direct URL fetch:\n${url}\nTitle: ${title}\n\n${snippet || "(no readable text extracted)"}`;
+}
+
 const webSearch: BuiltinTool = {
   name: "web_search",
-  description: "Search the web for current information using Brave Search. Use when the user asks about recent events, needs factual data you're unsure about, wants to look something up, or needs URLs/links. Returns titles, URLs, and snippets.",
+  description: "Search the web for current information. Uses Brave Search when configured with automatic DuckDuckGo fallback. If the query is a direct URL, fetches and summarizes that page.",
   category: "search",
   requiresApproval: false,
   parameters: Type.Object({
@@ -150,22 +341,86 @@ const webSearch: BuiltinTool = {
       }
     } catch {}
 
+    const query = String(args.query || "").trim();
+    const count = Math.max(1, Math.min(10, Number(args.count ?? 5)));
+    if (!query) return "Search query is required.";
+
+    if (looksLikeUrl(query)) {
+      try {
+        const preview = await fetchPagePreview(query);
+        const blocked = /access denied|forbidden|permission|URL fetch failed:\s*(401|403|429|503)/i.test(preview);
+        if (!blocked) return preview;
+        const fallbackResults = await fallbackJinaBingSearch(query, count);
+        if (fallbackResults.length > 0) {
+          return (
+            `${preview}\n\n_Direct fetch was blocked, showing search fallback results:_\n\n` +
+            fallbackResults
+              .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.description || ""}`)
+              .join("\n\n")
+          );
+        }
+        return preview;
+      } catch (e: any) {
+        return `URL fetch error: ${e?.message || "unknown error"}`;
+      }
+    }
+
     const apiKey = configuredKey || process.env.BRAVE_SEARCH_API_KEY;
-    if (!apiKey) return "Web search is not configured (missing BRAVE_SEARCH_API_KEY).";
+    let braveError: string | null = null;
     try {
-      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(args.query)}&count=${args.count ?? 5}`;
-      const res = await fetch(url, {
-        headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
-      });
-      if (!res.ok) return `Search failed: ${res.status}`;
-      const data = await res.json();
-      const results = (data.web?.results || []).slice(0, args.count ?? 5);
-      if (!results.length) return "No results found.";
-      return results
-        .map((r: any, i: number) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.description || ""}`)
-        .join("\n\n");
+      if (apiKey) {
+        const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
+        await assertPublicHostname(new URL(url).hostname);
+        const res = await fetch(url, {
+          headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const results = (data.web?.results || []).slice(0, count);
+          if (results.length > 0) {
+            return results
+              .map((r: any, i: number) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.description || ""}`)
+              .join("\n\n");
+          }
+        } else {
+          const body = await res.text().catch(() => "");
+          braveError = `Brave search failed: ${res.status}${body ? ` - ${body.slice(0, 200)}` : ""}`;
+        }
+      } else {
+        braveError = "Brave API key not configured.";
+      }
     } catch (e: any) {
-      return `Search error: ${e.message}`;
+      braveError = `Brave search error: ${e?.message || "unknown error"}`;
+    }
+
+    try {
+      const fallbackResults = await fallbackDuckDuckGoSearch(query, count);
+      if (fallbackResults.length > 0) {
+        const header = braveError ? `_Brave unavailable (${braveError}); showing DuckDuckGo fallback._\n\n` : "";
+        return (
+          header +
+          fallbackResults
+            .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.description || ""}`)
+            .join("\n\n")
+        );
+      }
+      const jinaResults = await fallbackJinaBingSearch(query, count);
+      if (jinaResults.length > 0) {
+        const header = braveError
+          ? `_Brave unavailable (${braveError}); showing Bing fallback via r.jina.ai._\n\n`
+          : `_DuckDuckGo returned no results; showing Bing fallback via r.jina.ai._\n\n`;
+        return (
+          header +
+          jinaResults
+            .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.description || ""}`)
+            .join("\n\n")
+        );
+      }
+      if (braveError) return `${braveError}\nDuckDuckGo and Bing fallbacks returned no results.`;
+      return "No results found.";
+    } catch (e: any) {
+      if (braveError) return `${braveError}\nFallback search error: ${e?.message || "unknown error"}`;
+      return `Search error: ${e?.message || "unknown error"}`;
     }
   },
 };

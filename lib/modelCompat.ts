@@ -1,5 +1,10 @@
 type GetModelFn = (provider: any, modelId: any) => any;
 
+const NO_TEMPERATURE_PROVIDERS = new Set([
+  "openai-codex",
+  "google-antigravity",
+]);
+
 const ANTIGRAVITY_ALIASES: Record<string, string[]> = {
   "gemini-3.1-pro": ["gemini-3.1-pro", "gemini-3.1-pro-preview", "gemini-3-pro-high", "gemini-3-pro-low"],
   "gemini-3.1-pro-preview": ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-3-pro-high", "gemini-3-pro-low"],
@@ -128,4 +133,10 @@ export function augmentProviderModelList(provider: string, modelIds: string[]): 
   const base = uniq(modelIds || []);
   if (provider !== "google-antigravity") return base;
   return uniq(["gemini-3.1-pro", "gemini-3.1-pro-preview", ...base]);
+}
+
+export function providerSupportsTemperature(provider: string): boolean {
+  const normalized = String(provider || "").trim().toLowerCase();
+  if (!normalized) return true;
+  return !NO_TEMPERATURE_PROVIDERS.has(normalized);
 }
