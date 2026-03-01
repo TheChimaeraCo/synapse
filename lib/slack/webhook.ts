@@ -223,6 +223,8 @@ async function processMessage(event: any): Promise<void> {
     if (!chunkModeRaw) chunkModeRaw = await getConfig("messages.chunk_mode");
 
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
+    const { defaultModelForProvider } = await import("../aiRoutingConfig");
+    const { resolveModelCompat } = await import("../modelCompat");
     registerBuiltInApiProviders();
     const customRoutes = await convex.query(api.functions.modelRoutes.list, { gatewayId });
     const { resolveAiSelection } = await import("../aiRouting");
@@ -236,9 +238,16 @@ async function processMessage(event: any): Promise<void> {
     const provider = selection.provider;
     const key = selection.apiKey;
     if (!key) throw new Error("No API key configured");
-    const modelId = selection.model;
-    const model = getModel(provider as any, modelId as any);
-    if (!model) throw new Error(`Model "${modelId}" not found`);
+    let modelId = selection.model;
+    const modelResolution = resolveModelCompat({
+      provider,
+      requestedModelId: modelId,
+      fallbackModelId: defaultModelForProvider(provider),
+      getModel,
+    });
+    if (!modelResolution.model) throw new Error(`Model "${modelId}" not found`);
+    modelId = modelResolution.modelId;
+    const model = modelResolution.model;
 
     const enabledTools = await convex.query(api.functions.tools.getEnabled, { gatewayId });
     const builtinToolDefs = BUILTIN_TOOLS.map((t) => ({

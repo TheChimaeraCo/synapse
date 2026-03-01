@@ -4,6 +4,8 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 const ONBOARDING_SYSTEM_PROMPT = `You are being born. You don't have a name, personality, or purpose yet. You're talking to your person for the first time.
 
@@ -103,7 +105,13 @@ export async function POST(req: NextRequest) {
       registerBuiltInApiProviders();
 
       const modelId = selection.model || "claude-sonnet-4-20250514";
-      const model = getModel(provider as any, modelId as any);
+      const modelResolution = resolveModelCompat({
+        provider,
+        requestedModelId: modelId,
+        fallbackModelId: defaultModelForProvider(provider),
+        getModel,
+      });
+      const model = modelResolution.model;
       if (!model) {
         return NextResponse.json({ error: `Model "${modelId}" not found` }, { status: 500 });
       }

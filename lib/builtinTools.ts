@@ -1331,6 +1331,8 @@ const spawnAgent: BuiltinTool = {
         model?: string;
       } | undefined;
       const { resolveAiSelection } = await import("@/lib/aiRouting");
+      const { defaultModelForProvider } = await import("@/lib/aiRoutingConfig");
+      const { resolveModelCompat } = await import("@/lib/modelCompat");
       const resolved = await resolveAiSelection({
         gatewayId: agent.gatewayId as any,
         capability: "tool_use",
@@ -1345,7 +1347,7 @@ const spawnAgent: BuiltinTool = {
 
       const provider = resolved.provider;
       const key = resolved.apiKey;
-      const modelId = args.model || resolved.model;
+      const requestedModelId = args.model || resolved.model;
 
       if (!key) return "Error: no API key configured. Set ai_api_key in gateway config.";
 
@@ -1355,7 +1357,7 @@ const spawnAgent: BuiltinTool = {
         parentSessionId: context.sessionId as any,
         label: args.name || "sub-agent",
         task: args.task,
-        model: modelId,
+        model: requestedModelId,
       });
 
       // Build system prompt
@@ -1398,17 +1400,27 @@ const spawnAgent: BuiltinTool = {
           const { registerBuiltInApiProviders, getModel, streamSimple, calculateCost } = await import("@mariozechner/pi-ai");
           registerBuiltInApiProviders();
 
-          const model = getModel(provider as any, modelId as any);
-          if (!model) {
-            await log(`Model not found: ${modelId}`);
+          const fallbackModelId = defaultModelForProvider(provider);
+          const compat = resolveModelCompat({
+            provider,
+            requestedModelId,
+            fallbackModelId,
+            getModel,
+          });
+          if (!compat.model) {
+            await log(`Model not found: ${requestedModelId}`);
             await convexClient.mutation(api.functions.workerAgents.complete, {
               id: workerId,
               status: "failed",
-              error: `Model "${modelId}" not found in provider "${provider}"`,
+              error: `Model "${requestedModelId}" not found in provider "${provider}"`,
             });
-            return `Error: Model "${modelId}" not found in provider "${provider}"`;
+            return `Error: Model "${requestedModelId}" not found in provider "${provider}"`;
           }
-          await log(`Model resolved: ${model.id}`);
+          if (compat.usedFallback) {
+            await log(`Model fallback: ${requestedModelId} -> ${compat.modelId}`);
+          }
+          const model = compat.model;
+          await log(`Model resolved: ${compat.modelId}`);
 
           // Build pi-ai tools in the correct format
           const piTools = availableTools.map(t => ({

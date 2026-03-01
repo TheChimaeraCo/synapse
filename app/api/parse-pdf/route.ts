@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { extractBearerToken, safeEqualSecret } from "@/lib/security";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 const MODELS: Record<string, string> = {
   anthropic: "claude-sonnet-4-20250514",
@@ -147,7 +149,13 @@ export async function POST(request: NextRequest) {
     registerBuiltInApiProviders();
 
     const modelId = configuredModel || MODELS[provider] || MODELS.anthropic;
-    const model = getModel(provider as any, modelId as any);
+    const modelResolution = resolveModelCompat({
+      provider,
+      requestedModelId: modelId,
+      fallbackModelId: defaultModelForProvider(provider),
+      getModel,
+    });
+    const model = modelResolution.model;
     if (!model) return NextResponse.json({ success: false, error: `Model not found: ${modelId}` }, { status: 500 });
 
     const extraPrompt = promptStr ? `\n\nAdditional instructions: ${promptStr}` : "";

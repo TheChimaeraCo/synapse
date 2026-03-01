@@ -2,6 +2,7 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 const REFLECTION_PROMPT = `You are reflecting on a conversation you just had. Extract insights about your human - not facts (those go to knowledge), but behavioral patterns, relationship dynamics, and personality observations.
 
@@ -83,13 +84,17 @@ export async function reflectOnConversation(
       openrouter: "anthropic/claude-3-haiku",
       openai: "gpt-4o-mini",
       google: "gemini-2.0-flash",
+      "google-antigravity": "gemini-3.1-pro",
     };
 
     const preferredModelId = REFLECTION_MODELS[provider] || REFLECTION_MODELS.anthropic;
-    let model = getModel(provider as any, preferredModelId as any);
-    if (!model && selection.model) {
-      model = getModel(provider as any, selection.model as any);
-    }
+    const modelResolution = resolveModelCompat({
+      provider,
+      requestedModelId: preferredModelId,
+      fallbackModelId: selection.model || undefined,
+      getModel,
+    });
+    const model = modelResolution.model;
     if (!model) {
       console.error("[soulReflection] No model found");
       return;

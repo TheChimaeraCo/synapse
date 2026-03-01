@@ -3,12 +3,14 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { reflectOnConversation } from "@/lib/soulReflection";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 const SUMMARY_MODELS: Record<string, string> = {
   anthropic: "claude-3-haiku-20240307",
   openrouter: "anthropic/claude-3-haiku",
   openai: "gpt-4o-mini",
   google: "gemini-2.0-flash",
+  "google-antigravity": "gemini-3.1-pro",
 };
 
 const SUMMARY_PROMPT = `Analyze this conversation and provide a JSON response with:
@@ -372,9 +374,14 @@ async function maybeExtractFollowups(args: {
   const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
   registerBuiltInApiProviders();
   const preferredModelId = SUMMARY_MODELS[provider] || SUMMARY_MODELS.anthropic;
-  let model = getModel(provider as any, preferredModelId as any);
-  if (!model && selection.model) model = getModel(provider as any, selection.model as any);
-  if (!model) return;
+  const followupModelResolution = resolveModelCompat({
+    provider,
+    requestedModelId: preferredModelId,
+    fallbackModelId: selection.model || undefined,
+    getModel,
+  });
+  if (!followupModelResolution.model) return;
+  const model = followupModelResolution.model;
 
   const prompt = `${FOLLOWUP_PROMPT}
 
@@ -525,16 +532,18 @@ export async function summarizeConversation(
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
     const preferredModelId = SUMMARY_MODELS[provider] || SUMMARY_MODELS.anthropic;
-    let resolvedModelId = preferredModelId;
-    let model = getModel(provider as any, preferredModelId as any);
-    if (!model && selection.model) {
-      model = getModel(provider as any, selection.model as any);
-      if (model) resolvedModelId = selection.model;
-    }
-    if (!model) {
+    const summaryModelResolution = resolveModelCompat({
+      provider,
+      requestedModelId: preferredModelId,
+      fallbackModelId: selection.model || undefined,
+      getModel,
+    });
+    if (!summaryModelResolution.model) {
       console.error(`[conversationSummarizer] No summary model found (tried "${preferredModelId}"${selection.model ? `, "${selection.model}"` : ""})`);
       return;
     }
+    const resolvedModelId = summaryModelResolution.modelId;
+    const model = summaryModelResolution.model;
     console.log(`[conversationSummarizer] Using ${provider}:${resolvedModelId}`);
 
     let text = "";

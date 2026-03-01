@@ -3,6 +3,8 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { AiCapability, RouteTarget } from "@/lib/aiRoutingConfig";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 const TEXT_EXT_RE = /\.(txt|md|markdown|csv|json|js|ts|tsx|jsx|py|rb|go|rs|java|c|cpp|h|hpp|xml|yml|yaml|ini|conf|log)$/i;
 const IMAGE_EXT_RE = /\.(jpg|jpeg|png|gif|webp|svg)$/i;
@@ -162,8 +164,15 @@ export async function runFileReaderModel(opts: {
 
   const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
   registerBuiltInApiProviders();
-  const model = getModel(selection.provider as any, selection.model as any);
-  if (!model) throw new Error(`Model "${selection.model}" not found for provider "${selection.provider}"`);
+  const modelResolution = resolveModelCompat({
+    provider: selection.provider,
+    requestedModelId: selection.model,
+    fallbackModelId: defaultModelForProvider(selection.provider),
+    getModel,
+  });
+  if (!modelResolution.model) throw new Error(`Model "${selection.model}" not found for provider "${selection.provider}"`);
+  const modelId = modelResolution.modelId;
+  const model = modelResolution.model;
 
   let text = "";
   const question = opts.question?.trim() || "Summarize this file and list important details.";
@@ -246,7 +255,7 @@ ${docText}`,
 
   return {
     provider: selection.provider,
-    model: selection.model,
+    model: modelId,
     text: text.trim(),
   };
 }

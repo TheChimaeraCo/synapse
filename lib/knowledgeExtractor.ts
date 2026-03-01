@@ -2,6 +2,8 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 const EXTRACTION_PROMPT = `You are a fact extraction system. Analyze the conversation and extract structured facts about the user.
 
@@ -65,7 +67,13 @@ export async function extractKnowledge(
     registerBuiltInApiProviders();
 
     const extractModel = selection.model || "claude-haiku-3-20250514";
-    const model = getModel(provider as any, extractModel as any);
+    const modelResolution = resolveModelCompat({
+      provider,
+      requestedModelId: extractModel,
+      fallbackModelId: defaultModelForProvider(provider),
+      getModel,
+    });
+    const model = modelResolution.model;
     if (!model) return;
 
     const context: any = {

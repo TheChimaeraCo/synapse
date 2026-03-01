@@ -1,6 +1,7 @@
 import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 interface ClassificationResult {
   sameTopic: boolean;
@@ -26,6 +27,7 @@ const HAIKU_MODELS: Record<string, string> = {
   openrouter: "anthropic/claude-3-haiku",
   openai: "gpt-4o-mini",
   google: "gemini-2.0-flash",
+  "google-antigravity": "gemini-3.1-pro",
 };
 
 export async function classifyTopic(
@@ -55,16 +57,18 @@ export async function classifyTopic(
     registerBuiltInApiProviders();
 
     const preferredModelId = HAIKU_MODELS[provider] || HAIKU_MODELS.anthropic;
-    let resolvedModelId = preferredModelId;
-    let model = getModel(provider as any, preferredModelId as any);
-    if (!model && selection.model) {
-      model = getModel(provider as any, selection.model as any);
-      if (model) resolvedModelId = selection.model;
-    }
-    if (!model) {
+    const modelResolution = resolveModelCompat({
+      provider,
+      requestedModelId: preferredModelId,
+      fallbackModelId: selection.model || undefined,
+      getModel,
+    });
+    if (!modelResolution.model) {
       console.error(`[TopicClassifier] No classifier model found for provider "${provider}" (tried "${preferredModelId}"${selection.model ? `, "${selection.model}"` : ""})`);
       return { sameTopic: true };
     }
+    const resolvedModelId = modelResolution.modelId;
+    const model = modelResolution.model;
 
     const convoContext = currentConversation
       ? `Current conversation: title="${currentConversation.title || "untitled"}", tags=[${(currentConversation.tags || []).join(", ")}], summary="${currentConversation.summary || "none"}"`

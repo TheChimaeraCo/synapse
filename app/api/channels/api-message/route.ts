@@ -9,6 +9,8 @@ import { BUILTIN_TOOLS } from "@/lib/builtinTools";
 import { extractBearerToken, safeEqualSecret } from "@/lib/security";
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // --- Rate Limiting ---
@@ -179,9 +181,16 @@ export async function POST(req: NextRequest) {
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
 
-    const modelId = config.modelId;
-    const model = getModel(config.provider as any, modelId as any);
-    if (!model) throw new Error(`Model "${modelId}" not found`);
+    let modelId = config.modelId;
+    const modelResolution = resolveModelCompat({
+      provider: config.provider,
+      requestedModelId: modelId,
+      fallbackModelId: defaultModelForProvider(config.provider),
+      getModel,
+    });
+    if (!modelResolution.model) throw new Error(`Model "${modelId}" not found`);
+    modelId = modelResolution.modelId;
+    const model = modelResolution.model;
 
     const { systemPrompt, messages: ctxMessages } = await buildContext(
       ctx.sessionId as Id<"sessions">,

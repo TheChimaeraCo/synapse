@@ -6,6 +6,7 @@ import { executeTools, toProviderTools } from "@/lib/toolExecutor";
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
 import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 import { BUILTIN_TOOLS } from "@/lib/builtinTools";
 import type { TaskType } from "@/lib/modelRouter";
 
@@ -199,15 +200,21 @@ export async function runAgentTurn(params: RunAgentTurnParams): Promise<RunAgent
   if (!key) throw new Error("No API key configured");
 
   let modelId = selection.model;
-  let model = getModel(provider as any, modelId as any);
-  if (!model) {
-    const fallbackModelId = defaultModelForProvider(provider);
-    const fallbackModel = getModel(provider as any, fallbackModelId as any);
-    if (!fallbackModel) throw new Error(`Model "${modelId}" not found`);
-    console.warn(`[AgentSDK] Model "${modelId}" not found for provider=${provider}; falling back to ${fallbackModelId}`);
-    modelId = fallbackModelId;
-    model = fallbackModel;
+  const fallbackModelId = defaultModelForProvider(provider);
+  const modelResolution = resolveModelCompat({
+    provider,
+    requestedModelId: modelId,
+    fallbackModelId,
+    getModel,
+  });
+  if (!modelResolution.model) throw new Error(`Model "${modelId}" not found`);
+  if (modelResolution.usedFallback) {
+    console.warn(
+      `[AgentSDK] Model "${modelResolution.requestedModelId}" not found for provider=${provider}; falling back to ${modelResolution.modelId}`
+    );
   }
+  modelId = modelResolution.modelId;
+  let model = modelResolution.model;
 
   const context: any = {
     systemPrompt,

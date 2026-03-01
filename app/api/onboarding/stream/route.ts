@@ -4,6 +4,8 @@ import { convexClient } from "@/lib/convex";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 
 const ONBOARDING_SYSTEM_PROMPT = `You are being born. You don't have a name, personality, or purpose yet. You're talking to your person for the first time.
 
@@ -70,7 +72,13 @@ export async function POST(req: NextRequest) {
     const { registerBuiltInApiProviders, getModel, streamSimple } = await import("@mariozechner/pi-ai");
     registerBuiltInApiProviders();
 
-    const model = getModel(selection.provider as any, selection.model as any);
+    const modelResolution = resolveModelCompat({
+      provider: selection.provider,
+      requestedModelId: selection.model,
+      fallbackModelId: defaultModelForProvider(selection.provider),
+      getModel,
+    });
+    const model = modelResolution.model;
     if (!model) {
       return new Response(`Model \"${selection.model}\" not found`, { status: 500 });
     }

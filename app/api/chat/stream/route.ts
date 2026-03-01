@@ -13,6 +13,7 @@ import { runInputDefense, runOutputDefense, parseDefenseConfig, embedCanaryInPro
 import { applyResponsePrefix } from "@/lib/messageFormatting";
 import { resolveAiSelection } from "@/lib/aiRouting";
 import { defaultModelForProvider } from "@/lib/aiRoutingConfig";
+import { resolveModelCompat } from "@/lib/modelCompat";
 import { queueConversationTagger } from "@/lib/conversationTagger";
 
 // Simple request deduplication: track recent request hashes to prevent double-sends
@@ -464,15 +465,21 @@ export async function POST(req: NextRequest) {
         const key = selection.apiKey;
         if (!key) throw new Error("No API key configured");
         modelId = selection.model;
-        let model = getModel(provider as any, modelId as any);
-        if (!model) {
-          const fallbackModelId = defaultModelForProvider(provider);
-          const fallbackModel = getModel(provider as any, fallbackModelId as any);
-          if (!fallbackModel) throw new Error(`Model "${modelId}" not found`);
-          console.warn(`[Chat] Model "${modelId}" not found for provider=${provider}; falling back to ${fallbackModelId}`);
-          modelId = fallbackModelId;
-          model = fallbackModel;
+        const fallbackModelId = defaultModelForProvider(provider);
+        const modelResolution = resolveModelCompat({
+          provider,
+          requestedModelId: modelId,
+          fallbackModelId,
+          getModel,
+        });
+        if (!modelResolution.model) throw new Error(`Model "${modelId}" not found`);
+        if (modelResolution.usedFallback) {
+          console.warn(
+            `[Chat] Model "${modelResolution.requestedModelId}" not found for provider=${provider}; falling back to ${modelResolution.modelId}`
+          );
         }
+        modelId = modelResolution.modelId;
+        let model = modelResolution.model;
         console.log(`[Chat] Using provider=${provider} model=${modelId} agent=${agent.name}`);
 
         // Get thinking level from session metadata

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGatewayContext } from "@/lib/gateway-context";
 import { resolveAiSelection } from "@/lib/aiRouting";
+import { augmentProviderModelList } from "@/lib/modelCompat";
 
 export async function GET(req: NextRequest) {
   try {
@@ -85,6 +86,8 @@ export async function GET(req: NextRequest) {
         models = await getBuiltInModels(aiProvider);
       }
     }
+
+    models = augmentProviderModelList(aiProvider, models);
 
     if (models.length === 0 && !apiKey && !["google-vertex", "openai-codex", "google-gemini-cli", "google-antigravity"].includes(aiProvider)) {
       return NextResponse.json({ models: [], provider: aiProvider, error: "No API key configured" });
