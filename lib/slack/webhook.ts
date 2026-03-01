@@ -295,7 +295,9 @@ async function processMessage(event: any): Promise<void> {
     };
 
     const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
-    if (agent.temperature !== undefined) options.temperature = agent.temperature;
+    if (provider !== "openai-codex" && agent.temperature !== undefined) {
+      options.temperature = agent.temperature;
+    }
 
     await convex.mutation(api.functions.activeRuns.updateStatus, {
       id: runId,

@@ -569,7 +569,9 @@ export async function POST(req: NextRequest) {
 
         const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key, ...thinkingParams };
         if (!CONTINUE_ON_DISCONNECT) options.signal = req.signal;
-        if (agent.temperature !== undefined) options.temperature = agent.temperature;
+        if (provider !== "openai-codex" && agent.temperature !== undefined) {
+          options.temperature = agent.temperature;
+        }
 
         // Cache check
         const lastUserMsg = claudeMessages.filter((m: any) => m.role === "user").pop();

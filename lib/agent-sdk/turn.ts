@@ -227,7 +227,9 @@ export async function runAgentTurn(params: RunAgentTurnParams): Promise<RunAgent
   };
 
   const options: any = { maxTokens: agent.maxTokens || 4096, apiKey: key };
-  if (agent.temperature !== undefined) options.temperature = agent.temperature;
+  if (provider !== "openai-codex" && agent.temperature !== undefined) {
+    options.temperature = agent.temperature;
+  }
 
   const startMs = Date.now();
   const usage = { input: 0, output: 0 };

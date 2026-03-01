@@ -214,7 +214,9 @@ export async function POST(req: NextRequest) {
 
     const options: any = { maxTokens: config.agent.maxTokens || 4096, apiKey: config.key };
     options.signal = req.signal;
-    if (config.agent.temperature !== undefined) options.temperature = config.agent.temperature;
+    if (config.provider !== "openai-codex" && config.agent.temperature !== undefined) {
+      options.temperature = config.agent.temperature;
+    }
 
     class ClientAbortError extends Error {
       constructor() {
