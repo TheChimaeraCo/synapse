@@ -1,0 +1,105 @@
+{
+  "manifestVersion": 1,
+  "id": "stripe-tax-read",
+  "name": "Stripe Tax Read",
+  "version": "0.2.0",
+  "description": "Read-only Stripe reporting tools for monthly tax summaries and CSV exports.",
+  "author": "Synapse Forge",
+  "toolPrefixes": [
+    "stripe-tax-read"
+  ],
+  "routes": [
+    {
+      "path": "/modules/stripe-tax-read",
+      "title": "Stripe Tax Read",
+      "icon": "package"
+    }
+  ],
+  "permissions": [
+    "module_store",
+    "network"
+  ],
+  "tools": [
+    {
+      "name": "stripe-tax-read.list_charges_by_date",
+      "description": "List Stripe charges between start_date and end_date (inclusive UTC) with pagination and normalized fields.",
+      "category": "module",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "description": "Start date (YYYY-MM-DD or ISO timestamp)"
+          },
+          "end_date": {
+            "type": "string",
+            "description": "End date (YYYY-MM-DD or ISO timestamp)"
+          },
+          "limit": {
+            "type": "number",
+            "default": 100,
+            "description": "Max number of charges to return (1-10000)"
+          },
+          "api_key": {
+            "type": "string",
+            "description": "Stripe restricted read-only key (recommended)."
+          }
+        },
+        "required": [
+          "start_date",
+          "end_date"
+        ]
+      },
+      "handlerCode": "const maybeEnvKey = (typeof process !== \"undefined\" && process && process.env && typeof process.env.STRIPE_SECRET_KEY === \"string\") ? process.env.STRIPE_SECRET_KEY : \"\";\nconst apiKey = String(args.api_key || maybeEnvKey || \"\").trim();\nif (!apiKey) return \"Missing Stripe API key. Provide args.api_key (preferred restricted read-only key).\";\n\nconst parseDateToUnix = (value, endOfDay = false) => {\n  const raw = String(value || \"\").trim();\n  if (!raw) throw new Error(\"Date is required (YYYY-MM-DD or ISO string).\");\n  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) {\n    const ts = endOfDay ? Date.parse(raw + \"T23:59:59.999Z\") : Date.parse(raw + \"T00:00:00.000Z\");\n    if (Number.isNaN(ts)) throw new Error(\"Invalid date: \" + raw);\n    return Math.floor(ts / 1000);\n  }\n  const ts = Date.parse(raw);\n  if (Number.isNaN(ts)) throw new Error(\"Invalid date: \" + raw);\n  return Math.floor(ts / 1000);\n};\n\nconst centsToDollars = (cents) => (Number(cents || 0) / 100).toFixed(2);\n\nconst fetchAllCharges = async (startUnix, endUnix, maxRows = 10000) => {\n  const out = [];\n  let cursor = \"\";\n  let hasMore = true;\n\n  while (hasMore && out.length < maxRows) {\n    const remaining = Math.max(1, Math.min(100, maxRows - out.length));\n    const qp = new URLSearchParams();\n    qp.set(\"created[gte]\", String(startUnix));\n    qp.set(\"created[lte]\", String(endUnix));\n    qp.set(\"limit\", String(remaining));\n    qp.append(\"expand[]\", \"data.balance_transaction\");\n    if (cursor) qp.set(\"starting_after\", cursor);\n\n    const res = await fetch(\"https://api.stripe.com/v1/charges?\" + qp.toString(), {\n      method: \"GET\",\n      headers: {\n        \"authorization\": \"Bearer \" + apiKey,\n      },\n    });\n\n    if (!res.ok) {\n      let details = \"\";\n      try {\n        details = await res.text();\n      } catch {\n        details = \"\";\n      }\n      const shortDetails = details ? details.slice(0, 500) : \"\";\n      throw new Error(\"Stripe API error \" + res.status + (shortDetails ? (\": \" + shortDetails) : \"\"));\n    }\n\n    const payload = await res.json();\n    const rows = Array.isArray(payload && payload.data) ? payload.data : [];\n    for (const row of rows) out.push(row);\n\n    hasMore = Boolean(payload && payload.has_more) && rows.length > 0;\n    cursor = rows.length > 0 ? String(rows[rows.length - 1].id || \"\") : \"\";\n    if (!cursor) hasMore = false;\n  }\n\n  return out;\n};\n\nconst normalizeCharge = (charge) => {\n  const amount = Number(charge && charge.amount || 0);\n  const refunded = Number(charge && charge.amount_refunded || 0);\n  const bt = charge && charge.balance_transaction && typeof charge.balance_transaction === \"object\" ? charge.balance_transaction : null;\n  const fee = Number(bt && bt.fee || 0);\n  return {\n    id: String(charge && charge.id || \"\"),\n    created: Number(charge && charge.created || 0),\n    created_iso: new Date(Number(charge && charge.created || 0) * 1000).toISOString(),\n    amount,\n    amount_refunded: refunded,\n    fee,\n    net: amount - refunded - fee,\n    currency: String(charge && charge.currency || \"\").toLowerCase(),\n    status: String(charge && charge.status || \"\"),\n    paid: Boolean(charge && charge.paid),\n    refunded: Boolean(charge && charge.refunded),\n    customer: charge && charge.customer ? String(charge.customer) : \"\",\n    receipt_email: charge && charge.receipt_email ? String(charge.receipt_email) : \"\",\n    description: charge && charge.description ? String(charge.description) : \"\",\n  };\n};\nconst startDate = String(args.start_date || \"\").trim();\nconst endDate = String(args.end_date || \"\").trim();\nif (!startDate || !endDate) return \"start_date and end_date are required.\";\n\nlet startUnix = 0;\nlet endUnix = 0;\ntry {\n  startUnix = parseDateToUnix(startDate, false);\n  endUnix = parseDateToUnix(endDate, true);\n} catch (e) {\n  return \"Invalid date input: \" + (e && e.message ? e.message : String(e));\n}\n\nif (endUnix < startUnix) return \"end_date must be on or after start_date.\";\n\nconst maxRows = Math.max(1, Math.min(10000, Number(args.limit || 100)));\n\ntry {\n  const charges = await fetchAllCharges(startUnix, endUnix, maxRows);\n  const normalized = charges.map(normalizeCharge);\n  const currencies = Array.from(new Set(normalized.map((c) => c.currency).filter(Boolean)));\n  return JSON.stringify({\n    start_date: startDate,\n    end_date: endDate,\n    start_unix: startUnix,\n    end_unix: endUnix,\n    count_charges: normalized.length,\n    currencies,\n    charges: normalized,\n  }, null, 2);\n} catch (e) {\n  return \"Failed to list charges: \" + (e && e.message ? e.message : String(e));\n}"
+    },
+    {
+      "name": "stripe-tax-read.january_summary",
+      "description": "Generate tax-oriented January totals for a given year: gross, refunds, fees, net, and charge count.",
+      "category": "module",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "year": {
+            "type": "number",
+            "description": "Calendar year for January summary, e.g. 2026"
+          },
+          "api_key": {
+            "type": "string",
+            "description": "Stripe restricted read-only key (recommended)."
+          }
+        },
+        "required": [
+          "year"
+        ]
+      },
+      "handlerCode": "const maybeEnvKey = (typeof process !== \"undefined\" && process && process.env && typeof process.env.STRIPE_SECRET_KEY === \"string\") ? process.env.STRIPE_SECRET_KEY : \"\";\nconst apiKey = String(args.api_key || maybeEnvKey || \"\").trim();\nif (!apiKey) return \"Missing Stripe API key. Provide args.api_key (preferred restricted read-only key).\";\n\nconst parseDateToUnix = (value, endOfDay = false) => {\n  const raw = String(value || \"\").trim();\n  if (!raw) throw new Error(\"Date is required (YYYY-MM-DD or ISO string).\");\n  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) {\n    const ts = endOfDay ? Date.parse(raw + \"T23:59:59.999Z\") : Date.parse(raw + \"T00:00:00.000Z\");\n    if (Number.isNaN(ts)) throw new Error(\"Invalid date: \" + raw);\n    return Math.floor(ts / 1000);\n  }\n  const ts = Date.parse(raw);\n  if (Number.isNaN(ts)) throw new Error(\"Invalid date: \" + raw);\n  return Math.floor(ts / 1000);\n};\n\nconst centsToDollars = (cents) => (Number(cents || 0) / 100).toFixed(2);\n\nconst fetchAllCharges = async (startUnix, endUnix, maxRows = 10000) => {\n  const out = [];\n  let cursor = \"\";\n  let hasMore = true;\n\n  while (hasMore && out.length < maxRows) {\n    const remaining = Math.max(1, Math.min(100, maxRows - out.length));\n    const qp = new URLSearchParams();\n    qp.set(\"created[gte]\", String(startUnix));\n    qp.set(\"created[lte]\", String(endUnix));\n    qp.set(\"limit\", String(remaining));\n    qp.append(\"expand[]\", \"data.balance_transaction\");\n    if (cursor) qp.set(\"starting_after\", cursor);\n\n    const res = await fetch(\"https://api.stripe.com/v1/charges?\" + qp.toString(), {\n      method: \"GET\",\n      headers: {\n        \"authorization\": \"Bearer \" + apiKey,\n      },\n    });\n\n    if (!res.ok) {\n      let details = \"\";\n      try {\n        details = await res.text();\n      } catch {\n        details = \"\";\n      }\n      const shortDetails = details ? details.slice(0, 500) : \"\";\n      throw new Error(\"Stripe API error \" + res.status + (shortDetails ? (\": \" + shortDetails) : \"\"));\n    }\n\n    const payload = await res.json();\n    const rows = Array.isArray(payload && payload.data) ? payload.data : [];\n    for (const row of rows) out.push(row);\n\n    hasMore = Boolean(payload && payload.has_more) && rows.length > 0;\n    cursor = rows.length > 0 ? String(rows[rows.length - 1].id || \"\") : \"\";\n    if (!cursor) hasMore = false;\n  }\n\n  return out;\n};\n\nconst normalizeCharge = (charge) => {\n  const amount = Number(charge && charge.amount || 0);\n  const refunded = Number(charge && charge.amount_refunded || 0);\n  const bt = charge && charge.balance_transaction && typeof charge.balance_transaction === \"object\" ? charge.balance_transaction : null;\n  const fee = Number(bt && bt.fee || 0);\n  return {\n    id: String(charge && charge.id || \"\"),\n    created: Number(charge && charge.created || 0),\n    created_iso: new Date(Number(charge && charge.created || 0) * 1000).toISOString(),\n    amount,\n    amount_refunded: refunded,\n    fee,\n    net: amount - refunded - fee,\n    currency: String(charge && charge.currency || \"\").toLowerCase(),\n    status: String(charge && charge.status || \"\"),\n    paid: Boolean(charge && charge.paid),\n    refunded: Boolean(charge && charge.refunded),\n    customer: charge && charge.customer ? String(charge.customer) : \"\",\n    receipt_email: charge && charge.receipt_email ? String(charge.receipt_email) : \"\",\n    description: charge && charge.description ? String(charge.description) : \"\",\n  };\n};\nconst year = Number(args.year);\nif (!Number.isInteger(year) || year < 2000 || year > 2100) return \"year must be an integer between 2000 and 2100.\";\n\nconst start = Date.UTC(year, 0, 1, 0, 0, 0, 0);\nconst end = Date.UTC(year, 1, 0, 23, 59, 59, 999);\nconst startUnix = Math.floor(start / 1000);\nconst endUnix = Math.floor(end / 1000);\n\ntry {\n  const charges = await fetchAllCharges(startUnix, endUnix, 10000);\n  const normalized = charges.map(normalizeCharge);\n\n  let gross = 0;\n  let refunds = 0;\n  let fees = 0;\n  let count = 0;\n  const currencyTotals = {};\n\n  for (const c of normalized) {\n    if (!c.paid || c.status !== \"succeeded\") continue;\n    count += 1;\n    gross += c.amount;\n    refunds += c.amount_refunded;\n    fees += c.fee;\n\n    const curr = c.currency || \"unknown\";\n    if (!currencyTotals[curr]) {\n      currencyTotals[curr] = { gross: 0, refunds: 0, fees: 0, net: 0, count_charges: 0 };\n    }\n    currencyTotals[curr].gross += c.amount;\n    currencyTotals[curr].refunds += c.amount_refunded;\n    currencyTotals[curr].fees += c.fee;\n    currencyTotals[curr].net += (c.amount - c.amount_refunded - c.fee);\n    currencyTotals[curr].count_charges += 1;\n  }\n\n  const net = gross - refunds - fees;\n  const summary = {\n    month: \"January\",\n    year,\n    period_start_utc: new Date(start).toISOString(),\n    period_end_utc: new Date(end).toISOString(),\n    count_charges: count,\n    gross_cents: gross,\n    refunds_cents: refunds,\n    fees_cents: fees,\n    net_cents: net,\n    gross_usd: centsToDollars(gross),\n    refunds_usd: centsToDollars(refunds),\n    fees_usd: centsToDollars(fees),\n    net_usd: centsToDollars(net),\n    currency_breakdown: currencyTotals,\n    note: Object.keys(currencyTotals).length > 1 ? \"Multiple currencies detected; USD fields are raw cents/100 without FX conversion.\" : undefined,\n  };\n\n  return JSON.stringify(summary, null, 2);\n} catch (e) {\n  return \"Failed to generate January summary: \" + (e && e.message ? e.message : String(e));\n}"
+    },
+    {
+      "name": "stripe-tax-read.export_month_csv",
+      "description": "Export Stripe charges to CSV for start_date..end_date inclusive UTC.",
+      "category": "module",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "description": "Start date (YYYY-MM-DD or ISO timestamp)"
+          },
+          "end_date": {
+            "type": "string",
+            "description": "End date (YYYY-MM-DD or ISO timestamp)"
+          },
+          "api_key": {
+            "type": "string",
+            "description": "Stripe restricted read-only key (recommended)."
+          }
+        },
+        "required": [
+          "start_date",
+          "end_date"
+        ]
+      },
+      "handlerCode": "const maybeEnvKey = (typeof process !== \"undefined\" && process && process.env && typeof process.env.STRIPE_SECRET_KEY === \"string\") ? process.env.STRIPE_SECRET_KEY : \"\";\nconst apiKey = String(args.api_key || maybeEnvKey || \"\").trim();\nif (!apiKey) return \"Missing Stripe API key. Provide args.api_key (preferred restricted read-only key).\";\n\nconst parseDateToUnix = (value, endOfDay = false) => {\n  const raw = String(value || \"\").trim();\n  if (!raw) throw new Error(\"Date is required (YYYY-MM-DD or ISO string).\");\n  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) {\n    const ts = endOfDay ? Date.parse(raw + \"T23:59:59.999Z\") : Date.parse(raw + \"T00:00:00.000Z\");\n    if (Number.isNaN(ts)) throw new Error(\"Invalid date: \" + raw);\n    return Math.floor(ts / 1000);\n  }\n  const ts = Date.parse(raw);\n  if (Number.isNaN(ts)) throw new Error(\"Invalid date: \" + raw);\n  return Math.floor(ts / 1000);\n};\n\nconst centsToDollars = (cents) => (Number(cents || 0) / 100).toFixed(2);\n\nconst fetchAllCharges = async (startUnix, endUnix, maxRows = 10000) => {\n  const out = [];\n  let cursor = \"\";\n  let hasMore = true;\n\n  while (hasMore && out.length < maxRows) {\n    const remaining = Math.max(1, Math.min(100, maxRows - out.length));\n    const qp = new URLSearchParams();\n    qp.set(\"created[gte]\", String(startUnix));\n    qp.set(\"created[lte]\", String(endUnix));\n    qp.set(\"limit\", String(remaining));\n    qp.append(\"expand[]\", \"data.balance_transaction\");\n    if (cursor) qp.set(\"starting_after\", cursor);\n\n    const res = await fetch(\"https://api.stripe.com/v1/charges?\" + qp.toString(), {\n      method: \"GET\",\n      headers: {\n        \"authorization\": \"Bearer \" + apiKey,\n      },\n    });\n\n    if (!res.ok) {\n      let details = \"\";\n      try {\n        details = await res.text();\n      } catch {\n        details = \"\";\n      }\n      const shortDetails = details ? details.slice(0, 500) : \"\";\n      throw new Error(\"Stripe API error \" + res.status + (shortDetails ? (\": \" + shortDetails) : \"\"));\n    }\n\n    const payload = await res.json();\n    const rows = Array.isArray(payload && payload.data) ? payload.data : [];\n    for (const row of rows) out.push(row);\n\n    hasMore = Boolean(payload && payload.has_more) && rows.length > 0;\n    cursor = rows.length > 0 ? String(rows[rows.length - 1].id || \"\") : \"\";\n    if (!cursor) hasMore = false;\n  }\n\n  return out;\n};\n\nconst normalizeCharge = (charge) => {\n  const amount = Number(charge && charge.amount || 0);\n  const refunded = Number(charge && charge.amount_refunded || 0);\n  const bt = charge && charge.balance_transaction && typeof charge.balance_transaction === \"object\" ? charge.balance_transaction : null;\n  const fee = Number(bt && bt.fee || 0);\n  return {\n    id: String(charge && charge.id || \"\"),\n    created: Number(charge && charge.created || 0),\n    created_iso: new Date(Number(charge && charge.created || 0) * 1000).toISOString(),\n    amount,\n    amount_refunded: refunded,\n    fee,\n    net: amount - refunded - fee,\n    currency: String(charge && charge.currency || \"\").toLowerCase(),\n    status: String(charge && charge.status || \"\"),\n    paid: Boolean(charge && charge.paid),\n    refunded: Boolean(charge && charge.refunded),\n    customer: charge && charge.customer ? String(charge.customer) : \"\",\n    receipt_email: charge && charge.receipt_email ? String(charge.receipt_email) : \"\",\n    description: charge && charge.description ? String(charge.description) : \"\",\n  };\n};\nconst startDate = String(args.start_date || \"\").trim();\nconst endDate = String(args.end_date || \"\").trim();\nif (!startDate || !endDate) return \"start_date and end_date are required.\";\n\nlet startUnix = 0;\nlet endUnix = 0;\ntry {\n  startUnix = parseDateToUnix(startDate, false);\n  endUnix = parseDateToUnix(endDate, true);\n} catch (e) {\n  return \"Invalid date input: \" + (e && e.message ? e.message : String(e));\n}\n\nif (endUnix < startUnix) return \"end_date must be on or after start_date.\";\n\nconst escapeCsv = (value) => {\n  const s = String(value == null ? \"\" : value);\n  if (/[\",\\n]/.test(s)) return '\"' + s.replace(/\"/g, '\"\"') + '\"';\n  return s;\n};\n\ntry {\n  const charges = await fetchAllCharges(startUnix, endUnix, 10000);\n  const normalized = charges.map(normalizeCharge);\n  const header = [\n    \"id\",\n    \"created\",\n    \"amount\",\n    \"amount_refunded\",\n    \"fee\",\n    \"net\",\n    \"currency\",\n    \"status\",\n    \"paid\",\n    \"refunded\",\n    \"customer\",\n    \"receipt_email\",\n    \"description\",\n  ];\n\n  const lines = [header.join(\",\")];\n  for (const c of normalized) {\n    lines.push([\n      c.id,\n      c.created_iso,\n      c.amount,\n      c.amount_refunded,\n      c.fee,\n      c.net,\n      c.currency,\n      c.status,\n      c.paid,\n      c.refunded,\n      c.customer,\n      c.receipt_email,\n      c.description,\n    ].map(escapeCsv).join(\",\"));\n  }\n\n  const csv = lines.join(\"\\n\");\n  const exportId = \"charges_\" + startDate + \"_\" + endDate + \"_\" + Date.now();\n  await moduleStore.upsert(\"exports\", exportId, {\n    exportId,\n    start_date: startDate,\n    end_date: endDate,\n    count_charges: normalized.length,\n    csv,\n    createdAt: Date.now(),\n  }, [\"stripe\", \"csv\", \"charges\"]);\n\n  if (csv.length > 120000) {\n    return JSON.stringify({\n      message: \"CSV is large; saved in module store.\",\n      export_id: exportId,\n      count_charges: normalized.length,\n      preview: lines.slice(0, 20).join(\"\\n\"),\n    }, null, 2);\n  }\n\n  return csv;\n} catch (e) {\n  return \"Failed to export CSV: \" + (e && e.message ? e.message : String(e));\n}"
+    }
+  ]
+}

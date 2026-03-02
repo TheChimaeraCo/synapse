@@ -1710,6 +1710,101 @@ const DANGEROUS_PATTERNS = [
   /\bchown\s+-R\s+.*\s+\//,
 ];
 
+function truncateForAudit(value: unknown, max = 400): string {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+async function logToolAudit(
+  context: ToolContext,
+  action: string,
+  details: string,
+  resourceId?: string,
+): Promise<void> {
+  try {
+    const { convexClient } = await import("@/lib/convex");
+    const { api } = await import("@/convex/_generated/api");
+    await convexClient.mutation(api.functions.auditLog.log, {
+      userId: context.userId as any,
+      action,
+      resource: "tool",
+      resourceId,
+      details: truncateForAudit(details, 1000),
+    });
+  } catch {}
+}
+
+async function runShellCommandWithGuards(
+  args: { command: string; cwd?: string; timeout?: number },
+  context: ToolContext,
+  source: "shell_exec" | "forge_module_fallback" = "shell_exec",
+): Promise<string> {
+  const command = String(args.command || "");
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (pattern.test(command)) {
+      await logToolAudit(
+        context,
+        "tool.shell_exec.blocked",
+        `source=${source}; reason=dangerous_pattern; pattern=${pattern}; command=${truncateForAudit(command)}`,
+      );
+      return `Error: Command blocked for safety. Pattern matched: ${pattern}`;
+    }
+  }
+
+  const timeout = Math.min(args.timeout || 30000, 60000);
+  const workspaceRoot = await getWorkspaceRoot(context.gatewayId);
+  const cwd = args.cwd ? resolveSafePath(args.cwd, workspaceRoot) : workspaceRoot;
+  const env: NodeJS.ProcessEnv = { ...process.env };
+
+  if (commandLikelyUsesGit(command)) {
+    const gitAuth = await getGitAuthConfig(context.gatewayId);
+    if (gitAuth.mode === "github_app") {
+      const { token, host } = await getGitHubAppInstallationToken(gitAuth);
+      Object.assign(env, buildGitAuthEnv(token, host));
+    } else {
+      env.GIT_TERMINAL_PROMPT = env.GIT_TERMINAL_PROMPT || "0";
+    }
+  }
+
+  try {
+    const result = execSync(command, {
+      cwd,
+      timeout,
+      maxBuffer: 1024 * 1024,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+    });
+
+    await logToolAudit(
+      context,
+      "tool.shell_exec.executed",
+      `source=${source}; exit=0; cwd=${truncateForAudit(cwd, 200)}; timeout=${timeout}; command=${truncateForAudit(command)}`,
+    );
+
+    const output = String(result);
+    const truncated = output.length > 20480 ? `${output.slice(0, 20480)}\n... [truncated]` : output;
+    return `Exit code: 0\n\n${truncated}`;
+  } catch (e: any) {
+    const exitCode = e?.status ?? "unknown";
+    await logToolAudit(
+      context,
+      "tool.shell_exec.executed",
+      `source=${source}; exit=${exitCode}; cwd=${truncateForAudit(cwd, 200)}; timeout=${timeout}; command=${truncateForAudit(command)}`,
+    );
+
+    const stdout = e.stdout ? String(e.stdout) : "";
+    const stderr = e.stderr ? String(e.stderr) : "";
+    const output = [
+      `Exit code: ${exitCode}`,
+      stdout ? `\nStdout:\n${stdout.slice(0, 10240)}` : "",
+      stderr ? `\nStderr:\n${stderr.slice(0, 10240)}` : "",
+    ].filter(Boolean).join("\n");
+    return output || `Command failed: ${e.message}`;
+  }
+}
+
 const shellExec: BuiltinTool = {
   name: "shell_exec",
   description: "Execute a shell command on the server. Use for git operations, package management, file manipulation, running scripts, checking system status, or any CLI task. Commands run in the workspace directory. Dangerous commands (rm -rf /, shutdown, etc.) are blocked. Output is truncated at 20KB.",
@@ -1721,51 +1816,11 @@ const shellExec: BuiltinTool = {
     timeout: Type.Optional(Type.Number({ description: "Timeout in ms (default: 30000, max: 60000)" })),
   }),
   handler: async (args, context) => {
-    for (const pattern of DANGEROUS_PATTERNS) {
-      if (pattern.test(args.command)) {
-        return `Error: Command blocked for safety. Pattern matched: ${pattern}`;
-      }
-    }
-
-    const timeout = Math.min(args.timeout || 30000, 60000);
-    const workspaceRoot = await getWorkspaceRoot(context.gatewayId);
-    const cwd = args.cwd ? resolveSafePath(args.cwd, workspaceRoot) : workspaceRoot;
-    const env: NodeJS.ProcessEnv = { ...process.env };
-
-    if (commandLikelyUsesGit(args.command)) {
-      const gitAuth = await getGitAuthConfig(context.gatewayId);
-      if (gitAuth.mode === "github_app") {
-        const { token, host } = await getGitHubAppInstallationToken(gitAuth);
-        Object.assign(env, buildGitAuthEnv(token, host));
-      } else {
-        // CLI OAuth mode relies on host credential manager / gh auth login.
-        env.GIT_TERMINAL_PROMPT = env.GIT_TERMINAL_PROMPT || "0";
-      }
-    }
-
-    try {
-      const result = execSync(args.command, {
-        cwd,
-        timeout,
-        maxBuffer: 1024 * 1024,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        env,
-      });
-
-      const output = String(result);
-      const truncated = output.length > 20480 ? output.slice(0, 20480) + "\n... [truncated]" : output;
-      return `Exit code: 0\n\n${truncated}`;
-    } catch (e: any) {
-      const stdout = e.stdout ? String(e.stdout) : "";
-      const stderr = e.stderr ? String(e.stderr) : "";
-      const output = [
-        `Exit code: ${e.status ?? "unknown"}`,
-        stdout ? `\nStdout:\n${stdout.slice(0, 10240)}` : "",
-        stderr ? `\nStderr:\n${stderr.slice(0, 10240)}` : "",
-      ].filter(Boolean).join("\n");
-      return output || `Command failed: ${e.message}`;
-    }
+    return await runShellCommandWithGuards({
+      command: String(args.command || ""),
+      cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+      timeout: typeof args.timeout === "number" ? args.timeout : undefined,
+    }, context, "shell_exec");
   },
 };
 
@@ -1855,7 +1910,7 @@ const createTool: BuiltinTool = {
 
 const forgeModule: BuiltinTool = {
   name: "forge_module",
-  description: "Generate a self-contained Synapse module from a natural-language request, write it under modules/, and optionally install it with tools.",
+  description: "Generate a self-contained Synapse module from a natural-language request, write it under modules/, and optionally install it with tools. Can run an explicit trusted shell fallback (owner/admin + approval) when forge output is too generic.",
   category: "system",
   requiresApproval: true,
   parameters: Type.Object({
@@ -1864,6 +1919,10 @@ const forgeModule: BuiltinTool = {
     module_name: Type.Optional(Type.String({ description: "Optional display name." })),
     install: Type.Optional(Type.Boolean({ description: "Install immediately (default true)." })),
     overwrite: Type.Optional(Type.Boolean({ description: "Overwrite existing module files if present (default false)." })),
+    trusted_fallback_run: Type.Optional(Type.Boolean({ description: "If true, run trusted_fallback_command when forge reports a generic scaffold for an advanced request." })),
+    trusted_fallback_command: Type.Optional(Type.String({ description: "Shell command to run via shell_exec safety/approval semantics when trusted fallback is enabled." })),
+    trusted_fallback_cwd: Type.Optional(Type.String({ description: "Optional working directory for trusted fallback command." })),
+    trusted_fallback_timeout: Type.Optional(Type.Number({ description: "Optional timeout in ms for trusted fallback (max 60000)." })),
   }),
   handler: async (args, context) => {
     try {
@@ -1883,9 +1942,51 @@ const forgeModule: BuiltinTool = {
       const lines = [
         `Module forged: ${result.manifest.name} (${result.manifest.id}@${result.manifest.version})`,
         `Installed: ${result.installed ? "yes" : "no"}`,
+        `Generator: ${result.generator}`,
         `Tools: created=${result.tools.created}, updated=${result.tools.updated}, unchanged=${result.tools.unchanged}`,
         `Files: ${result.filesWritten.join(", ")}`,
       ];
+
+      const trustedFallbackRun = args.trusted_fallback_run === true;
+      const trustedFallbackCommand = typeof args.trusted_fallback_command === "string"
+        ? args.trusted_fallback_command.trim()
+        : "";
+
+      if (result.trustedFallbackSuggested) {
+        lines.push("Trusted fallback suggested: yes");
+        if (result.trustedFallbackReason) {
+          lines.push(`Reason: ${result.trustedFallbackReason}`);
+        }
+
+        if (trustedFallbackRun) {
+          if (!trustedFallbackCommand) {
+            lines.push("Trusted fallback requested but no trusted_fallback_command was provided.");
+          } else {
+            await logToolAudit(
+              context,
+              "tool.forge_module.trusted_fallback",
+              `module=${result.manifest.id}; action=run; command=${truncateForAudit(trustedFallbackCommand)}`,
+              result.manifest.id,
+            );
+            const fallbackOutput = await runShellCommandWithGuards(
+              {
+                command: trustedFallbackCommand,
+                cwd: typeof args.trusted_fallback_cwd === "string" ? args.trusted_fallback_cwd : undefined,
+                timeout: typeof args.trusted_fallback_timeout === "number" ? args.trusted_fallback_timeout : undefined,
+              },
+              context,
+              "forge_module_fallback",
+            );
+            const trimmed = fallbackOutput.length > 8000
+              ? `${fallbackOutput.slice(0, 8000)}\n... [truncated]`
+              : fallbackOutput;
+            lines.push("Trusted fallback output:");
+            lines.push(trimmed);
+          }
+        } else {
+          lines.push("Next step with explicit consent: run shell_exec for a direct server implementation fallback.");
+        }
+      }
       return lines.join("\n");
     } catch (e: any) {
       return `Forge module error: ${e.message}`;

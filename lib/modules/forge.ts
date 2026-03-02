@@ -31,6 +31,9 @@ export interface ForgeModuleResult {
   filesWritten: string[];
   installed: boolean;
   tools: { created: number; updated: number; unchanged: number };
+  generator: "meal_template" | "generic_template";
+  trustedFallbackSuggested: boolean;
+  trustedFallbackReason?: string;
 }
 
 function clean(value: unknown): string {
@@ -369,23 +372,42 @@ return JSON.stringify(rows.slice(0, limit), null, 2);
   ];
 }
 
-function buildManifest(prompt: string, moduleId: string, moduleName: string): ModuleManifest {
+function buildManifest(prompt: string, moduleId: string, moduleName: string): {
+  manifest: ModuleManifest;
+  generator: "meal_template" | "generic_template";
+} {
   const isMeal = /(meal|recipe|nutrition|grocery|shopping list|meal plan)/i.test(prompt);
   const routes = [{ path: `/modules/${moduleId}`, title: moduleName, icon: isMeal ? "utensils" : "package" }];
   const tools = isMeal ? mealPlannerToolSet(moduleId) : genericToolSet(moduleId);
   return {
-    manifestVersion: 1,
-    id: moduleId,
-    name: moduleName,
-    version: "0.1.0",
-    description: isMeal
-      ? "Plan meals, save recipes, generate weekly shopping lists, and lookup nutrition."
-      : `Generated module from request: ${prompt.slice(0, 180)}`,
-    author: "Synapse Forge",
-    toolPrefixes: [moduleId],
-    routes,
-    permissions: ["module_store", "network"],
-    tools,
+    manifest: {
+      manifestVersion: 1,
+      id: moduleId,
+      name: moduleName,
+      version: "0.1.0",
+      description: isMeal
+        ? "Plan meals, save recipes, generate weekly shopping lists, and lookup nutrition."
+        : `Generated module from request: ${prompt.slice(0, 180)}`,
+      author: "Synapse Forge",
+      toolPrefixes: [moduleId],
+      routes,
+      permissions: ["module_store", "network"],
+      tools,
+    },
+    generator: isMeal ? "meal_template" : "generic_template",
+  };
+}
+
+function suggestTrustedFallback(prompt: string, generator: "meal_template" | "generic_template"): {
+  suggested: boolean;
+  reason?: string;
+} {
+  if (generator !== "generic_template") return { suggested: false };
+  const advancedHint = /(api|endpoint|oauth|stripe|database|postgres|mysql|sql|http|webhook|sdk|graphql|integration|csv|tax|report|payment|aws|gcp|azure|script|cli)/i;
+  if (!advancedHint.test(prompt)) return { suggested: false };
+  return {
+    suggested: true,
+    reason: "Request appears to need external API/integration logic beyond the generic module scaffold.",
   };
 }
 
@@ -536,7 +558,9 @@ export async function forgeModuleFromPrompt(input: ForgeModuleInput): Promise<Fo
     throw new Error("Invalid module id");
   }
   const moduleName = inferModuleName(prompt, input.moduleName, moduleId);
-  const manifest = buildManifest(prompt, moduleId, moduleName);
+  const built = buildManifest(prompt, moduleId, moduleName);
+  const manifest = built.manifest;
+  const fallback = suggestTrustedFallback(prompt, built.generator);
 
   const { moduleDir, filesWritten } = await writeModuleFiles(manifest, prompt, input.overwrite === true);
   const shouldInstall = input.install !== false;
@@ -550,6 +574,8 @@ export async function forgeModuleFromPrompt(input: ForgeModuleInput): Promise<Fo
     filesWritten,
     installed: shouldInstall,
     tools,
+    generator: built.generator,
+    trustedFallbackSuggested: fallback.suggested,
+    trustedFallbackReason: fallback.reason,
   };
 }
-

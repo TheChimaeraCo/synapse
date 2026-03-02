@@ -15,7 +15,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { gatewayId, role } = await getGatewayContext(req);
+    const { gatewayId, role, userId } = await getGatewayContext(req);
     requireApprovalManager(role);
 
     const convex = getConvexClient();
@@ -44,6 +44,17 @@ export async function POST(
       id: id as Id<"approvals">,
       status,
     });
+
+    try {
+      const compactArgs = JSON.stringify(approval.toolArgs || {}).slice(0, 800);
+      await convex.mutation(api.functions.auditLog.log, {
+        userId: userId as Id<"authUsers">,
+        action: `tool.approval.${status}`,
+        resource: "tool",
+        resourceId: String(approval._id),
+        details: `tool=${approval.toolName}; session=${approval.sessionId}; args=${compactArgs}`,
+      });
+    } catch {}
 
     return NextResponse.json({ success: true });
   } catch (err) {

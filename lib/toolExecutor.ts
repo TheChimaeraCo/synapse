@@ -312,6 +312,16 @@ async function createApprovalRequest(
       toolName,
       toolArgs,
     });
+    try {
+      const compactArgs = JSON.stringify(toolArgs || {}).slice(0, 800);
+      await convexClient.mutation(api.functions.auditLog.log, {
+        userId: context.userId as any,
+        action: "tool.approval.requested",
+        resource: "tool",
+        resourceId: String(id),
+        details: `tool=${toolName}; session=${context.sessionId}; args=${compactArgs}`,
+      });
+    } catch {}
     return String(id);
   } catch {
     return null;

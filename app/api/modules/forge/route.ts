@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       userId,
       "module.install",
       "module",
-      `Forged module ${result.manifest.id}@${result.manifest.version} (installed=${result.installed}, tools=${result.tools.created}/${result.tools.updated}/${result.tools.unchanged})`,
+      `Forged module ${result.manifest.id}@${result.manifest.version} (installed=${result.installed}, generator=${result.generator}, tools=${result.tools.created}/${result.tools.updated}/${result.tools.unchanged}, trustedFallbackSuggested=${result.trustedFallbackSuggested})`,
       result.manifest.id,
     );
 
@@ -67,9 +67,11 @@ export async function POST(req: NextRequest) {
       filesWritten: result.filesWritten,
       installed: result.installed,
       tools: result.tools,
+      generator: result.generator,
+      trustedFallbackSuggested: result.trustedFallbackSuggested,
+      trustedFallbackReason: result.trustedFallbackReason,
     });
   } catch (err) {
     return handleGatewayError(err);
   }
 }
-
